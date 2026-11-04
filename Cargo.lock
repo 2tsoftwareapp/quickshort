@@ -3304,6 +3304,7 @@ dependencies = [
  "qs-core",
  "screencapturekit",
  "serde",
+ "serde_json",
  "windows",
  "x11rb",
  "zbus",

@@ -333,6 +333,18 @@ fn save_restore_token(t: &str) {
 mod tests {
     use super::*;
 
+    #[test]
+    #[ignore]
+    fn portal_live_stream_delivers_frame() {
+        let frames = PortalCapture.capture_all().unwrap();
+        let live = super::super::live::record_start(frames[0].geometry.logical_rect()).unwrap();
+        let frame = live
+            .frames()
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("portal recording did not deliver a frame");
+        assert!(frame.width() > 0 && frame.height() > 0);
+    }
+
     // Real portal session — pops a consent dialog on desktops without
     // persist support. `QS_CAPTURE=portal` exercises this from --capture.
     #[test]

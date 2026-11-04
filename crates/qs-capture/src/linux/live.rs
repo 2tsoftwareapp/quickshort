@@ -1,6 +1,6 @@
 //! Live one-monitor screencast, dispatched on the session kind: GNOME
-//! mutter gets its private push API, other Wayland compositors the
-//! xdg-desktop-portal stream, X11 a re-capture polling loop.
+//! mutter gets its private push API, portal desktops use PipeWire,
+//! Hyprland and X11 use a re-capture polling loop.
 
 use anyhow::Result;
 use image::RgbaImage;
@@ -74,7 +74,7 @@ pub fn record_start(sel: Rect) -> Result<LiveStream> {
     match session_kind()? {
         SessionKind::Mutter => wayland::record_start(sel),
         SessionKind::Portal => portal::record_start(sel),
-        SessionKind::X11 => {
+        SessionKind::Hyprland | SessionKind::X11 => {
             // X11 has no push frame API — the poll worker doubles as the
             // producer and needs no session teardown.
             let p = crate::poll::start(sel)?;

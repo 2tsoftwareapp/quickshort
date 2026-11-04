@@ -550,8 +550,16 @@ fn grab_frames_once(nodes: &[u32], expects: &[(u32, u32)]) -> Result<Vec<image::
 
 /// Pull the newest buffer off `stream` and copy it into a tight w*h*4
 /// byte frame in the stream's negotiated layout (caller converts).
-/// MemFd/DmaBuf frames arrive with a null data pointer — mmap the fd
-/// ourselves instead of dropping a perfectly good frame.
+/// PipeWire can supply a non-null pointer to a PROT_NONE mapping when the
+/// buffer is mappable but not marked readable; use its fd instead.
+fn should_map_buffer(kind: u32, flags: u32, has_pointer: bool) -> bool {
+    const READABLE: u32 = 1;
+    // SPA_DATA_FLAG_MAPPABLE is not exposed by libspa 0.8.
+    const MAPPABLE: u32 = 8;
+    // MemFd is directly mappable; DmaBuf only when explicitly advertised.
+    (kind == 2 || (kind == 3 && flags & MAPPABLE != 0)) && (!has_pointer || flags & READABLE == 0)
+}
+
 fn drain_frame(stream: &pw::stream::StreamRef, w: usize, h: usize) -> Option<Vec<u8>> {
     let mut buf = stream.dequeue_buffer()?;
     let mut out = None;
@@ -563,35 +571,38 @@ fn drain_frame(stream: &pw::stream::StreamRef, w: usize, h: usize) -> Option<Vec
             (chunk.stride().unsigned_abs() as usize).max(w * 4),
         );
         let mut mapped: Option<(*mut libc::c_void, usize)> = None;
-        let raw = match data.data() {
-            Some(d) => d,
-            None => {
-                let r = data.as_raw();
-                let total = (r.maxsize + r.mapoffset) as usize;
-                if r.fd < 0 || total == 0 {
-                    continue;
-                }
-                let p = unsafe {
-                    libc::mmap(
-                        std::ptr::null_mut(),
-                        total,
-                        libc::PROT_READ,
-                        libc::MAP_PRIVATE,
-                        r.fd as i32,
-                        0,
-                    )
-                };
-                if p == libc::MAP_FAILED {
-                    continue;
-                }
-                mapped = Some((p, total));
-                unsafe {
-                    std::slice::from_raw_parts(
-                        (p as *const u8).add(r.mapoffset as usize),
-                        r.maxsize as usize,
-                    )
-                }
+        let r = data.as_raw();
+        let raw = if should_map_buffer(r.type_, r.flags, !r.data.is_null()) {
+            let Some(total) = (r.maxsize as usize).checked_add(r.mapoffset as usize) else {
+                continue;
+            };
+            if r.fd < 0 || total == 0 {
+                continue;
             }
+            let p = unsafe {
+                libc::mmap(
+                    std::ptr::null_mut(),
+                    total,
+                    libc::PROT_READ,
+                    libc::MAP_PRIVATE,
+                    r.fd as i32,
+                    0,
+                )
+            };
+            if p == libc::MAP_FAILED {
+                continue;
+            }
+            mapped = Some((p, total));
+            unsafe {
+                std::slice::from_raw_parts(
+                    (p as *const u8).add(r.mapoffset as usize),
+                    r.maxsize as usize,
+                )
+            }
+        } else if !r.data.is_null() && (r.type_ == 1 || r.flags & 1 != 0) {
+            unsafe { std::slice::from_raw_parts(r.data as *const u8, r.maxsize as usize) }
+        } else {
+            continue;
         };
         if len > 0 && raw.len() >= off + len {
             let s = &raw[off..off + len];
@@ -1011,6 +1022,13 @@ pub(super) fn stream_pump(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mappable_memfd_is_not_a_readable_pointer() {
+        assert!(should_map_buffer(2, 8, true));
+        assert!(!should_map_buffer(2, 1, true));
+        assert!(!should_map_buffer(1, 8, true));
+    }
 
     // Real session, no dialog: cargo test -p qs-capture wayland -- --ignored --nocapture
     #[test]
