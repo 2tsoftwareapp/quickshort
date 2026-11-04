@@ -158,11 +158,9 @@ impl Host {
         #[cfg(target_os = "linux")]
         {
             let px_gtk = px.clone();
-            crate::chrome::gtk_album::set_chrome_push(std::sync::Arc::new(
-                move |wid, ev| {
-                    let _ = px_gtk.send_event(HostEvent::Chrome(wid, ev));
-                },
-            ));
+            crate::chrome::gtk_album::set_chrome_push(std::sync::Arc::new(move |wid, ev| {
+                let _ = px_gtk.send_event(HostEvent::Chrome(wid, ev));
+            }));
         }
         let chrome = Chrome::new(
             cfg.accent_rgb(),
@@ -218,12 +216,13 @@ impl Host {
 
     /// Hit GitHub Releases on a worker; `manual` shows a busy toast now and
     /// an "up to date" toast later.
-    fn check_updates(&mut self, el: &ActiveEventLoop, manual: bool) {
+    fn check_updates(&mut self, _el: &ActiveEventLoop, manual: bool) {
         self.cfg.last_update_check = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
         self.cfg.save();
+        #[cfg(not(target_os = "linux"))]
         if manual && self.toast.is_none() {
             if let Ok(t) = Toast::open(
                 el,
@@ -233,6 +232,10 @@ impl Host {
             ) {
                 self.toast = Some(t);
             }
+        }
+        #[cfg(target_os = "linux")]
+        if manual {
+            crate::linux_notify::send("Checking for updates…", true);
         }
         let px = self.proxy.clone();
         std::thread::spawn(move || {
@@ -244,13 +247,16 @@ impl Host {
     }
 
     /// Download + swap the pending release on a worker.
-    fn install_update(&mut self, el: &ActiveEventLoop, rel: Release) {
+    fn install_update(&mut self, _el: &ActiveEventLoop, rel: Release) {
+        #[cfg(not(target_os = "linux"))]
         if self.toast.is_none() {
             let msg = format!("Updating to v{}…", rel.version);
             if let Ok(t) = Toast::open(el, &msg, self.cfg.accent_rgb(), &self.cfg.popup_pos) {
                 self.toast = Some(t);
             }
         }
+        #[cfg(target_os = "linux")]
+        crate::linux_notify::send(&format!("Updating to v{}…", rel.version), true);
         let px = self.proxy.clone();
         std::thread::spawn(move || {
             let _ = px.send_event(HostEvent::UpdateInstall(
@@ -529,39 +535,42 @@ impl Host {
             self.toast_done(el, msg.to_string(), ok);
             return;
         }
-        if sel.is_some() {
-            let l = Land {
-                img,
-                kind,
-                path: saved,
-                sel,
-                instant: false,
-                dur_s,
-                shared,
-            };
-            match self.chrome.land(el, l) {
-                Ok(()) => {
-                    eprintln!("chrome: shot queued in corner album");
-                    let _ = self.chrome.pump();
-                    return;
-                }
-                Err(mut l) => {
-                    eprintln!("chrome: fly-in missed — settling stack at corner");
-                    l.instant = true;
-                    match self.chrome.land(el, l) {
-                        Ok(()) => {
-                            let _ = self.chrome.pump();
-                        }
-                        Err(l) => {
-                            eprintln!("chrome: album unavailable ({msg})");
-                            self.open_card(el, l.img, msg, l.path);
-                        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            if sel.is_some() {
+                let l = Land {
+                    img,
+                    kind,
+                    path: saved.clone(),
+                    sel,
+                    instant: false,
+                    dur_s,
+                    shared,
+                };
+                match self.chrome.land(el, l) {
+                    Ok(()) => {
+                        eprintln!("chrome: shot queued in corner album");
+                        let _ = self.chrome.pump();
+                        return;
                     }
-                    return;
+                    Err(mut l) => {
+                        eprintln!("chrome: fly-in missed — settling stack at corner");
+                        l.instant = true;
+                        match self.chrome.land(el, l) {
+                            Ok(()) => {
+                                let _ = self.chrome.pump();
+                            }
+                            Err(l) => {
+                                eprintln!("chrome: album unavailable ({msg})");
+                                self.open_card(el, l.img, msg, l.path);
+                            }
+                        }
+                        return;
+                    }
                 }
             }
+            self.open_card(el, img, msg, saved);
         }
-        self.open_card(el, img, msg, saved);
     }
 
     /// Run a context-menu action the in-chrome menu emitted.
@@ -674,6 +683,7 @@ impl Host {
 
     /// Open the post-capture thumbnail card; falls back to the plain toast
     /// when the window can't be created.
+    #[cfg(not(target_os = "linux"))]
     fn open_card(
         &mut self,
         el: &ActiveEventLoop,
@@ -907,12 +917,9 @@ impl ApplicationHandler<HostEvent> for Host {
             let manager = GlobalHotKeyManager::new().ok();
             match self.cfg.hotkey.parse::<HotKey>() {
                 Ok(hk) => {
-                    let res = manager
-                        .as_ref()
-                        .map(|m| m.register(hk))
-                        .unwrap_or(Err(global_hotkey::Error::FailedToRegister(
-                            "manager unavailable".into(),
-                        )));
+                    let res = manager.as_ref().map(|m| m.register(hk)).unwrap_or(Err(
+                        global_hotkey::Error::FailedToRegister("manager unavailable".into()),
+                    ));
                     match res {
                         Ok(()) => self.hotkey = Some(hk),
                         Err(e) => {
@@ -998,9 +1005,7 @@ impl ApplicationHandler<HostEvent> for Host {
                     if !self.hotkey_suspended {
                         self.trigger_full(el);
                     }
-                } else if self.hotkey.is_some_and(|h| h.id() == id)
-                    && !self.hotkey_suspended
-                {
+                } else if self.hotkey.is_some_and(|h| h.id() == id) && !self.hotkey_suspended {
                     self.trigger(el);
                 }
             }
@@ -1316,6 +1321,7 @@ impl ApplicationHandler<HostEvent> for Host {
             // scrolling capture drives its own capture loop and reports
             // the stitched image through ScrollDone
             if action == qs_overlay::Action::Scroll {
+                #[cfg(not(target_os = "linux"))]
                 match Toast::open(
                     el,
                     "Scrolling capture — scroll the page; it ends when it stops",
@@ -1325,6 +1331,11 @@ impl ApplicationHandler<HostEvent> for Host {
                     Ok(t) => self.toast = Some(t),
                     Err(e) => eprintln!("toast: {e:#}"),
                 }
+                #[cfg(target_os = "linux")]
+                crate::linux_notify::send(
+                    "Scrolling capture — scroll the page; it ends when it stops",
+                    true,
+                );
                 let px = self.proxy.clone();
                 std::thread::spawn(move || {
                     let res = crate::scroll::run(sel).map_err(|e| e.to_string());
@@ -1356,18 +1367,23 @@ impl ApplicationHandler<HostEvent> for Host {
                 return;
             }
             // slow actions get a live toast while the worker runs
+            let wait_msg = match action {
+                qs_overlay::Action::Ocr => Some("Extracting text…"),
+                qs_overlay::Action::Share => Some("Publishing link…"),
+                _ => None,
+            };
+            #[cfg(not(target_os = "linux"))]
             if self.toast.is_none() {
-                let wait_msg = match action {
-                    qs_overlay::Action::Ocr => Some("Extracting text…"),
-                    qs_overlay::Action::Share => Some("Publishing link…"),
-                    _ => None,
-                };
                 if let Some(m) = wait_msg {
                     match Toast::open(el, m, self.cfg.accent_rgb(), &self.cfg.popup_pos) {
                         Ok(t) => self.toast = Some(t),
                         Err(e) => eprintln!("toast: {e:#}"),
                     }
                 }
+            }
+            #[cfg(target_os = "linux")]
+            if let Some(m) = wait_msg {
+                crate::linux_notify::send(m, true);
             }
             // stitch + encode off the UI thread; Done updates menu/toast later
             let px = self.proxy.clone();

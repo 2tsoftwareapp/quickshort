@@ -212,6 +212,7 @@ impl Run {
         let frames = self.frames.take();
         match action {
             Action::Scroll => {
+                #[cfg(not(target_os = "linux"))]
                 match Toast::open(
                     el,
                     "Scrolling capture — scroll the page; it ends when it stops",
@@ -221,6 +222,11 @@ impl Run {
                     Ok(t) => self.toast = Some(t),
                     Err(e) => eprintln!("toast: {e:#}"),
                 }
+                #[cfg(target_os = "linux")]
+                crate::linux_notify::send(
+                    "Scrolling capture — scroll the page; it ends when it stops",
+                    true,
+                );
                 let px = self.proxy.clone();
                 self.workers += 1;
                 std::thread::spawn(move || {
@@ -323,12 +329,15 @@ impl Run {
             }
         };
         // Linux hotkeys relay to the resident app for the corner album.
-        // When relay misses, the PNG is already on disk — skip the
-        // one-shot card (GNOME shows it centered like a toast).
+        // When relay misses, show a native notification and skip the
+        // one-shot card (GNOME/Hyprland shows it centered like a toast).
         #[cfg(target_os = "linux")]
-        if saved.is_some() {
+        {
+            let _ = (d, saved);
+            self.notify(el, &msg, true);
             return;
         }
+        #[cfg(not(target_os = "linux"))]
         self.open_card(el, d.img, &msg, saved);
     }
 
