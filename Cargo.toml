@@ -1,6 +1,8 @@
 [workspace]
 resolver = "2"
 members = ["crates/qs-app", "crates/qs-capture", "crates/qs-core", "crates/qs-ocr", "crates/qs-overlay"]
+
+[workspace.package]
 license = "MIT"
 
 [workspace.dependencies]
