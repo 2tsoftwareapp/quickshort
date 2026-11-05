@@ -216,7 +216,11 @@ impl Host {
 
     /// Hit GitHub Releases on a worker; `manual` shows a busy toast now and
     /// an "up to date" toast later.
-    fn check_updates(&mut self, _el: &ActiveEventLoop, manual: bool) {
+    fn check_updates(&mut self, el: &ActiveEventLoop, manual: bool) {
+        // `el` is only used by the non-Linux toast path; keep the parameter
+        // used on Linux so the build stays warning-free.
+        #[cfg(target_os = "linux")]
+        let _ = el;
         self.cfg.last_update_check = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
@@ -247,7 +251,10 @@ impl Host {
     }
 
     /// Download + swap the pending release on a worker.
-    fn install_update(&mut self, _el: &ActiveEventLoop, rel: Release) {
+    fn install_update(&mut self, el: &ActiveEventLoop, rel: Release) {
+        // `el` is only used by the non-Linux toast path.
+        #[cfg(target_os = "linux")]
+        let _ = el;
         #[cfg(not(target_os = "linux"))]
         if self.toast.is_none() {
             let msg = format!("Updating to v{}…", rel.version);
