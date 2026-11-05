@@ -216,7 +216,11 @@ impl Host {
 
     /// Hit GitHub Releases on a worker; `manual` shows a busy toast now and
     /// an "up to date" toast later.
-    fn check_updates(&mut self, _el: &ActiveEventLoop, manual: bool) {
+    fn check_updates(&mut self, el: &ActiveEventLoop, manual: bool) {
+        // `el` is only used by the non-Linux toast path; keep the parameter
+        // used on Linux so the build stays warning-free.
+        #[cfg(target_os = "linux")]
+        let _ = el;
         self.cfg.last_update_check = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
@@ -247,7 +251,10 @@ impl Host {
     }
 
     /// Download + swap the pending release on a worker.
-    fn install_update(&mut self, _el: &ActiveEventLoop, rel: Release) {
+    fn install_update(&mut self, el: &ActiveEventLoop, rel: Release) {
+        // `el` is only used by the non-Linux toast path.
+        #[cfg(target_os = "linux")]
+        let _ = el;
         #[cfg(not(target_os = "linux"))]
         if self.toast.is_none() {
             let msg = format!("Updating to v{}…", rel.version);
@@ -1324,7 +1331,7 @@ impl ApplicationHandler<HostEvent> for Host {
                 #[cfg(not(target_os = "linux"))]
                 match Toast::open(
                     el,
-                    "Scrolling capture — scroll the page; it ends when it stops",
+                    crate::scroll::HINT,
                     self.cfg.accent_rgb(),
                     &self.cfg.popup_pos,
                 ) {
@@ -1332,10 +1339,7 @@ impl ApplicationHandler<HostEvent> for Host {
                     Err(e) => eprintln!("toast: {e:#}"),
                 }
                 #[cfg(target_os = "linux")]
-                crate::linux_notify::send(
-                    "Scrolling capture — scroll the page; it ends when it stops",
-                    true,
-                );
+                crate::linux_notify::send(crate::scroll::HINT, true);
                 let px = self.proxy.clone();
                 std::thread::spawn(move || {
                     let res = crate::scroll::run(sel).map_err(|e| e.to_string());
