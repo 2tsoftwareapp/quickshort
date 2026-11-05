@@ -213,20 +213,12 @@ impl Run {
         match action {
             Action::Scroll => {
                 #[cfg(not(target_os = "linux"))]
-                match Toast::open(
-                    el,
-                    "Scrolling capture — scroll the page; it ends when it stops",
-                    self.accent,
-                    &self.popup_pos,
-                ) {
+                match Toast::open(el, crate::scroll::HINT, self.accent, &self.popup_pos) {
                     Ok(t) => self.toast = Some(t),
                     Err(e) => eprintln!("toast: {e:#}"),
                 }
                 #[cfg(target_os = "linux")]
-                crate::linux_notify::send(
-                    "Scrolling capture — scroll the page; it ends when it stops",
-                    true,
-                );
+                crate::linux_notify::send(crate::scroll::HINT, true);
                 let px = self.proxy.clone();
                 self.workers += 1;
                 std::thread::spawn(move || {

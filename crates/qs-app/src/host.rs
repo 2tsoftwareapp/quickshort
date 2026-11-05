@@ -1324,7 +1324,7 @@ impl ApplicationHandler<HostEvent> for Host {
                 #[cfg(not(target_os = "linux"))]
                 match Toast::open(
                     el,
-                    "Scrolling capture — scroll the page; it ends when it stops",
+                    crate::scroll::HINT,
                     self.cfg.accent_rgb(),
                     &self.cfg.popup_pos,
                 ) {
@@ -1332,10 +1332,7 @@ impl ApplicationHandler<HostEvent> for Host {
                     Err(e) => eprintln!("toast: {e:#}"),
                 }
                 #[cfg(target_os = "linux")]
-                crate::linux_notify::send(
-                    "Scrolling capture — scroll the page; it ends when it stops",
-                    true,
-                );
+                crate::linux_notify::send(crate::scroll::HINT, true);
                 let px = self.proxy.clone();
                 std::thread::spawn(move || {
                     let res = crate::scroll::run(sel).map_err(|e| e.to_string());

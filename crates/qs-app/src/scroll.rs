@@ -21,6 +21,8 @@ const IDLE_STOP: u32 = 3;
 const MIN_OVERLAP: usize = 32;
 /// Mean abs per-channel difference accepted as "same content".
 const EPS: f64 = 6.0;
+/// Status hint shown while the guided capture runs.
+pub const HINT: &str = "Scrolling capture — scroll the page; it ends when it stops";
 
 /// Block until the scroll settles, then return the stitched tall image.
 pub fn run(sel: qs_core::Rect) -> Result<RgbaImage> {
