@@ -112,6 +112,11 @@ runtime; extra OCR languages via `QS_OCR_LANGS`), builds release →
 (default `Ctrl+Alt+Q`). On non-GNOME desktops it installs the binary
 only — bind it yourself.
 
+**Notifications** — status messages go through the desktop's notification
+service (`org.freedesktop.Notifications` over D-Bus) instead of a
+Quickshort-drawn toast window, so they follow the desktop's notification
+settings (position, timeout, Do Not Disturb).
+
 ### Windows
 
 `Quickshort-Windows-Setup.exe` under
