@@ -1,0 +1,10 @@
+[package]
+name = "qs-edit"
+version = "0.1.0"
+edition = "2021"
+license.workspace = true
+description = "Headless editing engine: tools, selection, handles, undo/redo, text editing"
+
+[dependencies]
+qs-doc.workspace = true
+qs-render.workspace = true

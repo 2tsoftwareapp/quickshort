@@ -1,0 +1,9 @@
+[package]
+name = "qs-theme"
+version = "0.1.0"
+edition = "2021"
+license.workspace = true
+
+# Foundations only: plain data, no UI toolkit, no dependencies — every
+# surface (winit/softbuffer windows, egui editor) reads the same tokens.
+[dependencies]

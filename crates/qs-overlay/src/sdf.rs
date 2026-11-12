@@ -64,7 +64,7 @@ pub fn glass_card(cv: &mut Canvas, r: (f64, f64, f64, f64), rad: f64, top: u32, 
                 if sd > 0.0 {
                     let a = 0.32 * (1.0 - sd / pad).clamp(0.0, 1.0);
                     if a > 0.002 {
-                        cv.blend(px, py, 0x000000, a);
+                        cv.blend(px, py, qs_theme::pal().shadow, a);
                     }
                 }
                 continue;
@@ -77,13 +77,13 @@ pub fn glass_card(cv: &mut Canvas, r: (f64, f64, f64, f64), rad: f64, top: u32, 
             // rim: hairline all around + stronger light edge on the top half
             let rim = stroke_cov(d, 0.6, s) * 0.10;
             if rim > 0.0 {
-                cv.blend(px, py, 0xFFFFFF, rim);
+                cv.blend(px, py, qs_theme::pal().on_hud, rim);
             }
             if ly < cy {
                 let topness = (1.0 - (ly - y) / (h / 2.0)).clamp(0.0, 1.0);
                 let glow = stroke_cov(d, 1.0, s) * 0.22 * topness;
                 if glow > 0.0 {
-                    cv.blend(px, py, 0xFFFFFF, glow);
+                    cv.blend(px, py, qs_theme::pal().on_hud, glow);
                 }
             }
         }

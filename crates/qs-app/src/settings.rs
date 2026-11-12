@@ -5,7 +5,7 @@
 
 use anyhow::{Context, Result};
 use fontdue::{Font, FontSettings};
-use qs_overlay::sdf::{ellipse_sdf, fill_cov, rrect_sdf, seg_sdf, stroke_cov, Canvas};
+use qs_overlay::sdf::Canvas;
 use softbuffer::{Context as SbContext, Surface};
 use std::num::NonZeroU32;
 use std::path::PathBuf;
@@ -17,36 +17,21 @@ use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::{CursorIcon, Icon, Window, WindowId};
 
 use crate::actions;
-use crate::config::{accent_deep, Config, ACCENTS, POPUP_POS};
+use crate::config::{accent_deep, Config, ACCENTS, AFTER_CAPTURE, POPUP_POS};
 use crate::tray;
+use crate::ui::{
+    check_box, dropdown_btn, ghost, keycaps_w, mix, row_label, Glyph, LRect, Painter, ROW,
+};
+use qs_theme::{pal, THEMES};
 
 const W: f64 = 820.0;
-const H: f64 = 620.0;
+const H: f64 = 675.0;
 const SIDE_W: f64 = 200.0;
 /// content column: x origin and width
 const CX: f64 = SIDE_W + 24.0;
 const CW: f64 = W - CX - 24.0;
-const ROW: f64 = 52.0;
 
-// light palette — matches the settings mockup (white surface, #f8f9fb
-// sidebar, hairline borders, configurable accent)
-const BG_TOP: u32 = 0xFFFFFF;
-const BG_BOT: u32 = 0xFAFBFC;
-const SIDE_BG: u32 = 0xF8F9FB;
-const CARD_TOP: u32 = 0xFFFFFF;
-const BORDER: u32 = 0xE1E4E9;
-const BORDER_STRONG: u32 = 0xCBD0D8;
-const ROW_HOV: u32 = 0xECEEF2;
-const TILE: u32 = 0xF0F2F5; // row-icon tile background
-const TILE_GLYPH: u32 = 0x555D68;
-const KEYCAP: u32 = 0xF3F4F6; // raised key top
-const KEYCAP_EDGE: u32 = 0xD4D8DF; // key bottom edge
-const FG: u32 = 0x24272D;
-const FG_DIM: u32 = 0x535A66;
-/// helper/metadata text — 5.0:1 on white; the old #8A919C was 3.2:1
-const FG_FAINT: u32 = 0x667085;
-const SWITCH_OFF: u32 = 0xE1E4E9;
-const DANGER: u32 = 0xB4232D;
+// colours come from qs-theme tokens (`pal()`); layout metrics stay here
 
 /// What the host needs to know after a settings event.
 pub enum SettingsEvent {
@@ -62,18 +47,6 @@ pub enum SettingsEvent {
     InstallUpdate,
     /// User closed the window.
     Closed,
-}
-
-#[derive(Clone, Copy, PartialEq)]
-enum Glyph {
-    Crop,
-    Gear,
-    Keys,
-    Drop,
-    Folder,
-    Info,
-    Bolt,
-    Text,
 }
 
 /// Sidebar pages in order.
@@ -119,6 +92,8 @@ enum Drop {
     RecentN,
     KeepDays,
     PopupPos,
+    AfterCapture,
+    Theme,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -164,8 +139,6 @@ enum Hit {
     Clean,
     Link(usize),
 }
-
-type LRect = (f64, f64, f64, f64); // logical x, y, w, h
 
 const LINKS: &[(&str, &str)] = &[
     ("GitHub", "https://github.com/truongnat/quickshort"),
@@ -264,7 +237,7 @@ impl Settings {
             }
         }
         let win = Rc::new(el.create_window(attrs).context("settings window")?);
-        force_light_appearance(&win);
+        force_dark_appearance(&win);
         // an accessory app opened from the tray stays deactivated — without
         // activation the window never gets KeyboardInput, so the hotkey
         // recorder looks dead
@@ -883,7 +856,7 @@ impl Settings {
         // window backdrop: faint vertical gradient, brighter at the top
         for (row, px) in buf.iter_mut().enumerate() {
             let t = (row / sw) as f64 / sh.max(1) as f64;
-            *px = mix(BG_TOP, BG_BOT, t);
+            *px = mix(pal().bg_top, pal().bg_bottom, t);
         }
         let scale = self.win.scale_factor();
         let mut cv = Canvas {
@@ -902,9 +875,9 @@ impl Settings {
         hits.clear();
 
         // sidebar: darker panel + nav, separator hairline
-        p.fill(&mut cv, (0.0, 0.0, SIDE_W, H), 0.0, SIDE_BG, 1.0);
+        p.fill(&mut cv, (0.0, 0.0, SIDE_W, H), 0.0, pal().sidebar, 1.0);
         for py in 0..sh {
-            cv.blend((SIDE_W * scale) as i32, py as i32, BORDER, 1.0);
+            cv.blend((SIDE_W * scale) as i32, py as i32, pal().border, 1.0);
         }
         if let Some(logo) = v.logo {
             let (ox, oy) = ((18.0 * scale) as i32, (22.0 * scale) as i32);
@@ -915,17 +888,25 @@ impl Settings {
                     cv.blend(ox + px as i32, oy + py as i32, rgb, a);
                 }
             }
+            p.stroke(
+                &mut cv,
+                (18.0, 22.0, 64.0, 64.0),
+                16.0,
+                pal().border_strong,
+                0.7,
+                1.0,
+            );
         } else {
             p.icon(&mut cv, 18.0, 22.0, 64.0);
         }
-        p.text(&mut cv, 18.0, 106.0, 17.0, "Quickshort", FG);
+        p.text(&mut cv, 18.0, 106.0, 17.0, "Quickshort", pal().fg);
         p.text(
             &mut cv,
             18.0,
             124.0,
             11.0,
             concat!("v", env!("CARGO_PKG_VERSION")),
-            FG_FAINT,
+            pal().fg_faint,
         );
         let mut ny = 152.0;
         for (i, (name, g)) in PAGES.iter().enumerate() {
@@ -934,7 +915,7 @@ impl Settings {
             if sel {
                 p.fill(&mut cv, r, 9.0, p.accent_deep, 1.0);
             } else if v.hover == Some(Hit::Nav(i)) {
-                p.fill(&mut cv, r, 9.0, ROW_HOV, 1.0);
+                p.fill(&mut cv, r, 9.0, pal().surface_hover, 1.0);
             }
             p.glyph(
                 &mut cv,
@@ -942,7 +923,7 @@ impl Settings {
                 r.0 + 9.0,
                 r.1 + 10.0,
                 16.0,
-                if sel { 0xFFFFFF } else { FG_DIM },
+                if sel { pal().on_accent } else { pal().fg_dim },
             );
             p.text(
                 &mut cv,
@@ -950,7 +931,7 @@ impl Settings {
                 r.1 + 24.0,
                 13.0,
                 name,
-                if sel { 0xFFFFFF } else { FG },
+                if sel { pal().on_accent } else { pal().fg },
             );
             hits.push((r, Hit::Nav(i)));
             ny += 40.0;
@@ -961,7 +942,7 @@ impl Settings {
             H - 18.0,
             10.5,
             "Preferences save automatically",
-            FG_FAINT,
+            pal().fg_faint,
         );
 
         match v.page {
@@ -1001,13 +982,13 @@ impl Settings {
                         30.0,
                     );
                     if v.hover == Some(Hit::DropOpt(i)) {
-                        p.fill(&mut cv, ir, 6.0, ROW_HOV, 1.0);
+                        p.fill(&mut cv, ir, 6.0, pal().surface_hover, 1.0);
                     }
                     if i == cur {
                         p.text(&mut cv, ir.0 + 10.0, ir.1 + 20.0, 12.0, "✓", p.accent_deep);
-                        p.text(&mut cv, ir.0 + 26.0, ir.1 + 20.0, 12.0, o, FG);
+                        p.text(&mut cv, ir.0 + 26.0, ir.1 + 20.0, 12.0, o, pal().fg);
                     } else {
-                        p.text(&mut cv, ir.0 + 26.0, ir.1 + 20.0, 12.0, o, FG);
+                        p.text(&mut cv, ir.0 + 26.0, ir.1 + 20.0, 12.0, o, pal().fg);
                     }
                     hits.push((ir, Hit::DropOpt(i)));
                 }
@@ -1023,8 +1004,8 @@ impl Settings {
                         &mut cv,
                         (r.0 - 3.0, r.1 - 3.0, r.2 + 6.0, r.3 + 6.0),
                         10.0,
-                        0xFFFFFF,
-                        1.0,
+                        pal().fringe,
+                        0.6,
                         3.0,
                     );
                     p.stroke(
@@ -1125,56 +1106,26 @@ fn drop_state(cfg: &Config, d: Drop) -> (Vec<&'static str>, usize) {
                 .position(|(k, _)| *k == cfg.popup_pos)
                 .unwrap_or(0),
         ),
+        Drop::Theme => (
+            THEMES.iter().map(|(_, l)| *l).collect(),
+            THEMES
+                .iter()
+                .position(|(k, _)| *k == cfg.theme)
+                .unwrap_or(0),
+        ),
+        Drop::AfterCapture => (
+            AFTER_CAPTURE.iter().map(|(_, l)| *l).collect(),
+            AFTER_CAPTURE
+                .iter()
+                .position(|(k, _)| *k == cfg.after_capture)
+                .unwrap_or(0),
+        ),
     }
 }
 
 fn section_title(p: &Painter, cv: &mut Canvas, y: f64, title: &str, sub: &str) {
-    p.text(cv, CX, y, 13.5, title, FG);
-    p.text(cv, CX, y + 19.0, 11.5, sub, FG_DIM);
-}
-
-/// Card row: icon tile + label (+ dim description) on the left.
-fn row_label(p: &Painter, cv: &mut Canvas, r: LRect, g: Glyph, label: &str, desc: &str) {
-    let tile = (r.0 + 12.0, r.1 + (r.3 - 36.0) / 2.0, 36.0, 36.0);
-    p.fill(cv, tile, 9.0, TILE, 1.0);
-    p.glyph(cv, g, tile.0 + 9.0, tile.1 + 9.0, 18.0, TILE_GLYPH);
-    p.text(cv, r.0 + 60.0, r.1 + 21.0, 13.0, label, FG);
-    if !desc.is_empty() {
-        p.text(cv, r.0 + 60.0, r.1 + 39.0, 10.5, desc, FG_FAINT);
-    }
-}
-
-fn dropdown_btn(p: &Painter, cv: &mut Canvas, r: LRect, label: &str, open: bool, hover: bool) {
-    p.fill(
-        cv,
-        r,
-        7.0,
-        if open || hover { ROW_HOV } else { 0xFFFFFF },
-        1.0,
-    );
-    p.stroke(cv, r, 7.0, BORDER_STRONG, 1.0, 0.75);
-    p.text(cv, r.0 + 10.0, r.1 + 20.0, 12.0, label, FG);
-    // chevron ⌄
-    let (mx, my) = (r.0 + r.2 - 16.0, r.1 + r.3 / 2.0 - 2.0);
-    p.seg(cv, mx, my, mx + 4.0, my + 5.0, 1.6, FG_DIM);
-    p.seg(cv, mx + 8.0, my, mx + 4.0, my + 5.0, 1.6, FG_DIM);
-}
-
-fn ghost(p: &Painter, cv: &mut Canvas, r: LRect, label: &str, hover: bool, confirm: bool) -> LRect {
-    if confirm {
-        p.fill(cv, r, r.3 / 2.0, DANGER, 1.0);
-        p.text(
-            cv,
-            r.0 + (r.2 - p.text_w("Confirm?", 11.5)) / 2.0,
-            r.1 + r.3 / 2.0 + 4.0,
-            11.5,
-            "Confirm?",
-            0xFFFFFF,
-        );
-    } else {
-        p.ghost_button(cv, r, label, hover);
-    }
-    r
+    p.text(cv, CX, y, 13.5, title, pal().fg);
+    p.text(cv, CX, y + 19.0, 11.5, sub, pal().fg_dim);
 }
 
 fn switch_row(
@@ -1189,7 +1140,7 @@ fn switch_row(
     sw: Sw,
 ) {
     if v.hover == Some(Hit::Sw(sw)) {
-        p.fill(cv, r, 7.0, ROW_HOV, 1.0);
+        p.fill(cv, r, 7.0, pal().surface_hover, 1.0);
     }
     row_label(p, cv, r, g, label, desc);
     p.switch(
@@ -1203,31 +1154,31 @@ fn switch_row(
 // pages ---------------------------------------------------------------------
 
 fn draw_capture(p: &Painter, cv: &mut Canvas, v: &View, hits: &mut Vec<(LRect, Hit)>) {
-    p.text(cv, CX, 52.0, 24.0, "Capture", FG);
+    p.text(cv, CX, 52.0, 24.0, "Capture", pal().fg);
     p.text(
         cv,
         CX,
         76.0,
         12.5,
         "Configure how you capture and save screenshots.",
-        FG_DIM,
+        pal().fg_dim,
     );
     section_title(
         p,
         cv,
-        112.0,
+        108.0,
         "Capture method",
         "Choose hotkey and capture behavior.",
     );
-    let c = card(CX, 146.0, 2);
-    p.card(cv, c);
+    let c = card(CX, 142.0, 2);
+    p.card_rows(cv, c, 2);
     // row 1: region hotkey
     let r = (c.0, c.1, c.2, ROW);
     row_label(
         p,
         cv,
         r,
-        Glyph::Keys,
+        Glyph::Crop,
         "Capture hotkey",
         "Select a region on screen",
     );
@@ -1243,7 +1194,7 @@ fn draw_capture(p: &Painter, cv: &mut Canvas, v: &View, hits: &mut Vec<(LRect, H
             1.0,
         );
         let (msg, col) = if v.want_mod {
-            ("Needs a modifier, e.g. ⌘ ⌥ ⌃", FG_DIM)
+            ("Needs a modifier, e.g. ⌘ ⌥ ⌃", pal().fg_dim)
         } else {
             ("Press shortcut", p.accent_deep)
         };
@@ -1272,7 +1223,7 @@ fn draw_capture(p: &Painter, cv: &mut Canvas, v: &View, hits: &mut Vec<(LRect, H
         p,
         cv,
         r,
-        Glyph::Keys,
+        Glyph::Display,
         "Fullscreen hotkey",
         "Save the whole screen, no selection",
     );
@@ -1288,7 +1239,7 @@ fn draw_capture(p: &Painter, cv: &mut Canvas, v: &View, hits: &mut Vec<(LRect, H
             1.0,
         );
         let (msg, col) = if v.want_mod {
-            ("Needs a modifier, e.g. ⌘ ⌥ ⌃", FG_DIM)
+            ("Needs a modifier, e.g. ⌘ ⌥ ⌃", pal().fg_dim)
         } else {
             ("Press shortcut", p.accent_deep)
         };
@@ -1314,11 +1265,11 @@ fn draw_capture(p: &Painter, cv: &mut Canvas, v: &View, hits: &mut Vec<(LRect, H
     section_title(
         p,
         cv,
-        268.0,
+        280.0,
         "Save location",
         "Choose where captured images are saved.",
     );
-    let c = card(CX, 302.0, 1);
+    let c = card(CX, 314.0, 1);
     p.card(cv, c);
     row_label(
         p,
@@ -1328,18 +1279,18 @@ fn draw_capture(p: &Painter, cv: &mut Canvas, v: &View, hits: &mut Vec<(LRect, H
         "Save folder",
         &tail(&short_path(&v.cfg.save_dir().display().to_string()), 38),
     );
-    let bb = slot(c.1, 76.0);
+    let bb = slot(c.1, 84.0);
     p.ghost_button(cv, bb, "Change…", v.hover == Some(Hit::Browse));
     hits.push((bb, Hit::Browse));
 
     section_title(
         p,
         cv,
-        368.0,
+        400.0,
         "Options",
         "Additional settings for capture and workflow.",
     );
-    let c = card(CX, 402.0, 1);
+    let c = card(CX, 434.0, 1);
     p.card(cv, c);
     switch_row(
         p,
@@ -1354,16 +1305,16 @@ fn draw_capture(p: &Painter, cv: &mut Canvas, v: &View, hits: &mut Vec<(LRect, H
     );
 
     // recent captures
-    p.text(cv, CX, 482.0, 14.0, "Recent captures", FG);
-    let va = (CX + CW - 84.0, 470.0, 84.0, 24.0);
+    p.text(cv, CX, 520.0, 14.0, "Recent captures", pal().fg);
+    let va = (CX + CW - 84.0, 508.0, 84.0, 24.0);
     p.text(
         cv,
         va.0 + (va.2 - p.text_w("Open folder ›", 11.5)) / 2.0,
-        483.0,
+        521.0,
         11.5,
         "Open folder ›",
         if v.hover == Some(Hit::ViewAll) {
-            FG
+            pal().fg
         } else {
             p.accent_deep
         },
@@ -1373,21 +1324,21 @@ fn draw_capture(p: &Painter, cv: &mut Canvas, v: &View, hits: &mut Vec<(LRect, H
         p.text(
             cv,
             CX,
-            540.0,
+            566.0,
             12.0,
             "No captures yet — your latest shots will show up here.",
-            FG_DIM,
+            pal().fg_dim,
         );
     }
     for (i, path) in v.recents.iter().enumerate() {
         let x = CX + i as f64 * (THUMB_W + 14.0);
-        let tr = (x, 500.0, THUMB_W, THUMB_H);
+        let tr = (x, 542.0, THUMB_W, THUMB_H);
         if v.hover == Some(Hit::Recent(i)) {
             p.fill(
                 cv,
                 (tr.0 - 3.0, tr.1 - 3.0, tr.2 + 6.0, tr.3 + 6.0),
                 8.0,
-                ROW_HOV,
+                pal().surface_hover,
                 1.0,
             );
         }
@@ -1396,8 +1347,23 @@ fn draw_capture(p: &Painter, cv: &mut Canvas, v: &View, hits: &mut Vec<(LRect, H
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
-        p.text(cv, x, tr.1 + tr.3 + 14.0, 10.5, &tail(&name, 20), FG_DIM);
-        p.text(cv, x, tr.1 + tr.3 + 28.0, 10.0, &age_label(path), FG_FAINT);
+        let display_name = name.strip_prefix("quickshort-").unwrap_or(&name);
+        p.text(
+            cv,
+            x,
+            tr.1 + tr.3 + 14.0,
+            10.5,
+            &truncate_head(display_name, 18),
+            pal().fg_dim,
+        );
+        p.text(
+            cv,
+            x,
+            tr.1 + tr.3 + 28.0,
+            10.0,
+            &age_label(path),
+            pal().fg_faint,
+        );
         hits.push((
             (tr.0 - 3.0, tr.1 - 3.0, tr.2 + 6.0, tr.3 + 34.0),
             Hit::Recent(i),
@@ -1406,14 +1372,14 @@ fn draw_capture(p: &Painter, cv: &mut Canvas, v: &View, hits: &mut Vec<(LRect, H
 }
 
 fn draw_general(p: &Painter, cv: &mut Canvas, v: &View, hits: &mut Vec<(LRect, Hit)>) {
-    p.text(cv, CX, 52.0, 24.0, "General", FG);
+    p.text(cv, CX, 52.0, 24.0, "General", pal().fg);
     p.text(
         cv,
         CX,
         76.0,
         12.5,
         "App behavior and system integration.",
-        FG_DIM,
+        pal().fg_dim,
     );
     section_title(p, cv, 112.0, "Updates", "Keep Quickshort current.");
     let c = card(CX, 146.0, 1);
@@ -1475,14 +1441,14 @@ fn draw_general(p: &Painter, cv: &mut Canvas, v: &View, hits: &mut Vec<(LRect, H
 }
 
 fn draw_shortcuts(p: &Painter, cv: &mut Canvas, v: &View, hits: &mut Vec<(LRect, Hit)>) {
-    p.text(cv, CX, 52.0, 24.0, "Shortcuts", FG);
+    p.text(cv, CX, 52.0, 24.0, "Shortcuts", pal().fg);
     p.text(
         cv,
         CX,
         76.0,
         12.5,
         "Overlay action keys — held with ⌘ or ⌃ while annotating.",
-        FG_DIM,
+        pal().fg_dim,
     );
     let c = card(CX, 104.0, KEY_ROWS.len());
     p.card(cv, c);
@@ -1504,7 +1470,7 @@ fn draw_shortcuts(p: &Painter, cv: &mut Canvas, v: &View, hits: &mut Vec<(LRect,
                 1.0,
             );
             let (msg, col) = if v.want_mod {
-                ("Hold ⌘ or ⌃ plus a key", FG_DIM)
+                ("Hold ⌘ or ⌃ plus a key", pal().fg_dim)
             } else {
                 ("Press ⌘ + key", p.accent_deep)
             };
@@ -1529,7 +1495,7 @@ fn draw_shortcuts(p: &Painter, cv: &mut Canvas, v: &View, hits: &mut Vec<(LRect,
         c.1 + c.3 + 24.0,
         11.0,
         "The Undo key also redoes with ⇧. Fixed keys: Esc cancel, Enter commit.",
-        FG_FAINT,
+        pal().fg_faint,
     );
     let rb = (CX + CW - 130.0, c.1 + c.3 + 44.0, 130.0, 30.0);
     ghost(
@@ -1544,11 +1510,11 @@ fn draw_shortcuts(p: &Painter, cv: &mut Canvas, v: &View, hits: &mut Vec<(LRect,
 }
 
 fn draw_appearance(p: &Painter, cv: &mut Canvas, v: &View, hits: &mut Vec<(LRect, Hit)>) {
-    p.text(cv, CX, 52.0, 24.0, "Appearance", FG);
-    p.text(cv, CX, 76.0, 12.5, "Interface and behavior.", FG_DIM);
-    section_title(p, cv, 112.0, "Accent", "Selection and highlight color.");
-    let c = card(CX, 146.0, 1);
-    p.card(cv, c);
+    p.text(cv, CX, 52.0, 24.0, "Appearance", pal().fg);
+    p.text(cv, CX, 76.0, 12.5, "Interface and behavior.", pal().fg_dim);
+    section_title(p, cv, 112.0, "Theme", "Mode and highlight color.");
+    let c = card(CX, 146.0, 2);
+    p.card_rows(cv, c, 2);
     row_label(
         p,
         cv,
@@ -1573,23 +1539,75 @@ fn draw_appearance(p: &Painter, cv: &mut Canvas, v: &View, hits: &mut Vec<(LRect
         );
         hits.push((r, Hit::Swatch(i)));
     }
-    section_title(p, cv, 228.0, "Clipboard", "What happens after a save.");
-    let c = card(CX, 262.0, 1);
-    p.card(cv, c);
+    row_label(
+        p,
+        cv,
+        (c.0, c.1 + ROW, c.2, ROW),
+        Glyph::Display,
+        "Mode",
+        "Dark Studio or Light surfaces",
+    );
+    let tb = slot(c.1 + ROW, 160.0);
+    let label = THEMES
+        .iter()
+        .find(|(k, _)| *k == v.cfg.theme)
+        .map(|(_, l)| *l)
+        .unwrap_or(THEMES[0].1);
+    dropdown_btn(
+        p,
+        cv,
+        tb,
+        label,
+        v.drop_open == Some(Drop::Theme),
+        v.hover == Some(Hit::Drop(Drop::Theme)),
+    );
+    hits.push((tb, Hit::Drop(Drop::Theme)));
+    section_title(
+        p,
+        cv,
+        280.0,
+        "After capture",
+        "What happens once a capture is saved.",
+    );
+    let c = card(CX, 314.0, 2);
+    p.card_rows(cv, c, 2);
+    row_label(
+        p,
+        cv,
+        (c.0, c.1, c.2, ROW),
+        Glyph::Crop,
+        "Then",
+        "Thumbnail, open Quickshort Editor, or copy",
+    );
+    let ab = slot(c.1, 160.0);
+    let label = AFTER_CAPTURE
+        .iter()
+        .find(|(k, _)| *k == v.cfg.after_capture)
+        .map(|(_, l)| *l)
+        .unwrap_or(AFTER_CAPTURE[0].1);
+    dropdown_btn(
+        p,
+        cv,
+        ab,
+        label,
+        v.drop_open == Some(Drop::AfterCapture),
+        v.hover == Some(Hit::Drop(Drop::AfterCapture)),
+    );
+    hits.push((ab, Hit::Drop(Drop::AfterCapture)));
     switch_row(
         p,
         cv,
         v,
         hits,
-        c,
+        (c.0, c.1 + ROW, c.2, ROW),
         Glyph::Drop,
         "Copy captures after saving",
         "Saved screenshots also go to the clipboard",
         Sw::CopySave,
     );
 
-    section_title(p, cv, 344.0, "Popups", "Where floating cards appear.");
-    let c = card(CX, 378.0, 1);
+    section_title(p, cv, 448.0, "Popups", "Where floating cards appear.");
+    let c = card(CX, 482.0, 1);
     p.card(cv, c);
     row_label(
         p,
@@ -1614,26 +1632,6 @@ fn draw_appearance(p: &Painter, cv: &mut Canvas, v: &View, hits: &mut Vec<(LRect
         v.hover == Some(Hit::Drop(Drop::PopupPos)),
     );
     hits.push((pb, Hit::Drop(Drop::PopupPos)));
-}
-
-/// Square checkbox + tick — a checklist control where a switch would
-/// imply exclusivity.
-fn check_box(p: &Painter, cv: &mut Canvas, x: f64, y: f64, on: bool, hover: bool) {
-    if on {
-        p.fill(cv, (x, y, 20.0, 20.0), 5.0, p.accent_deep, 1.0);
-        p.seg(cv, x + 5.5, y + 10.5, x + 9.0, y + 14.0, 2.0, 0xFFFFFF);
-        p.seg(cv, x + 9.0, y + 14.0, x + 15.0, y + 6.5, 2.0, 0xFFFFFF);
-    } else {
-        p.fill(cv, (x, y, 20.0, 20.0), 5.0, 0xFFFFFF, 1.0);
-        p.stroke(
-            cv,
-            (x, y, 20.0, 20.0),
-            5.0,
-            if hover { BORDER_STRONG } else { BORDER },
-            1.0,
-            1.5,
-        );
-    }
 }
 
 /// apt install of missing packs — pkexec raises the polkit auth dialog
@@ -1663,14 +1661,14 @@ fn install_packs(_: &[String]) -> InstallState {
 }
 
 fn draw_ocr(p: &Painter, cv: &mut Canvas, v: &View, hits: &mut Vec<(LRect, Hit)>) {
-    p.text(cv, CX, 52.0, 24.0, "OCR", FG);
+    p.text(cv, CX, 52.0, 24.0, "OCR", pal().fg);
     p.text(
         cv,
         CX,
         76.0,
         12.5,
         "Languages the text action (T) recognizes.",
-        FG_DIM,
+        pal().fg_dim,
     );
 
     let auto = v.cfg.ocr_lang.trim() == "auto";
@@ -1736,11 +1734,18 @@ fn draw_ocr(p: &Painter, cv: &mut Canvas, v: &View, hits: &mut Vec<(LRect, Hit)>
         let live = !missing || on;
         let hover = live && v.hover == Some(Hit::Lang(i));
         if hover {
-            p.fill(cv, hr, 6.0, ROW_HOV, 1.0);
+            p.fill(cv, hr, 6.0, pal().surface_hover, 1.0);
         }
         if missing && !on {
-            p.fill(cv, (x + 6.0, y + 10.0, 20.0, 20.0), 5.0, TILE, 0.8);
-            p.stroke(cv, (x + 6.0, y + 10.0, 20.0, 20.0), 5.0, BORDER, 0.8, 1.0);
+            p.fill(cv, (x + 6.0, y + 10.0, 20.0, 20.0), 5.0, pal().tile, 0.8);
+            p.stroke(
+                cv,
+                (x + 6.0, y + 10.0, 20.0, 20.0),
+                5.0,
+                pal().border,
+                0.8,
+                1.0,
+            );
         } else {
             check_box(p, cv, x + 6.0, y + 10.0, on, hover);
         }
@@ -1750,7 +1755,7 @@ fn draw_ocr(p: &Painter, cv: &mut Canvas, v: &View, hits: &mut Vec<(LRect, Hit)>
             y + 25.0,
             13.0,
             e.1,
-            if missing { FG_FAINT } else { FG },
+            if missing { pal().fg_faint } else { pal().fg },
         );
         if missing {
             let note = "not installed";
@@ -1760,7 +1765,7 @@ fn draw_ocr(p: &Painter, cv: &mut Canvas, v: &View, hits: &mut Vec<(LRect, Hit)>
                 y + 25.0,
                 10.5,
                 note,
-                FG_FAINT,
+                pal().fg_faint,
             );
         } else {
             // code sits beside the name so the two read as one option
@@ -1770,7 +1775,7 @@ fn draw_ocr(p: &Painter, cv: &mut Canvas, v: &View, hits: &mut Vec<(LRect, Hit)>
                 y + 25.0,
                 10.5,
                 e.0,
-                FG_FAINT,
+                pal().fg_faint,
             );
         }
         if live {
@@ -1792,7 +1797,7 @@ fn draw_ocr(p: &Painter, cv: &mut Canvas, v: &View, hits: &mut Vec<(LRect, Hit)>
                 fy + 4.0,
                 11.5,
                 "Installing language packs… approve the system prompt",
-                mix(FG_FAINT, FG_DIM, a),
+                mix(pal().fg_faint, pal().fg_dim, a),
             );
         } else {
             let missing: Vec<&str> = qs_ocr::LANGS
@@ -1815,7 +1820,7 @@ fn draw_ocr(p: &Painter, cv: &mut Canvas, v: &View, hits: &mut Vec<(LRect, Hit)>
                     fy + 14.0,
                     11.0,
                     "or: sudo apt install tesseract-ocr-<code>",
-                    FG_FAINT,
+                    pal().fg_faint,
                 );
             }
             // outcome sits under the button row so the two never overlap
@@ -1825,7 +1830,7 @@ fn draw_ocr(p: &Painter, cv: &mut Canvas, v: &View, hits: &mut Vec<(LRect, Hit)>
                 fy + 42.0
             };
             if let Some(m) = v.install_msg {
-                p.text(cv, CX + 8.0, my, 11.5, m, FG_DIM);
+                p.text(cv, CX + 8.0, my, 11.5, m, pal().fg_dim);
             } else if missing.is_empty() {
                 p.text(
                     cv,
@@ -1833,7 +1838,7 @@ fn draw_ocr(p: &Painter, cv: &mut Canvas, v: &View, hits: &mut Vec<(LRect, Hit)>
                     my,
                     11.5,
                     "All listed languages are installed.",
-                    FG_FAINT,
+                    pal().fg_faint,
                 );
             }
         }
@@ -1845,7 +1850,7 @@ fn draw_ocr(p: &Painter, cv: &mut Canvas, v: &View, hits: &mut Vec<(LRect, Hit)>
         fy + 4.0,
         11.5,
         "Recognition runs through macOS Vision — dimmed entries are unsupported.",
-        FG_FAINT,
+        pal().fg_faint,
     );
     #[cfg(target_os = "windows")]
     p.text(
@@ -1854,13 +1859,13 @@ fn draw_ocr(p: &Painter, cv: &mut Canvas, v: &View, hits: &mut Vec<(LRect, Hit)>
         fy + 4.0,
         11.5,
         "Missing packs: Windows Settings > Time & Language > Language & region.",
-        FG_FAINT,
+        pal().fg_faint,
     );
 }
 
 fn draw_storage(p: &Painter, cv: &mut Canvas, v: &View, hits: &mut Vec<(LRect, Hit)>) {
-    p.text(cv, CX, 52.0, 24.0, "Storage", FG);
-    p.text(cv, CX, 76.0, 12.5, "Manage captured files.", FG_DIM);
+    p.text(cv, CX, 52.0, 24.0, "Storage", pal().fg);
+    p.text(cv, CX, 76.0, 12.5, "Manage captured files.", pal().fg_dim);
     section_title(p, cv, 112.0, "Location", "Where screenshots live.");
     let c = card(CX, 146.0, 2);
     p.card(cv, c);
@@ -1896,7 +1901,7 @@ fn draw_storage(p: &Painter, cv: &mut Canvas, v: &View, hits: &mut Vec<(LRect, H
             r.1 + 32.0,
             10.5,
             &txt,
-            FG_DIM,
+            pal().fg_dim,
         );
     }
 
@@ -1968,7 +1973,7 @@ fn draw_storage(p: &Painter, cv: &mut Canvas, v: &View, hits: &mut Vec<(LRect, H
         hits.push((rb, Hit::Clean));
     }
     if let Some(m) = v.clean_msg {
-        p.text(cv, CX + 8.0, c.1 + c.3 + 26.0, 11.5, m, FG_DIM);
+        p.text(cv, CX + 8.0, c.1 + c.3 + 26.0, 11.5, m, pal().fg_dim);
     }
 }
 
@@ -1980,7 +1985,7 @@ fn draw_about(p: &Painter, cv: &mut Canvas, v: &View, hits: &mut Vec<(LRect, Hit
         140.0,
         22.0,
         "Quickshort",
-        FG,
+        pal().fg,
     );
     let ver = concat!("v", env!("CARGO_PKG_VERSION"));
     p.text(
@@ -1989,7 +1994,7 @@ fn draw_about(p: &Painter, cv: &mut Canvas, v: &View, hits: &mut Vec<(LRect, Hit
         162.0,
         12.5,
         ver,
-        FG_DIM,
+        pal().fg_dim,
     );
     p.text(
         cv,
@@ -1997,7 +2002,7 @@ fn draw_about(p: &Painter, cv: &mut Canvas, v: &View, hits: &mut Vec<(LRect, Hit
         186.0,
         11.5,
         "Fast native screenshots — annotate, OCR, share.",
-        FG_FAINT,
+        pal().fg_faint,
     );
 
     let (label, w) = match v.update_ver {
@@ -2024,13 +2029,13 @@ fn draw_about(p: &Painter, cv: &mut Canvas, v: &View, hits: &mut Vec<(LRect, Hit
             12.0,
             t,
             if v.hover == Some(Hit::Link(i)) {
-                FG
+                pal().fg
             } else {
                 p.accent_deep
             },
         );
         if v.hover == Some(Hit::Link(i)) {
-            p.seg(cv, lx, 298.0, lx + tw, 298.0, 1.0, FG);
+            p.seg(cv, lx, 298.0, lx + tw, 298.0, 1.0, pal().fg);
         }
         hits.push(((lx, 282.0, tw, 20.0), Hit::Link(i)));
         lx += tw + 28.0;
@@ -2042,7 +2047,7 @@ fn draw_about(p: &Painter, cv: &mut Canvas, v: &View, hits: &mut Vec<(LRect, Hit
         570.0,
         10.5,
         "Free and open source — MIT",
-        FG_FAINT,
+        pal().fg_faint,
     );
 }
 
@@ -2109,6 +2114,18 @@ fn drop_apply(cfg: &mut Config, d: Drop, i: usize) {
                 .unwrap_or(POPUP_POS[0].0)
                 .into();
         }
+        Drop::Theme => {
+            cfg.theme = THEMES.get(i).map(|(k, _)| *k).unwrap_or(THEMES[0].0).into();
+            // live: the next frame of every window reads the new palette
+            qs_theme::set_theme(&cfg.theme);
+        }
+        Drop::AfterCapture => {
+            cfg.after_capture = AFTER_CAPTURE
+                .get(i)
+                .map(|(k, _)| *k)
+                .unwrap_or(AFTER_CAPTURE[0].0)
+                .into();
+        }
     }
 }
 
@@ -2142,12 +2159,13 @@ fn refocus(win: &Window) {
     win.request_redraw();
 }
 
-/// Pin the window to the light Aqua appearance — the settings UI is
-/// light-themed, so a dark titlebar looks out of place when macOS is in
-/// dark mode.
+/// Pin the window to the Dark appearance — the settings UI is
+/// modern dark studio-themed, matching the macOS dark titlebar.
 #[cfg(target_os = "macos")]
-fn force_light_appearance(win: &Window) {
-    use objc2_app_kit::{NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSView};
+fn force_dark_appearance(win: &Window) {
+    use objc2_app_kit::{
+        NSAppearance, NSAppearanceCustomization, NSAppearanceNameDarkAqua, NSView,
+    };
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     let Ok(handle) = win.window_handle() else {
         return;
@@ -2160,12 +2178,12 @@ fn force_light_appearance(win: &Window) {
         return;
     };
     unsafe {
-        ns_win.setAppearance(NSAppearance::appearanceNamed(NSAppearanceNameAqua).as_deref());
+        ns_win.setAppearance(NSAppearance::appearanceNamed(NSAppearanceNameDarkAqua).as_deref());
     }
 }
 
 #[cfg(not(target_os = "macos"))]
-fn force_light_appearance(_win: &Window) {}
+fn force_dark_appearance(_win: &Window) {}
 
 /// right-trimmed tail for display
 fn tail(s: &str, n: usize) -> String {
@@ -2174,6 +2192,16 @@ fn tail(s: &str, n: usize) -> String {
     } else {
         let keep: String = s.chars().rev().take(n).collect::<String>();
         format!("…{}", keep.chars().rev().collect::<String>())
+    }
+}
+
+/// left-preserved prefix with ellipsis for filenames
+fn truncate_head(s: &str, n: usize) -> String {
+    if s.chars().count() <= n {
+        s.to_string()
+    } else {
+        let keep: String = s.chars().take(n.saturating_sub(1)).collect();
+        format!("{keep}…")
     }
 }
 
@@ -2225,39 +2253,6 @@ fn age_label(p: &PathBuf) -> String {
     }
 }
 
-/// total width of a keycap row for `hotkey` (for right-alignment)
-fn keycaps_w(p: &Painter, hotkey: &str) -> f64 {
-    hotkey_tokens(hotkey)
-        .iter()
-        .map(|t| (p.text_w(t, 11.5) + 14.0).max(24.0) + 4.0)
-        .sum::<f64>()
-        - 4.0
-}
-
-/// "CmdOrCtrl+Shift+S" -> per-keycap tokens ("⌘", "⇧", "S" on macOS).
-/// "⌘+s" style strings pass straight through.
-fn hotkey_tokens(s: &str) -> Vec<String> {
-    s.split('+')
-        .map(|t| {
-            let t = t.trim();
-            #[cfg(target_os = "macos")]
-            {
-                match t {
-                    "CmdOrCtrl" | "Cmd" | "Super" | "Command" => "⌘".to_string(),
-                    "Ctrl" | "Control" => "⌃".to_string(),
-                    "Alt" | "Option" => "⌥".to_string(),
-                    "Shift" => "⇧".to_string(),
-                    other => other.to_uppercase(),
-                }
-            }
-            #[cfg(not(target_os = "macos"))]
-            {
-                t.to_uppercase()
-            }
-        })
-        .collect()
-}
-
 /// winit `Key` -> global-hotkey key token.
 fn key_token(key: &Key) -> Option<String> {
     match key {
@@ -2294,8 +2289,13 @@ fn key_token(key: &Key) -> Option<String> {
     }
 }
 
-/// First usable system font (fontdue reads TTF/OTF) — shared with the toast.
+/// First usable system font (fontdue reads TTF/OTF) — bundled Be Vietnam Pro first,
+/// then fallback to platform system fonts. Shared with the toast and quick access.
 pub(crate) fn system_font() -> Result<Font> {
+    const BUNDLED: &[u8] = include_bytes!("../../qs-render/fonts/BeVietnamPro-Regular.ttf");
+    if let Ok(f) = Font::from_bytes(BUNDLED, FontSettings::default()) {
+        return Ok(f);
+    }
     const CANDIDATES: &[&str] = &[
         #[cfg(target_os = "macos")]
         "/System/Library/Fonts/SFNS.ttf",
@@ -2372,481 +2372,12 @@ pub fn standalone() -> Result<()> {
     if let Ok(a) = std::env::var("QS_ACCENT") {
         cfg.accent = a;
     }
+    // QS_THEME=dark|light previews a theme without touching saved prefs
+    if let Ok(t) = std::env::var("QS_THEME") {
+        cfg.theme = t;
+        qs_theme::set_theme(&cfg.theme);
+    }
     let mut run = Run { cfg, s: None };
     el.run_app(&mut run)?;
     Ok(())
-}
-
-/// SDF + fontdue drawing helpers over the softbuffer surface.
-struct Painter<'a> {
-    font: &'a Font,
-    scale: f64,
-    /// current accent preset — mirrors the mockup's `--accent` variable
-    accent: u32,
-    /// accent darkened for white text/glyphs (nav pill, ticks, switches)
-    accent_deep: u32,
-}
-
-impl Painter<'_> {
-    fn fill(&self, cv: &mut Canvas, r: LRect, rad: f64, rgb: u32, a: f64) {
-        let (x, y, w, h) = r;
-        let s = self.scale;
-        let (x0, y0) = ((x * s) as i32, (y * s) as i32);
-        let (x1, y1) = (((x + w) * s) as i32, ((y + h) * s) as i32);
-        for py in y0..y1 {
-            for px in x0..x1 {
-                let lx = px as f64 / s + 0.5 / s;
-                let ly = py as f64 / s + 0.5 / s;
-                let d = if rad <= 0.0 {
-                    // square corners: inside = negative distance to box
-                    (lx - x - w / 2.0).abs().max(w / 2.0) + (ly - y - h / 2.0).abs().max(h / 2.0)
-                        - (w / 2.0 + h / 2.0)
-                } else {
-                    rrect_sdf(lx, ly, x + w / 2.0, y + h / 2.0, w / 2.0, h / 2.0, rad)
-                };
-                let c = if rad <= 0.0 { a } else { fill_cov(d, s) * a };
-                if c > 0.0 {
-                    cv.blend(px, py, rgb, c);
-                }
-            }
-        }
-    }
-
-    /// Outline stroke of width `w` (logical px) around a rounded rect.
-    fn stroke(&self, cv: &mut Canvas, r: LRect, rad: f64, rgb: u32, a: f64, w: f64) {
-        let (x, y, rw, rh) = r;
-        let s = self.scale;
-        let (x0, y0) = ((x * s) as i32 - 2, (y * s) as i32 - 2);
-        let (x1, y1) = (((x + rw) * s) as i32 + 2, ((y + rh) * s) as i32 + 2);
-        for py in y0.max(0)..y1.min(cv.h as i32) {
-            for px in x0.max(0)..x1.min(cv.w as i32) {
-                let lx = px as f64 / s + 0.5 / s;
-                let ly = py as f64 / s + 0.5 / s;
-                let d = rrect_sdf(lx, ly, x + rw / 2.0, y + rh / 2.0, rw / 2.0, rh / 2.0, rad);
-                let c = stroke_cov(d, w, s) * a;
-                if c > 0.0 {
-                    cv.blend(px, py, rgb, c);
-                }
-            }
-        }
-    }
-
-    /// Stroke a segment (logical coords) with SDF coverage.
-    fn seg(&self, cv: &mut Canvas, x0: f64, y0: f64, x1: f64, y1: f64, w: f64, rgb: u32) {
-        let s = self.scale;
-        let (bx0, by0) = (x0.min(x1) - w - 1.0, y0.min(y1) - w - 1.0);
-        let (bx1, by1) = (x0.max(x1) + w + 1.0, y0.max(y1) + w + 1.0);
-        for py in (by0 * s) as i32..(by1 * s) as i32 {
-            for px in (bx0 * s) as i32..(bx1 * s) as i32 {
-                let lx = px as f64 / s + 0.5 / s;
-                let ly = py as f64 / s + 0.5 / s;
-                let c = stroke_cov(seg_sdf(lx, ly, x0, y0, x1, y1), w, s);
-                if c > 0.0 {
-                    cv.blend(px, py, rgb, c);
-                }
-            }
-        }
-    }
-
-    /// Grouped inset card: flat white panel + hairline border.
-    fn card(&self, cv: &mut Canvas, r: LRect) {
-        self.fill(cv, r, 10.0, CARD_TOP, 1.0);
-        self.stroke(cv, r, 10.0, BORDER, 1.0, 0.75);
-    }
-
-    /// Text button — hairline border, fills accent on hover.
-    fn ghost_button(&self, cv: &mut Canvas, r: LRect, label: &str, hover: bool) {
-        if hover {
-            self.fill(cv, r, r.3 / 2.0, ROW_HOV, 1.0);
-        } else {
-            self.fill(cv, r, r.3 / 2.0, 0xFFFFFF, 1.0);
-        }
-        self.stroke(cv, r, r.3 / 2.0, BORDER_STRONG, 1.0, 0.75);
-        let tw = self.text_w(label, 11.5);
-        self.text(
-            cv,
-            r.0 + (r.2 - tw) / 2.0,
-            r.1 + r.3 / 2.0 + 4.0,
-            11.5,
-            label,
-            FG,
-        );
-    }
-
-    /// Unavailable action — dashed-looking hairline, no hover response.
-    fn ghost_disabled(&self, cv: &mut Canvas, r: LRect, label: &str) {
-        self.fill(cv, r, r.3 / 2.0, 0xFAFBFC, 1.0);
-        self.stroke(cv, r, r.3 / 2.0, BORDER, 1.0, 0.6);
-        let tw = self.text_w(label, 11.5);
-        self.text(
-            cv,
-            r.0 + (r.2 - tw) / 2.0,
-            r.1 + r.3 / 2.0 + 4.0,
-            11.5,
-            label,
-            FG_FAINT,
-        );
-    }
-
-    /// Keyboard-style keycaps, one per token.
-    fn keycaps(&self, cv: &mut Canvas, hotkey: &str, x: f64, y: f64) {
-        let mut px = x;
-        for t in hotkey_tokens(hotkey) {
-            let tw = self.text_w(&t, 11.5);
-            let kw = (tw + 14.0).max(24.0);
-            let kr = (px, y, kw, 28.0);
-            self.fill(cv, kr, 6.0, KEYCAP, 1.0);
-            // key bottom edge — makes it read as a physical key
-            self.stroke(
-                cv,
-                (kr.0, kr.1 + 1.0, kr.2, kr.3 - 1.0),
-                6.0,
-                KEYCAP_EDGE,
-                0.9,
-                0.75,
-            );
-            self.text(cv, px + (kw - tw) / 2.0, y + 19.0, 11.5, &t, FG);
-            px += kw + 4.0;
-        }
-    }
-
-    /// macOS-style sliding switch. `t` = knob position 0..1.
-    fn switch(&self, cv: &mut Canvas, r: LRect, t: f64) {
-        let track = mix(SWITCH_OFF, self.accent_deep, t);
-        self.fill(cv, r, r.3 / 2.0, track, 1.0);
-        let kr = r.3 / 2.0 - 1.5; // knob radius
-        let kx = r.0 + r.3 / 2.0 + t * (r.2 - r.3);
-        let ky = r.1 + r.3 / 2.0;
-        let s = self.scale;
-        let (x0, y0) = (((kx - kr) * s) as i32, ((ky - kr) * s) as i32);
-        let (x1, y1) = (((kx + kr) * s) as i32, ((ky + kr) * s) as i32);
-        for py in y0..y1 {
-            for px in x0..x1 {
-                let lx = px as f64 / s + 0.5 / s;
-                let ly = py as f64 / s + 0.5 / s;
-                let c = fill_cov(ellipse_sdf(lx, ly, kx, ky, kr, kr), s);
-                if c > 0.0 {
-                    cv.blend(px, py, 0xF5F5F7, c);
-                }
-            }
-        }
-    }
-
-    /// Accent preset circle; selected gets a hairline ring.
-    fn swatch(&self, cv: &mut Canvas, r: LRect, rgb: u32, selected: bool, hover: bool) {
-        let (cx, cy) = (r.0 + r.2 / 2.0, r.1 + r.3 / 2.0);
-        let rad = r.3 / 2.0;
-        let s = self.scale;
-        let (x0, y0) = (((cx - rad - 2.0) * s) as i32, ((cy - rad - 2.0) * s) as i32);
-        let (x1, y1) = (((cx + rad + 2.0) * s) as i32, ((cy + rad + 2.0) * s) as i32);
-        for py in y0..y1 {
-            for px in x0..x1 {
-                let lx = px as f64 / s + 0.5 / s;
-                let ly = py as f64 / s + 0.5 / s;
-                let d = ellipse_sdf(lx, ly, cx, cy, rad, rad);
-                let c = fill_cov(d, s);
-                if c > 0.0 {
-                    cv.blend(px, py, rgb, c);
-                }
-            }
-        }
-        if selected || hover {
-            self.stroke(
-                cv,
-                (r.0 - 3.0, r.1 - 3.0, r.2 + 6.0, r.3 + 6.0),
-                r.3,
-                if selected { rgb } else { FG_DIM },
-                if selected { 1.0 } else { 0.5 },
-                1.2,
-            );
-        }
-    }
-
-    /// Recent-capture thumbnail clipped to a rounded rect + hairline ring.
-    fn thumb(&self, cv: &mut Canvas, r: LRect, img: Option<&image::RgbaImage>) {
-        let s = self.scale;
-        match img {
-            Some(img) => {
-                let (x0, y0) = ((r.0 * s) as i32, (r.1 * s) as i32);
-                for py in 0..img.height() as i32 {
-                    for px in 0..img.width() as i32 {
-                        let lx = (x0 + px) as f64 / s + 0.5 / s;
-                        let ly = (y0 + py) as f64 / s + 0.5 / s;
-                        let d = rrect_sdf(
-                            lx,
-                            ly,
-                            r.0 + r.2 / 2.0,
-                            r.1 + r.3 / 2.0,
-                            r.2 / 2.0,
-                            r.3 / 2.0,
-                            8.0,
-                        );
-                        let cov = fill_cov(d, s);
-                        if cov <= 0.0 {
-                            continue;
-                        }
-                        let c = img.get_pixel(px as u32, py as u32);
-                        let a = cov * c[3] as f64 / 255.0;
-                        let rgb = ((c[0] as u32) << 16) | ((c[1] as u32) << 8) | c[2] as u32;
-                        cv.blend(x0 + px, y0 + py, rgb, a);
-                    }
-                }
-            }
-            None => self.fill(cv, r, 8.0, TILE, 1.0),
-        }
-        self.stroke(cv, r, 8.0, BORDER, 1.0, 0.75);
-    }
-
-    /// Nav / row glyphs — 18×18 logical, SDF strokes.
-    fn glyph(&self, cv: &mut Canvas, g: Glyph, x: f64, y: f64, s: f64, rgb: u32) {
-        let w = s * 0.11;
-        match g {
-            Glyph::Crop => {
-                let ins = s * 0.18;
-                let len = s * 0.26;
-                let (x0, y0, x1, y1) = (x + ins, y + ins, x + s - ins, y + s - ins);
-                for (ax, ay, bx, by) in [
-                    (x0, y0 + len, x0, y0),
-                    (x0, y0, x0 + len, y0),
-                    (x1 - len, y0, x1, y0),
-                    (x1, y0, x1, y0 + len),
-                    (x0, y1 - len, x0, y1),
-                    (x0, y1, x0 + len, y1),
-                    (x1 - len, y1, x1, y1),
-                    (x1, y1 - len, x1, y1),
-                ] {
-                    self.seg(cv, ax, ay, bx, by, w, rgb);
-                }
-            }
-            Glyph::Gear => {
-                let (cx, cy) = (x + s / 2.0, y + s / 2.0);
-                for i in 0..8 {
-                    let a = i as f64 * std::f64::consts::FRAC_PI_4;
-                    let (dx, dy) = (a.cos(), a.sin());
-                    self.seg(
-                        cv,
-                        cx + dx * s * 0.36,
-                        cy + dy * s * 0.36,
-                        cx + dx * s * 0.48,
-                        cy + dy * s * 0.48,
-                        w * 1.3,
-                        rgb,
-                    );
-                }
-                self.circle(cv, cx, cy, s * 0.28, w, rgb);
-            }
-            Glyph::Keys => {
-                self.stroke(
-                    cv,
-                    (x + s * 0.08, y + s * 0.24, s * 0.84, s * 0.52),
-                    3.0,
-                    rgb,
-                    1.0,
-                    w,
-                );
-                for r in 0..2 {
-                    for c in 0..3 {
-                        self.fill(
-                            cv,
-                            (
-                                x + s * (0.18 + c as f64 * 0.24),
-                                y + s * (0.32 + r as f64 * 0.2),
-                                s * 0.12,
-                                s * 0.12,
-                            ),
-                            1.0,
-                            rgb,
-                            1.0,
-                        );
-                    }
-                }
-            }
-            Glyph::Drop => {
-                // half-filled circle: reads as a paint/appearance swatch
-                let (cx, cy) = (x + s / 2.0, y + s / 2.0);
-                self.circle(cv, cx, cy, s * 0.4, w, rgb);
-                let sd = self.scale;
-                let (x0, y0) = (((cx - s * 0.4) * sd) as i32, (cy * sd) as i32);
-                let (x1, y1) = (((cx + s * 0.4) * sd) as i32, ((cy + s * 0.4) * sd) as i32);
-                for py in y0..y1 {
-                    for px in x0..x1 {
-                        let lx = px as f64 / sd + 0.5 / sd;
-                        let ly = py as f64 / sd + 0.5 / sd;
-                        if ly < cy {
-                            continue;
-                        }
-                        let c = fill_cov(ellipse_sdf(lx, ly, cx, cy, s * 0.4, s * 0.4), sd);
-                        if c > 0.0 {
-                            cv.blend(px, py, rgb, c);
-                        }
-                    }
-                }
-            }
-            Glyph::Folder => {
-                let body = (x + s * 0.06, y + s * 0.3, s * 0.88, s * 0.56);
-                self.stroke(cv, body, 3.0, rgb, 1.0, w);
-                self.fill(
-                    cv,
-                    (x + s * 0.06, y + s * 0.2, s * 0.4, s * 0.14),
-                    2.0,
-                    rgb,
-                    1.0,
-                );
-            }
-            Glyph::Info => {
-                let (cx, cy) = (x + s / 2.0, y + s / 2.0);
-                self.circle(cv, cx, cy, s * 0.42, w, rgb);
-                self.fill(
-                    cv,
-                    (cx - s * 0.07, cy - s * 0.3, s * 0.14, s * 0.14),
-                    s * 0.07,
-                    rgb,
-                    1.0,
-                );
-                self.seg(cv, cx, cy - s * 0.06, cx, cy + s * 0.24, w * 1.4, rgb);
-            }
-            Glyph::Text => {
-                // three staggered text lines — reads as a document
-                for (i, frac) in [0.62_f64, 0.84, 0.5].iter().enumerate() {
-                    let ly = y + s * (0.28 + i as f64 * 0.22);
-                    self.seg(
-                        cv,
-                        x + s * 0.16,
-                        ly,
-                        x + s * (0.16 + frac),
-                        ly,
-                        w * 1.4,
-                        rgb,
-                    );
-                }
-            }
-            Glyph::Bolt => {
-                self.seg(
-                    cv,
-                    x + s * 0.58,
-                    y + s * 0.06,
-                    x + s * 0.3,
-                    y + s * 0.55,
-                    w * 1.4,
-                    rgb,
-                );
-                self.seg(
-                    cv,
-                    x + s * 0.3,
-                    y + s * 0.55,
-                    x + s * 0.55,
-                    y + s * 0.55,
-                    w * 1.4,
-                    rgb,
-                );
-                self.seg(
-                    cv,
-                    x + s * 0.55,
-                    y + s * 0.55,
-                    x + s * 0.4,
-                    y + s * 0.94,
-                    w * 1.4,
-                    rgb,
-                );
-            }
-        }
-    }
-
-    /// Circle outline via ellipse SDF stroke.
-    fn circle(&self, cv: &mut Canvas, cx: f64, cy: f64, r: f64, w: f64, rgb: u32) {
-        let s = self.scale;
-        let (x0, y0) = (((cx - r - w) * s) as i32, ((cy - r - w) * s) as i32);
-        let (x1, y1) = (((cx + r + w) * s) as i32, ((cy + r + w) * s) as i32);
-        for py in y0..y1 {
-            for px in x0..x1 {
-                let lx = px as f64 / s + 0.5 / s;
-                let ly = py as f64 / s + 0.5 / s;
-                let c = stroke_cov(ellipse_sdf(lx, ly, cx, cy, r, r), w, s);
-                if c > 0.0 {
-                    cv.blend(px, py, rgb, c);
-                }
-            }
-        }
-    }
-
-    /// App glyph — the tray's crop-corners mark in an accent squircle.
-    fn icon(&self, cv: &mut Canvas, x: f64, y: f64, size: f64) {
-        self.fill(cv, (x, y, size, size), 9.0, self.accent_deep, 1.0);
-        let st = size * 0.10;
-        let ins = size * 0.24;
-        let len = size * 0.17;
-        let (x0, y0, x1, y1) = (x + ins, y + ins, x + size - ins, y + size - ins);
-        let segs = [
-            (x0, y0 + len, x0, y0),
-            (x0, y0, x0 + len, y0),
-            (x1 - len, y0, x1, y0),
-            (x1, y0, x1, y0 + len),
-            (x0, y1 - len, x0, y1),
-            (x0, y1, x0 + len, y1),
-            (x1 - len, y1, x1, y1),
-            (x1, y1 - len, x1, y1),
-        ];
-        let s = self.scale;
-        let (px0, py0) = ((x * s) as i32, (y * s) as i32);
-        let (px1, py1) = (((x + size) * s) as i32, ((y + size) * s) as i32);
-        for py in py0..py1 {
-            for px in px0..px1 {
-                let lx = px as f64 / s + 0.5 / s;
-                let ly = py as f64 / s + 0.5 / s;
-                let mut d = f64::INFINITY;
-                for &(ax, ay, bx, by) in &segs {
-                    d = d.min(seg_sdf(lx, ly, ax, ay, bx, by));
-                }
-                let c = stroke_cov(d, st, s);
-                if c > 0.0 {
-                    cv.blend(px, py, 0xFFFFFF, c);
-                }
-            }
-        }
-    }
-
-    fn line(&self, cv: &mut Canvas, x0: f64, y: f64, x1: f64) {
-        let s = self.scale;
-        for px in (x0 * s) as i32..(x1 * s) as i32 {
-            cv.blend(px, (y * s) as i32, BORDER, 1.0);
-        }
-    }
-
-    /// Draw `s` with baseline at logical (x, y); returns advance width.
-    fn text(&self, cv: &mut Canvas, x: f64, y: f64, size: f64, s: &str, rgb: u32) -> f64 {
-        let scale = self.scale;
-        let px = size * scale;
-        let mut pen = x * scale;
-        let baseline = y * scale;
-        for ch in s.chars() {
-            let (m, bmp) = self.font.rasterize(ch, px as f32);
-            let gx = (pen + m.xmin as f64) as i32;
-            let gy = (baseline - m.height as f64 - m.ymin as f64) as i32;
-            for row in 0..m.height {
-                for col in 0..m.width {
-                    let a = bmp[row * m.width + col] as f64 / 255.0;
-                    if a > 0.0 {
-                        cv.blend(gx + col as i32, gy + row as i32, rgb, a);
-                    }
-                }
-            }
-            pen += m.advance_width as f64;
-        }
-        (pen - x * scale) / scale
-    }
-
-    fn text_w(&self, s: &str, size: f64) -> f64 {
-        s.chars()
-            .map(|c| {
-                let (m, _) = self.font.rasterize(c, (size * self.scale) as f32);
-                m.advance_width as f64
-            })
-            .sum::<f64>()
-            / self.scale
-    }
-}
-
-fn mix(a: u32, b: u32, t: f64) -> u32 {
-    let f = |sh: u32| ((a >> sh) & 0xFF) as f64 * (1.0 - t) + ((b >> sh) & 0xFF) as f64 * t;
-    (f(16) as u32) << 16 | (f(8) as u32) << 8 | f(0) as u32
 }

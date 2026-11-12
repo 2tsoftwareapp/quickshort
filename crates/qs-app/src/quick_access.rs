@@ -18,19 +18,13 @@ use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowId, WindowLevel};
 
 use crate::settings::system_font;
-use crate::widgets::{card_chrome, pill, Txt};
+use crate::ui::{card_chrome, disc, pill, strip};
+use crate::widgets::Txt;
 
 const W: f64 = 424.0;
 const H: f64 = 108.0;
 const TTL: Duration = Duration::from_secs(8);
 const THUMB: usize = 80;
-
-const CARD: u32 = 0xFFFFFF;
-const BORDER: u32 = 0xCBD0D8;
-const FRINGE: u32 = 0x1A1A1F;
-const FG: u32 = 0x24272D;
-const BTN_BG: u32 = 0xF2F4F7;
-const BTN_HOT: u32 = 0xE4E8EE;
 
 /// What the host should do in response to a card click.
 #[derive(Clone, Copy)]
@@ -47,6 +41,8 @@ pub enum QaAction {
     Beautify,
     /// float the image in an always-on-top window (resident app only)
     Pin,
+    /// thumbnail click — open the shot in Quickshort Editor
+    Edit,
     Close,
 }
 
@@ -272,6 +268,7 @@ impl QuickAccess {
                 ..
             } => match self.st.hover {
                 Some(99) => Some(QaAction::Close),
+                Some(98) => Some(QaAction::Edit),
                 // a share already in flight must not spawn a second upload
                 Some(i) if matches!(self.st.btns[i], Btn::Share) && self.st.sharing => None,
                 Some(i) => Some(self.st.btns[i].action(self.st.saved.is_some(), self.st.shared)),
@@ -308,6 +305,10 @@ impl CardState {
         if (x - cx).powi(2) + (y - cy).powi(2) <= r * r {
             return Some(99);
         }
+        let ty = (H - THUMB as f64) / 2.0;
+        if x >= 12.0 && x <= 12.0 + THUMB as f64 && y >= ty && y <= ty + THUMB as f64 {
+            return Some(98);
+        }
         self.btns.iter().position(|b| {
             let (bx, by, bw, bh) = b.rect();
             x >= bx && x <= bx + bw && y >= by && y <= by + bh
@@ -325,7 +326,15 @@ impl CardState {
         };
 
         // card body + fake shadow fringe (same trick as the toast)
-        card_chrome(&mut cv, W, H, 11.0, CARD, BORDER, FRINGE);
+        card_chrome(
+            &mut cv,
+            W,
+            H,
+            11.0,
+            qs_theme::pal().popover,
+            qs_theme::pal().popover_border,
+            qs_theme::pal().fringe,
+        );
 
         // thumbnail: cover-cropped square with rounded corners
         let (tx, ty, tr) = (12.0_f64, (H - THUMB as f64) / 2.0, 8.0_f64);
@@ -358,7 +367,7 @@ impl CardState {
             font: &self.font,
             scale,
         };
-        t.draw(&mut cv, 104.0, 40.0, 13.0, &self.msg, FG);
+        t.draw(&mut cv, 104.0, 40.0, 13.0, &self.msg, qs_theme::pal().fg);
 
         // action pills
         for (i, b) in self.btns.iter().enumerate() {
@@ -376,8 +385,12 @@ impl CardState {
                 &mut cv,
                 (bx, by, bw, bh),
                 7.0,
-                if hot { BTN_HOT } else { BTN_BG },
-                BORDER,
+                if hot {
+                    qs_theme::pal().control_hot
+                } else {
+                    qs_theme::pal().control
+                },
+                qs_theme::pal().popover_border,
                 alpha,
             );
             let label = if dim {
@@ -386,37 +399,41 @@ impl CardState {
                 b.label(self.saved.is_some(), self.shared)
             };
             let tw = t.width(11.0, label);
-            t.draw(&mut cv, bx + (bw - tw) / 2.0, by + 17.5, 11.0, label, FG);
+            t.draw(
+                &mut cv,
+                bx + (bw - tw) / 2.0,
+                by + 17.5,
+                11.0,
+                label,
+                qs_theme::pal().fg,
+            );
         }
 
         // close: small circle with an ×
         let (cx, cy, r) = CLOSE;
-        for py in ((cy - r) * scale) as i32..((cy + r) * scale) as i32 {
-            for px in ((cx - r) * scale) as i32..((cx + r) * scale) as i32 {
-                let lx = px as f64 / scale;
-                let ly = py as f64 / scale;
-                let d = qs_overlay::sdf::ellipse_sdf(lx, ly, cx, cy, r, r);
-                if d <= 0.0 {
-                    let hot = self.hover == Some(99);
-                    cv.blend(
-                        px,
-                        py,
-                        if hot { BTN_HOT } else { BTN_BG },
-                        fill_cov(d, scale),
-                    );
-                }
-            }
-        }
-        t.draw(&mut cv, cx - 3.4, cy + 4.6, 11.0, "×", FG);
+        let hot = self.hover == Some(99);
+        disc(
+            &mut cv,
+            cx,
+            cy,
+            r,
+            if hot {
+                qs_theme::pal().control_hot
+            } else {
+                qs_theme::pal().control
+            },
+            1.0,
+        );
+        t.draw(&mut cv, cx - 3.4, cy + 4.6, 11.0, "×", qs_theme::pal().fg);
 
         // countdown strip along the bottom
         let rem = (self.deadline - Instant::now()).as_secs_f64() / TTL.as_secs_f64();
-        let bw = (W - 24.0) * rem.clamp(0.0, 1.0);
-        for py in ((H - 4.0) * scale) as i32..((H - 2.0) * scale) as i32 {
-            for px in (12.0 * scale) as i32..((12.0 + bw) * scale) as i32 {
-                cv.blend(px, py, self.accent, 0.8);
-            }
-        }
+        strip(
+            &mut cv,
+            (12.0, H - 4.0, (W - 24.0) * rem.clamp(0.0, 1.0), 2.0),
+            self.accent,
+            0.8,
+        );
     }
 }
 
@@ -499,6 +516,14 @@ pub fn standalone(
                 QaAction::Beautify => c.beautify(),
                 // Pin is resident-only — the pill isn't rendered here
                 QaAction::Pin => unreachable!(),
+                QaAction::Edit => {
+                    let p = c
+                        .saved_path()
+                        .or_else(|| crate::actions::save_to_dir(c.image(), &self.save_dir).ok());
+                    if let Some(p) = p {
+                        crate::actions::open_editor(&p);
+                    }
+                }
                 QaAction::Share | QaAction::Revoke => {
                     // one-shot keeps no revoke ledger — Share is all it
                     // offers; Revoke can't be produced (shared stays false)
@@ -608,5 +633,12 @@ mod tests {
             );
         }
         out.save("/tmp/quickshort-card.png").unwrap();
+        qs_theme::set_theme("light");
+        st.render(&mut buf, w, h, 1.0);
+        for (i, px) in buf.iter().enumerate() {
+            out.put_pixel((i % w) as u32, (i / w) as u32, image::Rgba([(px >> 16) as u8, (px >> 8) as u8, *px as u8, 255]));
+        }
+        out.save("/tmp/quickshort-card-light.png").unwrap();
+        qs_theme::set_theme("dark");
     }
 }

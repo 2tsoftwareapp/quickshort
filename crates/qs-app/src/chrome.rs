@@ -17,16 +17,16 @@ use std::time::{Duration, Instant};
 use winit::event_loop::ActiveEventLoop;
 use winit::monitor::MonitorHandle;
 
+#[cfg(target_os = "linux")]
+pub mod gtk_album;
+#[cfg(target_os = "linux")]
+pub mod gtk_layer;
 #[cfg(target_os = "macos")]
 #[path = "chrome/macos.rs"]
 mod imp;
 #[cfg(target_os = "windows")]
 #[path = "chrome/windows.rs"]
 mod imp;
-#[cfg(target_os = "linux")]
-pub mod gtk_album;
-#[cfg(target_os = "linux")]
-pub mod gtk_layer;
 #[cfg(target_os = "linux")]
 #[path = "chrome/linux.rs"]
 mod imp;
@@ -68,11 +68,6 @@ pub(super) fn shelf_logical_size() -> (f64, f64) {
 }
 
 /* ---- ui-2026 tokens ---- */
-const CARD: u32 = 0x0A0A0A;
-const LINE: u32 = 0x262626;
-const MUTED: u32 = 0xA1A1A1;
-const GRN: u32 = 0x30D158;
-const RED: u32 = 0xFF5F57;
 
 /// What produced the shot — drives the corner badge.
 #[derive(Clone, Copy, PartialEq)]
@@ -149,7 +144,6 @@ pub enum Hit {
     /// lightbox action button `i` (BOX_ACTIONS order)
     BoxAction(usize),
 }
-
 
 /// What the host must run in response to a chrome click/key.
 #[derive(Debug)]
@@ -997,11 +991,14 @@ impl Stack {
             ChromeEv::Up { x, y } => {
                 self.touch();
                 match self.press.take() {
-                    // released on the same thumb → the deferred click
-                    Some((_, _, i)) if matches!(self.hit(x, y, w, h), Some(Hit::Thumb(j)) if j == i) =>
-                    {
-                        self.open_lightbox(i);
-                        Some(ChromeCmd::Redraw)
+                    // released on the same thumb → the deferred click opens
+                    // the editor straight away (CleanShot/Snagit); the
+                    // lightbox preview stays on Space/Enter
+                    Some((_, _, i)) if matches!(self.hit(x, y, w, h), Some(Hit::Thumb(j)) if j == i) => {
+                        Some(ChromeCmd::MenuAction {
+                            idx: i,
+                            id: MENU_OPEN,
+                        })
                     }
                     // released elsewhere — just a cancelled press
                     Some(_) => None,
@@ -1009,7 +1006,7 @@ impl Stack {
                 }
             }
             ChromeEv::Key(_) => None, // keys go through `key()`
-            ChromeEv::Tick => None, // backend-driven — never enters pointer logic
+            ChromeEv::Tick => None,   // backend-driven — never enters pointer logic
         }
     }
 
@@ -1499,7 +1496,14 @@ impl Stack {
                     w: r.w + 2.0,
                     h: r.h + 2.0,
                 };
-                rrect(cv, fr, 9.0, CARD, 0.0, Some(LINE));
+                rrect(
+                    cv,
+                    fr,
+                    9.0,
+                    qs_theme::pal().popover,
+                    0.0,
+                    Some(qs_theme::pal().border),
+                );
                 if bp >= 1.0 {
                     // action bar — the mouse path out of the preview
                     // (keys: Esc close, Enter copy, O open, S share,
@@ -1509,9 +1513,13 @@ impl Stack {
                         let danger = BOX_ACTIONS[bi] == MENU_DEL;
                         // white labels need the deepened accent — raw
                         // orange/pink carry white at only ~2-3:1
-                        let fill = if hot { config::deepen(accent) } else { CARD };
+                        let fill = if hot {
+                            config::deepen(accent)
+                        } else {
+                            qs_theme::pal().popover
+                        };
                         let fa = if hot { 0.9 } else { 0.92 };
-                        rrect(cv, *br, 8.0, fill, fa, Some(LINE));
+                        rrect(cv, *br, 8.0, fill, fa, Some(qs_theme::pal().border));
                         let label = Self::menu_label(BOX_ACTIONS[bi]);
                         let tw = t.width(10.0, label);
                         t.draw_over(
@@ -1520,7 +1528,11 @@ impl Stack {
                             br.y + 12.5,
                             10.0,
                             label,
-                            if danger && !hot { RED } else { 0xFFFFFF },
+                            if danger && !hot {
+                                qs_theme::pal().danger
+                            } else {
+                                qs_theme::pal().on_accent
+                            },
                         );
                     }
                     // shortcut legend, on its own pill so it stays legible
@@ -1536,8 +1548,22 @@ impl Stack {
                             w: hw + 20.0,
                             h: 22.0,
                         };
-                        rrect(cv, hr, 11.0, CARD, 0.92, Some(LINE));
-                        t.draw_over(cv, hr.x + 10.0, hr.y + 15.0, 9.5, hint, MUTED);
+                        rrect(
+                            cv,
+                            hr,
+                            11.0,
+                            qs_theme::pal().popover,
+                            0.92,
+                            Some(qs_theme::pal().border),
+                        );
+                        t.draw_over(
+                            cv,
+                            hr.x + 10.0,
+                            hr.y + 15.0,
+                            9.5,
+                            hint,
+                            qs_theme::pal().fg_dim,
+                        );
                     }
                 }
             }
@@ -1547,7 +1573,14 @@ impl Stack {
         // count chip
         if !self.shots.is_empty() {
             let cr = self.chip_rect(lw, lh);
-            rrect(cv, cr, 10.0, CARD, 0.92, Some(LINE));
+            rrect(
+                cv,
+                cr,
+                10.0,
+                qs_theme::pal().popover,
+                0.92,
+                Some(qs_theme::pal().border),
+            );
             let n = self.shots.len();
             let label = if n == 1 {
                 "1 SHOT".to_string()
@@ -1561,7 +1594,7 @@ impl Stack {
                 cr.y + 14.0,
                 9.5,
                 &label,
-                MUTED,
+                qs_theme::pal().fg_dim,
             );
         }
 
@@ -1586,7 +1619,14 @@ impl Stack {
             let hot = self.hover == Some(Hit::Thumb(i))
                 || self.hover == Some(Hit::Del(i))
                 || self.ring == Some(i);
-            rrect(cv, r, 6.0, CARD, 0.0, Some(if hot { accent } else { LINE }));
+            rrect(
+                cv,
+                r,
+                6.0,
+                qs_theme::pal().popover,
+                0.0,
+                Some(if hot { accent } else { qs_theme::pal().border }),
+            );
 
             // badges are corner-anchored: while the stack is collapsed
             // only the top card can wear them, or every offset card
@@ -1596,10 +1636,10 @@ impl Stack {
                 // distinct marks per outcome — four different actions all
                 // showing "✓" told the user nothing at a glance
                 let (bg, glyph) = match shot.kind {
-                    ShotKind::Saved => (GRN, "✓"),
-                    ShotKind::Copied => (GRN, "⧉"),
-                    ShotKind::Ocr => (GRN, "T"),
-                    ShotKind::Scroll => (GRN, "↕"),
+                    ShotKind::Saved => (qs_theme::pal().success, "✓"),
+                    ShotKind::Copied => (qs_theme::pal().success, "⧉"),
+                    ShotKind::Ocr => (qs_theme::pal().success, "T"),
+                    ShotKind::Scroll => (qs_theme::pal().success, "↕"),
                     ShotKind::Shared => (accent, "↗"),
                     ShotKind::Record => (accent, "▶"),
                 };
@@ -1611,7 +1651,7 @@ impl Stack {
                     by + 3.4,
                     9.0,
                     glyph,
-                    0x000000,
+                    qs_theme::pal().fringe,
                 );
 
                 // a live share link gets its own dot on the opposite
@@ -1627,7 +1667,7 @@ impl Stack {
                         ly + 3.4,
                         9.0,
                         "●",
-                        0x000000,
+                        qs_theme::pal().fringe,
                     );
                 }
 
@@ -1647,11 +1687,11 @@ impl Stack {
                                 h: 11.0,
                             },
                             5.5,
-                            CARD,
+                            qs_theme::pal().popover,
                             0.9,
                             None,
                         );
-                        t.draw_over(cv, px, py, 8.5, &label, 0xFFFFFF);
+                        t.draw_over(cv, px, py, 8.5, &label, qs_theme::pal().on_accent);
                     }
                 }
             }
@@ -1659,7 +1699,7 @@ impl Stack {
             // × on hover
             if self.hover == Some(Hit::Thumb(i)) || self.hover == Some(Hit::Del(i)) {
                 let (dx, dy) = self.del_pos(r);
-                disc(cv, dx, dy, 8.0, CARD, 0.95);
+                disc(cv, dx, dy, 8.0, qs_theme::pal().popover, 0.95);
                 let del_hot = self.hover == Some(Hit::Del(i));
                 t.draw_over(
                     cv,
@@ -1667,7 +1707,11 @@ impl Stack {
                     dy + 3.6,
                     10.0,
                     "×",
-                    if del_hot { RED } else { MUTED },
+                    if del_hot {
+                        qs_theme::pal().danger
+                    } else {
+                        qs_theme::pal().fg_dim
+                    },
                 );
             }
         }
@@ -1681,9 +1725,9 @@ impl Stack {
                 cv,
                 cr,
                 11.0,
-                CARD,
+                qs_theme::pal().popover,
                 0.92 * a,
-                Some(if hot { accent } else { LINE }),
+                Some(if hot { accent } else { qs_theme::pal().border }),
             );
             let label = "× CLEAR SHELF";
             let tw = t.width(9.5, label);
@@ -1693,7 +1737,11 @@ impl Stack {
                 cr.y + 15.0,
                 9.5,
                 label,
-                if hot { RED } else { MUTED },
+                if hot {
+                    qs_theme::pal().danger
+                } else {
+                    qs_theme::pal().fg_dim
+                },
             );
         }
 
@@ -1710,8 +1758,12 @@ impl Stack {
             // draw the capture scaled into the moving rect — border fades
             // from accent to hairline as it "becomes" a stack thumb
             blit_img(cv, &f.packed, f.iw, f.ih, r, 5.0);
-            let border = if p < 0.6 { accent } else { LINE };
-            rrect(cv, r, 5.0, CARD, 0.0, Some(border));
+            let border = if p < 0.6 {
+                accent
+            } else {
+                qs_theme::pal().border
+            };
+            rrect(cv, r, 5.0, qs_theme::pal().popover, 0.0, Some(border));
         }
 
         // context menu floats above everything in the layer
@@ -1719,7 +1771,14 @@ impl Stack {
             if let Some(p) = self.menu_rect(lw, lh) {
                 // dim everything behind the menu slightly so it pops
                 // (backdrop clicks close it — hit() handles routing)
-                rrect(cv, p, 10.0, CARD, 0.96, Some(LINE));
+                rrect(
+                    cv,
+                    p,
+                    10.0,
+                    qs_theme::pal().popover,
+                    0.96,
+                    Some(qs_theme::pal().border),
+                );
                 let m = self.menu.as_ref().unwrap();
                 for (i, &(id, enabled)) in m.rows.iter().enumerate() {
                     let Some(rr) = self.menu_row_rect(i, lw, lh) else {
@@ -1730,11 +1789,11 @@ impl Stack {
                         rrect(cv, rr, 6.0, accent, 0.22, None);
                     }
                     let col = if !enabled {
-                        LINE
+                        qs_theme::pal().border
                     } else if hot {
-                        0xFFFFFF
+                        qs_theme::pal().on_accent
                     } else {
-                        MUTED
+                        qs_theme::pal().fg_dim
                     };
                     t.draw_over(
                         cv,
@@ -2426,7 +2485,7 @@ mod tests {
 
     /// Click thumb0 → lightbox opens; backdrop click closes it.
     #[test]
-    fn lightbox_opens_on_thumb_click() {
+    fn thumb_click_opens_editor() {
         let mut st = Stack::new(Corner::TR);
         st.land(
             shot_img(1200, 800, [40, 60, 90]),
@@ -2456,7 +2515,8 @@ mod tests {
         );
         assert!(matches!(cmd, Some(ChromeCmd::Redraw)));
         assert!(st.lightbox.is_none());
-        st.pointer(
+        // the release is the click: straight to the editor, no lightbox
+        let cmd = st.pointer(
             ChromeEv::Up {
                 x: r.x + r.w / 2.0,
                 y: r.y + r.h / 2.0,
@@ -2464,6 +2524,16 @@ mod tests {
             1440.0,
             900.0,
         );
+        assert!(matches!(
+            cmd,
+            Some(ChromeCmd::MenuAction {
+                idx: 0,
+                id: MENU_OPEN
+            })
+        ));
+        assert!(st.lightbox.is_none());
+        // the preview is still one call away, and a backdrop click closes it
+        st.open_lightbox(0);
         assert!(st.lightbox.is_some());
         st.pointer(ChromeEv::Down { x: 700.0, y: 450.0 }, 1440.0, 900.0);
         assert!(st.lightbox.is_none());
@@ -2488,23 +2558,8 @@ mod tests {
             None,
             None,
         );
-        let r = st.thumb_rect(0, 1440.0, 900.0);
-        st.pointer(
-            ChromeEv::Down {
-                x: r.x + r.w / 2.0,
-                y: r.y + r.h / 2.0,
-            },
-            1440.0,
-            900.0,
-        );
-        st.pointer(
-            ChromeEv::Up {
-                x: r.x + r.w / 2.0,
-                y: r.y + r.h / 2.0,
-            },
-            1440.0,
-            900.0,
-        );
+        // thumb clicks open the editor now; the preview comes from Space
+        st.open_lightbox(0);
         assert!(st.lightbox.is_some());
         assert!(matches!(
             st.key(Key::Open),
@@ -2569,11 +2624,17 @@ mod tests {
             900.0,
         );
         assert!(st.lightbox.is_none());
-        // a sub-threshold wobble stays a click
+        // a sub-threshold wobble stays a click (→ editor)
         st.pointer(ChromeEv::Down { x: cx, y: cy }, 1440.0, 900.0);
         st.pointer(ChromeEv::Dragged { x: cx + 2.0, y: cy }, 1440.0, 900.0);
-        st.pointer(ChromeEv::Up { x: cx + 2.0, y: cy }, 1440.0, 900.0);
-        assert!(st.lightbox.is_some());
+        let cmd = st.pointer(ChromeEv::Up { x: cx + 2.0, y: cy }, 1440.0, 900.0);
+        assert!(matches!(
+            cmd,
+            Some(ChromeCmd::MenuAction {
+                idx: 0,
+                id: MENU_OPEN
+            })
+        ));
     }
 
     /// The "CLEAR ALL" pill rides the far end of the fanned row: it only

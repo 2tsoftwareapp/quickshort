@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/qs-app", "crates/qs-capture", "crates/qs-core", "crates/qs-ocr", "crates/qs-overlay"]
+members = ["crates/qs-app", "crates/qs-capture", "crates/qs-core", "crates/qs-doc", "crates/qs-edit", "crates/qs-editor", "crates/qs-ocr", "crates/qs-overlay", "crates/qs-render", "crates/qs-theme"]
 
 [workspace.package]
 license = "MIT"
@@ -12,3 +12,8 @@ qs-core = { path = "crates/qs-core" }
 qs-capture = { path = "crates/qs-capture" }
 qs-ocr = { path = "crates/qs-ocr" }
 qs-overlay = { path = "crates/qs-overlay" }
+qs-doc = { path = "crates/qs-doc" }
+qs-render = { path = "crates/qs-render" }
+qs-edit = { path = "crates/qs-edit" }
+qs-editor = { path = "crates/qs-editor" }
+qs-theme = { path = "crates/qs-theme" }

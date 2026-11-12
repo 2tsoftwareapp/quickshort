@@ -2,9 +2,10 @@
 //! reference while the user works. Undecorated; drag anywhere to move,
 //! the corner × closes it.
 
+use crate::ui::close_button;
 use anyhow::{Context, Result};
 use image::RgbaImage;
-use qs_overlay::sdf::{ellipse_sdf, fill_cov, seg_sdf, stroke_cov, Canvas};
+use qs_overlay::sdf::Canvas;
 use softbuffer::{Context as SbContext, Surface};
 use std::num::NonZeroU32;
 use std::rc::Rc;
@@ -17,11 +18,6 @@ const MAX_W: f64 = 560.0;
 const MAX_H: f64 = 400.0;
 const CLOSE: f64 = 9.0; // × circle radius
 const CLOSE_PAD: f64 = 4.0;
-
-const BORDER: u32 = 0x3A3F47;
-const X_BG: u32 = 0x2C2C2E;
-const X_HOT: u32 = 0xD92D20;
-const X_FG: u32 = 0xFFFFFF;
 
 pub struct Pin {
     win: Rc<Window>,
@@ -141,46 +137,18 @@ impl Pin {
                 let lx = px as f64 / scale;
                 let ly = py as f64 / scale;
                 if lx < 0.6 || ly < 0.6 || lx >= lw - 0.6 || ly >= lh - 0.6 {
-                    cv.blend(px, py, BORDER, 0.9);
+                    cv.blend(px, py, qs_theme::pal().popover_border, 0.9);
                 }
             }
         }
         // close ×, dim circle + white cross (hot = red tint)
         let (cx, cy) = (self.pw as f64 - CLOSE - CLOSE_PAD, CLOSE + CLOSE_PAD);
-        for py in ((cy - CLOSE) * scale) as i32..((cy + CLOSE) * scale) as i32 {
-            for px in ((cx - CLOSE) * scale) as i32..((cx + CLOSE) * scale) as i32 {
-                let lx = px as f64 / scale;
-                let ly = py as f64 / scale;
-                let d = ellipse_sdf(lx, ly, cx, cy, CLOSE, CLOSE);
-                let cov = fill_cov(d, scale);
-                if cov > 0.0 {
-                    cv.blend(
-                        px,
-                        py,
-                        if self.hover_close { X_HOT } else { X_BG },
-                        cov * 0.85,
-                    );
-                }
-            }
-        }
-        for py in ((cy - 5.0) * scale) as i32..((cy + 5.0) * scale) as i32 {
-            for px in ((cx - 5.0) * scale) as i32..((cx + 5.0) * scale) as i32 {
-                let lx = px as f64 / scale;
-                let ly = py as f64 / scale;
-                let d = seg_sdf(lx, ly, cx - 3.0, cy - 3.0, cx + 3.0, cy + 3.0).min(seg_sdf(
-                    lx,
-                    ly,
-                    cx - 3.0,
-                    cy + 3.0,
-                    cx + 3.0,
-                    cy - 3.0,
-                ));
-                let a = stroke_cov(d, 1.4, scale);
-                if a > 0.0 {
-                    cv.blend(px, py, X_FG, a);
-                }
-            }
-        }
+        let bg = if self.hover_close {
+            qs_theme::pal().danger
+        } else {
+            qs_theme::pal().control
+        };
+        close_button(&mut cv, cx, cy, CLOSE, bg, 0.85, 1.4);
         let _ = buf.present();
     }
 }

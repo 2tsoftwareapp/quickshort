@@ -36,6 +36,14 @@ pub struct Config {
     pub key_record: String,
     /// ⌘+key = undo, ⌘⇧+key = redo — one field drives both.
     pub key_undo: String,
+    /// Overlay key that hands the selection to the editor.
+    pub key_edit: String,
+    /// What the overlay's Save (and the fullscreen grab) leads to — a key
+    /// from `AFTER_CAPTURE`: "shelf" (corner thumbnail), "editor" (open
+    /// Quickshort Editor, Snagit-style) or "copy" (clipboard + toast).
+    pub after_capture: String,
+    /// Colour theme — a key from `qs_theme::THEMES`.
+    pub theme: String,
     /// tesseract language list, e.g. "eng", "eng+jpn", "eng+vie".
     pub ocr_lang: String,
     /// Where floating popups (toast, capture card, REC pill) dock —
@@ -74,6 +82,9 @@ impl Default for Config {
             key_scroll: "g".into(),
             key_record: "r".into(),
             key_undo: "z".into(),
+            key_edit: "e".into(),
+            after_capture: "shelf".into(),
+            theme: "dark".into(),
             ocr_lang: "auto".into(),
             popup_pos: "top-right".into(),
             last_update_check: 0,
@@ -94,10 +105,14 @@ impl Config {
         let Ok(s) = std::fs::read_to_string(Self::path()) else {
             return Self::default();
         };
-        toml::from_str(&s).unwrap_or_else(|e| {
+        let cfg: Self = toml::from_str(&s).unwrap_or_else(|e| {
             eprintln!("config parse failed ({e}), using defaults");
             Self::default()
-        })
+        });
+        // every entry point loads the config first, so this is the one
+        // place the process-wide theme gets selected at startup
+        qs_theme::set_theme(&cfg.theme);
+        cfg
     }
 
     pub fn save(&self) {
@@ -143,7 +158,33 @@ impl Config {
                 scroll: key(&self.key_scroll, 'g'),
                 record: key(&self.key_record, 'r'),
                 undo: key(&self.key_undo, 'z'),
+                edit: key(&self.key_edit, 'e'),
             },
+        }
+    }
+}
+
+/// Post-capture behaviours offered by the Appearance page — (key, label).
+/// Unknown keys fall back to the first entry.
+pub const AFTER_CAPTURE: &[(&str, &str)] = &[
+    ("shelf", "Show thumbnail"),
+    ("editor", "Open in editor"),
+    ("copy", "Copy to clipboard"),
+];
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum AfterCapture {
+    Shelf,
+    Editor,
+    Copy,
+}
+
+impl Config {
+    pub fn after_capture(&self) -> AfterCapture {
+        match self.after_capture.as_str() {
+            "editor" => AfterCapture::Editor,
+            "copy" => AfterCapture::Copy,
+            _ => AfterCapture::Shelf,
         }
     }
 }

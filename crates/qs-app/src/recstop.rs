@@ -5,7 +5,7 @@
 
 use anyhow::{Context, Result};
 use fontdue::Font;
-use qs_overlay::sdf::{ellipse_sdf, fill_cov, Canvas};
+use qs_overlay::sdf::Canvas;
 use softbuffer::{Context as SbContext, Surface};
 use std::num::NonZeroU32;
 use std::rc::Rc;
@@ -16,19 +16,12 @@ use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowId, WindowLevel};
 
 use crate::settings::system_font;
-use crate::widgets::{card_chrome, pill, Txt};
+use crate::ui::{card_chrome, disc, pill};
+use crate::widgets::Txt;
 
 const W: f64 = 172.0;
 const H: f64 = 46.0;
 const STOP: (f64, f64, f64, f64) = (108.0, 10.0, 52.0, 26.0);
-
-const CARD: u32 = 0x24272D;
-const BORDER: u32 = 0x444A55;
-const FRINGE: u32 = 0x000000;
-const FG: u32 = 0xF2F4F7;
-const RED: u32 = 0xE5484D;
-const STOP_BG: u32 = 0x3A3F47;
-const STOP_HOT: u32 = 0xE5484D;
 
 pub struct RecStop {
     win: Rc<Window>,
@@ -123,26 +116,19 @@ impl RecStop {
             scale,
         };
 
-        card_chrome(&mut cv, W, H, 11.0, CARD, BORDER, FRINGE);
+        card_chrome(
+            &mut cv,
+            W,
+            H,
+            11.0,
+            qs_theme::pal().popover,
+            qs_theme::pal().popover_border,
+            qs_theme::pal().fringe,
+        );
 
         // pulsing record dot
         let pulse = 0.55 + 0.45 * (self.t0.elapsed().as_secs_f64() * 3.0).sin().abs();
-        for py in ((H / 2.0 - 5.0) * scale) as i32..((H / 2.0 + 5.0) * scale) as i32 {
-            for px in (9.0 * scale) as i32..(19.0 * scale) as i32 {
-                let d = ellipse_sdf(
-                    px as f64 / scale,
-                    py as f64 / scale,
-                    14.0,
-                    H / 2.0,
-                    5.0,
-                    5.0,
-                );
-                let cov = fill_cov(d, scale) * pulse;
-                if cov > 0.0 {
-                    cv.blend(px, py, RED, cov);
-                }
-            }
-        }
+        disc(&mut cv, 14.0, H / 2.0, 5.0, qs_theme::pal().danger, pulse);
 
         // elapsed time
         let secs = self.t0.elapsed().as_secs();
@@ -151,7 +137,14 @@ impl RecStop {
             font: &self.font,
             scale,
         };
-        t.draw(&mut cv, 26.0, H / 2.0 + 4.5, 12.0, &label, FG);
+        t.draw(
+            &mut cv,
+            26.0,
+            H / 2.0 + 4.5,
+            12.0,
+            &label,
+            qs_theme::pal().fg,
+        );
 
         // Stop pill
         let (bx, by, bw, _bh) = STOP;
@@ -159,12 +152,23 @@ impl RecStop {
             &mut cv,
             STOP,
             7.0,
-            if self.hover_stop { STOP_HOT } else { STOP_BG },
-            BORDER,
+            if self.hover_stop {
+                qs_theme::pal().danger
+            } else {
+                qs_theme::pal().control
+            },
+            qs_theme::pal().popover_border,
             1.0,
         );
         let tw = t.width(11.0, "Stop");
-        t.draw(&mut cv, bx + (bw - tw) / 2.0, by + 17.5, 11.0, "Stop", FG);
+        t.draw(
+            &mut cv,
+            bx + (bw - tw) / 2.0,
+            by + 17.5,
+            11.0,
+            "Stop",
+            qs_theme::pal().fg,
+        );
 
         let _ = buf.present();
     }

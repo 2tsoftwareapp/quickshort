@@ -26,12 +26,12 @@ mod macos;
 pub mod sdf;
 mod toolbar;
 
-pub use annotate::{annotate_image, Annotation};
+pub use annotate::{annotate_image, Annotation, PIX_BLOCK};
 pub use toolbar::{Action, Item, Tool};
 
 const MIN_SELECT: u32 = 3;
 /// Fallback accent — `Prefs::default` and the pixelate preview outline.
-const ACCENT: u32 = 0x0A84FF;
+const ACCENT: u32 = qs_theme::ACCENT_DEFAULT;
 
 /// User-tunable overlay behaviour — the host maps its config into this at
 /// `spawn` so a session never reads files itself.
@@ -55,6 +55,8 @@ pub struct Keys {
     /// screen recording — live frames → ffmpeg until stopped
     pub record: char,
     pub undo: char,
+    /// hand the selection (+ annotations, still editable) to the editor
+    pub edit: char,
 }
 
 impl Default for Prefs {
@@ -69,6 +71,7 @@ impl Default for Prefs {
                 scroll: 'g',
                 record: 'r',
                 undo: 'z',
+                edit: 'e',
             },
         }
     }
@@ -289,7 +292,7 @@ fn composite(frames: &[CapturedFrame], bounds: Rect) -> (Vec<u32>, Vec<u32>, f64
             }
         }
     }
-    let dim = canvas.iter().map(|&p| (p & 0xFEFEFE) >> 1).collect();
+    let dim = canvas.iter().map(|&p| (p & 0xFEFEFE) >> 1).collect(); // allow-hex: per-channel halving mask, not a colour
     (canvas, dim, cscale)
 }
 
@@ -1653,6 +1656,8 @@ impl Session {
                             Some(Action::Save)
                         } else if ch == k.copy {
                             Some(Action::Copy)
+                        } else if ch == k.edit {
+                            Some(Action::Edit)
                         } else if modded {
                             match ch {
                                 x if x == k.ocr => Some(Action::Ocr),

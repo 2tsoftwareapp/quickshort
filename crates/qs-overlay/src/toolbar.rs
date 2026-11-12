@@ -20,6 +20,8 @@ pub enum Action {
     Scroll,
     /// Screencast of this rect, piped to ffmpeg until stopped
     Record,
+    /// Open the capture in the full editor, annotations kept editable
+    Edit,
 }
 
 /// Drawing tools — stay in the overlay and annotate the canvas.
@@ -63,6 +65,7 @@ const MAIN: &[Item] = &[
     Item::Tool(Tool::Pixelate),
     Item::Undo,
     Item::Redo,
+    Item::Act(Action::Edit),
     Item::Act(Action::Save),
     Item::Act(Action::Copy),
     Item::Act(Action::Scroll),
@@ -90,11 +93,8 @@ const GAP: f64 = 8.0; // between buttons
 const PAD: f64 = 6.0; // toolbar edge padding
 const EDGE_GAP: f64 = 4.0; // between selection edge and toolbar
 const STROKE: f64 = 1.8; // icon stroke width, logical px
+// HUD colours are `qs_theme::pal().hud / hud_hover / on_hud / shadow` — dark in every theme
 
-const BG: u32 = 0x2C2C2E;
-const BG_HOVER: u32 = 0x48484D;
-const FG: u32 = 0xFFFFFF;
-const SHADOW: u32 = 0x000000;
 
 pub struct Toolbar {
     /// bounding box in virtual logical coords
@@ -310,9 +310,9 @@ fn paint_button(
     let bg = if active {
         accent
     } else if hovered {
-        BG_HOVER
+        qs_theme::pal().hud_hover
     } else {
-        BG
+        qs_theme::pal().hud
     };
     let fg_a = if enabled { 1.0 } else { 0.35 };
     for y in (cy as i32 - r)..=(cy as i32 + r) {
@@ -324,7 +324,7 @@ fn paint_button(
             if sd > 0.0 {
                 let a = 0.24 * (1.0 - sd / (4.0 * scale)).clamp(0.0, 1.0);
                 if a > 0.0 {
-                    cv.blend(x, y, SHADOW, a);
+                    cv.blend(x, y, qs_theme::pal().shadow, a);
                 }
             }
             // disc + hairline rim
@@ -334,7 +334,7 @@ fn paint_button(
                 cv.blend(x, y, bg, a * 0.9);
                 let rim = (0.5 - d.abs()).clamp(0.0, 1.0);
                 if rim > 0.0 {
-                    cv.blend(x, y, FG, rim * 0.12);
+                    cv.blend(x, y, qs_theme::pal().on_hud, rim * 0.12);
                 }
             }
             // icon — work in logical units, sdf * scale -> physical coverage
@@ -377,7 +377,7 @@ fn draw_icon(
             }
             let a = stroke(d, 1.6) * fg_a;
             if a > 0.0 {
-                cv.blend(x, y, FG, a);
+                cv.blend(x, y, qs_theme::pal().on_hud, a);
             }
         }
         Item::Tool(Tool::Pen) => {
@@ -386,7 +386,7 @@ fn draw_icon(
                 seg_sdf(lx, ly, -4.6, 4.6, 1.4, -1.4).min(seg_sdf(lx, ly, 1.4, -1.4, 4.6, -4.4));
             let a = stroke(d, 2.4) * fg_a;
             if a > 0.0 {
-                cv.blend(x, y, FG, a);
+                cv.blend(x, y, qs_theme::pal().on_hud, a);
             }
         }
         Item::Tool(Tool::Arrow) => {
@@ -396,19 +396,19 @@ fn draw_icon(
                 .min(seg_sdf(lx, ly, 3.6, -3.6, 3.6, 0.6));
             let a = stroke(d, STROKE) * fg_a;
             if a > 0.0 {
-                cv.blend(x, y, FG, a);
+                cv.blend(x, y, qs_theme::pal().on_hud, a);
             }
         }
         Item::Tool(Tool::Rect) => {
             let a = stroke(rrect_sdf(lx, ly, 0.0, 0.0, 4.8, 3.8, 0.9), STROKE) * fg_a;
             if a > 0.0 {
-                cv.blend(x, y, FG, a);
+                cv.blend(x, y, qs_theme::pal().on_hud, a);
             }
         }
         Item::Tool(Tool::Ellipse) => {
             let a = stroke(ellipse_sdf(lx, ly, 0.0, 0.0, 5.0, 3.8), STROKE) * fg_a;
             if a > 0.0 {
-                cv.blend(x, y, FG, a);
+                cv.blend(x, y, qs_theme::pal().on_hud, a);
             }
         }
         Item::Tool(Tool::Marker) => {
@@ -416,12 +416,12 @@ fn draw_icon(
             let d = seg_sdf(lx, ly, -4.8, 4.4, 1.6, -2.0);
             let a = stroke(d, 3.4) * fg_a;
             if a > 0.0 {
-                cv.blend(x, y, FG, a);
+                cv.blend(x, y, qs_theme::pal().on_hud, a);
             }
             let d2 = seg_sdf(lx, ly, 1.6, -2.0, 4.8, -5.2);
             let a = stroke(d2, STROKE) * fg_a;
             if a > 0.0 {
-                cv.blend(x, y, FG, a);
+                cv.blend(x, y, qs_theme::pal().on_hud, a);
             }
         }
         Item::Tool(Tool::Text) | Item::Bold | Item::FontSize(_) => {
@@ -441,7 +441,7 @@ fn draw_icon(
                 0.0
             };
             if a > 0.0 {
-                cv.blend(x, y, FG, a);
+                cv.blend(x, y, qs_theme::pal().on_hud, a);
             }
         }
         Item::Tool(Tool::Pixelate) => {
@@ -452,7 +452,7 @@ fn draw_icon(
                 .min(rrect_sdf(lx, ly, 2.9, 2.9, 1.7, 1.7, 0.4));
             let a = fill_cov(d, scale) * fg_a;
             if a > 0.0 {
-                cv.blend(x, y, FG, a);
+                cv.blend(x, y, qs_theme::pal().on_hud, a);
             }
         }
         Item::Undo | Item::Redo => {
@@ -474,7 +474,7 @@ fn draw_icon(
             d = d.min(seg_sdf(lx, ly, prev.0, prev.1, prev.0 - 2.0 * m, prev.1));
             let a = stroke(d, STROKE) * fg_a;
             if a > 0.0 {
-                cv.blend(x, y, FG, a);
+                cv.blend(x, y, qs_theme::pal().on_hud, a);
             }
         }
         Item::Size(s) => {
@@ -483,7 +483,7 @@ fn draw_icon(
             let d = lx.hypot(ly) - r;
             let a = fill_cov(d, scale) * fg_a;
             if a > 0.0 {
-                cv.blend(x, y, FG, a);
+                cv.blend(x, y, qs_theme::pal().on_hud, a);
             }
         }
         Item::Color(c) => {
@@ -503,7 +503,7 @@ fn draw_icon(
             }
             let a = stroke(d_back, STROKE).max(stroke(d_front, STROKE)) * fg_a;
             if a > 0.0 {
-                cv.blend(x, y, FG, a);
+                cv.blend(x, y, qs_theme::pal().on_hud, a);
             }
         }
         Item::Act(Action::Ocr) => {
@@ -513,7 +513,7 @@ fn draw_icon(
                 .min(seg_sdf(lx, ly, -5.75, 4.5, 1.5, 4.5));
             let a = stroke(d, STROKE) * fg_a;
             if a > 0.0 {
-                cv.blend(x, y, FG, a);
+                cv.blend(x, y, qs_theme::pal().on_hud, a);
             }
         }
         Item::Act(Action::Share) => {
@@ -526,7 +526,7 @@ fn draw_icon(
                 .min(seg_sdf(lx, ly, 0.0, -6.5, 3.0, -3.5));
             let a = stroke(d, STROKE) * fg_a;
             if a > 0.0 {
-                cv.blend(x, y, FG, a);
+                cv.blend(x, y, qs_theme::pal().on_hud, a);
             }
         }
         Item::Act(Action::Scroll) => {
@@ -537,7 +537,7 @@ fn draw_icon(
                 .min(seg_sdf(lx, ly, 2.2, 0.3, 0.0, 2.5));
             let a = stroke(d_page, STROKE).max(stroke(d_arrow, STROKE)) * fg_a;
             if a > 0.0 {
-                cv.blend(x, y, FG, a);
+                cv.blend(x, y, qs_theme::pal().on_hud, a);
             }
         }
         Item::Act(Action::Record) => {
@@ -548,7 +548,18 @@ fn draw_icon(
                 .min(seg_sdf(lx, ly, 6.4, 3.6, 3.8, 2.4));
             let a = stroke(d_body.min(d_lens), STROKE) * fg_a;
             if a > 0.0 {
-                cv.blend(x, y, FG, a);
+                cv.blend(x, y, qs_theme::pal().on_hud, a);
+            }
+        }
+        Item::Act(Action::Edit) => {
+            // "open in editor": page frame with a pencil leaving its
+            // top-right corner — the frame is cut where the pencil crosses
+            let d_frame = rrect_sdf(lx, ly, -1.0, 1.0, 4.6, 4.6, 1.4);
+            let d_pen = seg_sdf(lx, ly, -2.4, 2.4, 4.4, -4.4);
+            let halo = fill_cov(d_pen - 2.6, scale);
+            let a = (stroke(d_frame, STROKE) * (1.0 - halo)).max(stroke(d_pen, 2.2)) * fg_a;
+            if a > 0.0 {
+                cv.blend(x, y, qs_theme::pal().on_hud, a);
             }
         }
         Item::Act(Action::Save) => {
@@ -561,7 +572,7 @@ fn draw_icon(
                 .min(seg_sdf(lx, ly, 3.2, -1.5, 0.0, 1.5));
             let a = stroke(d, STROKE) * fg_a;
             if a > 0.0 {
-                cv.blend(x, y, FG, a);
+                cv.blend(x, y, qs_theme::pal().on_hud, a);
             }
         }
     }

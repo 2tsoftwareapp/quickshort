@@ -36,6 +36,8 @@ struct Run {
     popup_pos: String,
     target: SaveTarget,
     copy_after_save: bool,
+    /// Settings → After capture = "Open in editor"
+    after_editor: bool,
     ocr_lang: String,
     // capture-session inputs
     overlay: Option<Overlay>,
@@ -288,8 +290,14 @@ impl Run {
     }
 
     fn on_done(&mut self, el: &ActiveEventLoop, d: Dispatch) {
+        // the editor is its own process — it outlives this one-shot
+        match &d.outcome {
+            Outcome::Edited(_, doc) => crate::actions::open_editor(doc),
+            Outcome::Saved(p) if self.after_editor => crate::actions::open_editor(p),
+            _ => {}
+        }
         let (msg, saved) = match &d.outcome {
-            Outcome::Saved(p) => (
+            Outcome::Saved(p) | Outcome::Edited(p, _) => (
                 format!(
                     "Saved {}",
                     p.file_name()
@@ -376,6 +384,14 @@ impl Run {
             }
             QaAction::Beautify => c.beautify(),
             QaAction::Pin => unreachable!(),
+            QaAction::Edit => {
+                let p = c
+                    .saved_path()
+                    .or_else(|| actions::save_to_dir(c.image(), &self.save_dir).ok());
+                if let Some(p) = p {
+                    actions::open_editor(&p);
+                }
+            }
             QaAction::Share | QaAction::Revoke => {
                 // one-shot keeps no revoke ledger — Share is all it
                 // offers; Revoke can't be produced (shared stays false)
@@ -409,6 +425,7 @@ pub fn run(
         popup_pos: cfg.popup_pos.clone(),
         target,
         copy_after_save: cfg.copy_after_save,
+        after_editor: cfg.after_capture() == crate::config::AfterCapture::Editor,
         ocr_lang: cfg.ocr_lang.clone(),
         overlay: None,
         frames: Some(frames),

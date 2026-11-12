@@ -14,7 +14,7 @@ use winit::window::WindowId;
 
 use crate::actions::{self, Dispatch, Outcome, SaveTarget};
 use crate::chrome::{self, Chrome, ChromeCmd, ChromeEv, Land, ShotKind};
-use crate::config::Config;
+use crate::config::{AfterCapture, Config};
 use crate::pin::Pin;
 use crate::quick_access::{QaAction, QuickAccess};
 use crate::settings::{Settings, SettingsEvent};
@@ -536,7 +536,16 @@ impl Host {
         self.toast = None;
         #[cfg(target_os = "linux")]
         {
-            let _ = (sel, img, kind, saved, dur_s, shared);
+            let _ = (sel, img, dur_s, shared);
+            // a saved image gets the thumbnail + Edit notification (the
+            // Linux stand-in for the corner shelf); recordings and the
+            // rest keep the plain confirmation
+            if let (Some(p), ShotKind::Saved) = (saved, kind) {
+                eprintln!("linux: post-capture card ({msg})");
+                self.toast = None;
+                crate::linux_notify::send_shot(msg, p);
+                return;
+            }
             let ok = !msg.contains("No text found");
             eprintln!("linux: post-capture toast ({msg})");
             self.toast_done(el, msg.to_string(), ok);
@@ -656,9 +665,8 @@ impl Host {
                 }
             }
             chrome::MENU_OPEN => {
-                // Open the shot in the OS image editor (macOS Preview).
-                // Unsaved shots go to a cache-dir PNG first — Preview
-                // needs a path.
+                // Open the shot in Quickshort Editor (or OS default image editor).
+                // Unsaved shots go to a cache-dir PNG first so the editor gets a path.
                 let shot_path = self.chrome.shot(wid, idx).and_then(|s| s.path.clone());
                 let mut p = shot_path;
                 if p.is_none() {
@@ -673,7 +681,7 @@ impl Host {
                     }
                 }
                 if let Some(p) = p {
-                    actions::open_path(&p);
+                    actions::open_editor(&p);
                 }
             }
             chrome::MENU_DEL => {
@@ -746,6 +754,21 @@ impl Host {
                 }
                 QaAction::Beautify => c.beautify(),
                 QaAction::Pin => pin = true,
+                QaAction::Edit => {
+                    // unsaved cards go through a cache PNG so the editor
+                    // has a path — same as the shelf's Open
+                    let p = c.saved_path().or_else(|| {
+                        let dir = dirs::cache_dir()
+                            .unwrap_or_else(|| PathBuf::from("/tmp"))
+                            .join("quickshort");
+                        actions::save_to_dir(c.image(), &dir)
+                            .map_err(|e| eprintln!("edit: save failed: {e:#}"))
+                            .ok()
+                    });
+                    if let Some(p) = p {
+                        actions::open_editor(&p);
+                    }
+                }
                 QaAction::Share => {
                     let sm = self
                         .share
@@ -1056,10 +1079,44 @@ impl ApplicationHandler<HostEvent> for Host {
                     // image outcomes fly to the album stack, except Copy —
                     // nothing to act on later, so it confirms on the toast
                     Ok(d) => match d.outcome {
+                        Outcome::Edited(p, doc) => {
+                            // PNG lands like a Save; the editor opens the
+                            // `.qsdoc` so annotations stay editable
+                            self.card = None;
+                            self.toast = None;
+                            self.rebuild_menu();
+                            actions::open_editor(&doc);
+                            let name = p
+                                .file_name()
+                                .map(|n| n.to_string_lossy().into_owned())
+                                .unwrap_or_default();
+                            self.land_shot(
+                                el,
+                                Some(d.sel),
+                                d.img,
+                                ShotKind::Saved,
+                                Some(p),
+                                None,
+                                None,
+                                &format!("Saved {name}"),
+                            );
+                        }
                         Outcome::Saved(p) => {
                             self.card = None;
                             self.toast = None;
                             self.rebuild_menu();
+                            match self.cfg.after_capture() {
+                                AfterCapture::Editor => actions::open_editor(&p),
+                                AfterCapture::Copy => {
+                                    // copy_after_save already did it
+                                    if !self.cfg.copy_after_save {
+                                        actions::copy_image(&d.img, false);
+                                    }
+                                    self.toast_done(el, "Copied to clipboard".to_string(), true);
+                                    return;
+                                }
+                                AfterCapture::Shelf => {}
+                            }
                             let name = p
                                 .file_name()
                                 .map(|n| n.to_string_lossy().into_owned())

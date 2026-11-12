@@ -4,23 +4,14 @@
 //! stitched image — `stitch` normalizes to scale 1.0 so coords map 1:1.
 
 use crate::sdf::{ellipse_sdf, rrect_sdf, seg_sdf, stroke_cov, Canvas};
-use ab_glyph::{point, Font, FontVec, ScaleFont, VariableFont};
+use ab_glyph::{point, Font, FontVec, ScaleFont};
 use image::RgbaImage;
 use qs_core::{Point, Rect};
 use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 
 /// Palette for drawing tools (system colors).
-pub const PALETTE: [u32; 8] = [
-    0xFF453A, // red
-    0xFF9F0A, // orange
-    0xFFD60A, // yellow
-    0x32D74B, // green
-    0x0A84FF, // blue
-    0xBF5AF2, // purple
-    0xFFFFFF, // white
-    0x1C1C1E, // black
-];
+pub const PALETTE: [u32; 8] = qs_theme::ANNOTATION;
 
 /// Stroke widths per size level (S/M/L) — pen & shapes; marker is wider.
 pub const SIZES: [f64; 3] = [2.0, 3.6, 6.0];
@@ -39,7 +30,7 @@ pub const TEXT_SIZES: [(f64, &str); 6] = [
 /// Index into `TEXT_SIZES` armed by default — 14 px.
 pub const TEXT_SIZE_DEFAULT: usize = 1;
 pub const PIX_BLOCK: i32 = 8; // pixelate block, logical px
-const ACCENT: u32 = 0x0A84FF; // pixelate drag-preview outline
+const ACCENT: u32 = qs_theme::ACCENT_DEFAULT; // pixelate drag-preview outline
 
 #[derive(Clone)]
 pub enum Annotation {
@@ -562,23 +553,22 @@ pub fn annotate_image(img: &mut RgbaImage, sel: Rect, annots: &[Annotation], sca
     flush(&layer, img);
 }
 
-/// Bundled Inter variable font (OFL — fonts/OFL.txt): `wght` 100–900 and
-/// `opsz` live in one file, so Regular/Bold are runtime coordinates.
-/// `set_variation` needs `&mut`, so the instance sits in a Mutex.
-fn with_font<T>(px: f64, bold: bool, f: impl FnOnce(&FontVec) -> T) -> T {
-    static FONT: OnceLock<Mutex<FontVec>> = OnceLock::new();
-    let mut font = FONT
-        .get_or_init(|| {
-            Mutex::new(
-                FontVec::try_from_vec(include_bytes!("../fonts/Inter.var.ttf").to_vec())
-                    .expect("bundled Inter.var.ttf must parse"),
-            )
+/// Bundled Be Vietnam Pro Regular/Bold (OFL — qs-render/fonts/OFL.txt).
+fn with_font<T>(_px: f64, bold: bool, f: impl FnOnce(&FontVec) -> T) -> T {
+    static REG: OnceLock<FontVec> = OnceLock::new();
+    static BOLD: OnceLock<FontVec> = OnceLock::new();
+    let font = if bold {
+        BOLD.get_or_init(|| {
+            FontVec::try_from_vec(include_bytes!("../../qs-render/fonts/BeVietnamPro-Bold.ttf").to_vec())
+                .expect("bundled BeVietnamPro-Bold.ttf must parse")
         })
-        .lock()
-        .unwrap();
-    font.set_variation(b"wght", if bold { 700.0 } else { 400.0 });
-    font.set_variation(b"opsz", px as f32);
-    f(&font)
+    } else {
+        REG.get_or_init(|| {
+            FontVec::try_from_vec(include_bytes!("../../qs-render/fonts/BeVietnamPro-Regular.ttf").to_vec())
+                .expect("bundled BeVietnamPro-Regular.ttf must parse")
+        })
+    };
+    f(font)
 }
 
 /// (advance width, line height) of `text` at `px` logical — used for the

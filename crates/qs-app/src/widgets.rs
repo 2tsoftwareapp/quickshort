@@ -4,7 +4,7 @@
 //! itself on top of these.
 
 use fontdue::Font;
-use qs_overlay::sdf::{fill_cov, rrect_sdf, stroke_cov, Canvas};
+use qs_overlay::sdf::Canvas;
 use winit::dpi::PhysicalPosition;
 use winit::monitor::MonitorHandle;
 
@@ -122,6 +122,46 @@ pub fn round_window(win: &winit::window::Window, radius: f64) {
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub fn round_window(_win: &winit::window::Window, _radius: f64) {}
 
+/// Symbols Be Vietnam Pro lacks (⌘ ⇧ ⌥ ⌃ …). Looked up once, from the
+/// platform's symbol-capable system fonts; `None` if none is installed.
+fn symbol_font() -> Option<&'static Font> {
+    static F: std::sync::OnceLock<Option<Font>> = std::sync::OnceLock::new();
+    F.get_or_init(|| {
+        const CANDIDATES: &[&str] = &[
+            #[cfg(target_os = "macos")]
+            "/System/Library/Fonts/Apple Symbols.ttf",
+            #[cfg(target_os = "macos")]
+            "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+            #[cfg(target_os = "windows")]
+            "C:\\Windows\\Fonts\\seguisym.ttf",
+            #[cfg(target_os = "windows")]
+            "C:\\Windows\\Fonts\\segoeui.ttf",
+            #[cfg(target_os = "linux")]
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            #[cfg(target_os = "linux")]
+            "/usr/share/fonts/truetype/noto/NotoSansSymbols2-Regular.ttf",
+            #[cfg(target_os = "linux")]
+            "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        ];
+        CANDIDATES.iter().find_map(|p| {
+            let bytes = std::fs::read(p).ok()?;
+            Font::from_bytes(bytes.as_slice(), fontdue::FontSettings::default()).ok()
+        })
+    })
+    .as_ref()
+}
+
+/// The face to draw `ch` with: `primary` when it has the glyph, else the
+/// symbol fallback, else `primary` (draws its .notdef box, as before).
+pub fn face_for(primary: &Font, ch: char) -> &Font {
+    if ch.is_ascii() || primary.lookup_glyph_index(ch) != 0 {
+        return primary;
+    }
+    match symbol_font() {
+        Some(f) if f.lookup_glyph_index(ch) != 0 => f,
+        _ => primary,
+    }
+}
 /// Text rasterizer: `x`/`y` in logical px, `y` = glyph baseline.
 pub struct Txt<'a> {
     pub font: &'a Font,
@@ -134,7 +174,7 @@ impl Txt<'_> {
         let mut pen = x * self.scale;
         let baseline = y * self.scale;
         for ch in s.chars() {
-            let (m, bmp) = self.font.rasterize(ch, px as f32);
+            let (m, bmp) = face_for(self.font, ch).rasterize(ch, px as f32);
             let gx = (pen + m.xmin as f64) as i32;
             let gy = (baseline - m.height as f64 - m.ymin as f64) as i32;
             for row in 0..m.height {
@@ -152,7 +192,7 @@ impl Txt<'_> {
     pub fn width(&self, size: f64, s: &str) -> f64 {
         let px = (size * self.scale) as f32;
         s.chars()
-            .map(|c| self.font.metrics(c, px).advance_width)
+            .map(|c| face_for(self.font, c).metrics(c, px).advance_width)
             .sum::<f32>() as f64
             / self.scale
     }
@@ -164,7 +204,7 @@ impl Txt<'_> {
         let mut pen = x * self.scale;
         let baseline = y * self.scale;
         for ch in s.chars() {
-            let (m, bmp) = self.font.rasterize(ch, px as f32);
+            let (m, bmp) = face_for(self.font, ch).rasterize(ch, px as f32);
             let gx = (pen + m.xmin as f64) as i32;
             let gy = (baseline - m.height as f64 - m.ymin as f64) as i32;
             for row in 0..m.height {
@@ -180,64 +220,39 @@ impl Txt<'_> {
     }
 }
 
-/// Window-sized rounded card: fill + rim inside, soft fringe outside
-/// (stands in for the drop shadow a transparent window can't show —
-/// softbuffer ignores per-pixel alpha, so the whole surface is painted).
-pub fn card_chrome(cv: &mut Canvas, w: f64, h: f64, rad: f64, fill: u32, border: u32, fringe: u32) {
-    let scale = cv.scale;
-    for py in 0..cv.h as i32 {
-        for px in 0..cv.w as i32 {
-            let d = rrect_sdf(
-                px as f64 / scale,
-                py as f64 / scale,
-                w / 2.0,
-                h / 2.0,
-                w / 2.0,
-                h / 2.0,
-                rad,
-            );
-            if d > 0.0 {
-                cv.blend(px, py, fringe, 0.35 * (1.0 - d / 2.5).clamp(0.0, 1.0));
-                continue;
-            }
-            cv.blend(px, py, fill, fill_cov(d, scale));
-            let rim = stroke_cov(d, 0.7, scale);
-            if rim > 0.0 {
-                cv.blend(px, py, border, rim);
-            }
-        }
-    }
-}
+#[cfg(test)]
+mod face_tests {
+    use super::*;
 
-/// Rounded button background + rim. `alpha` dims the fill (disabled).
-pub fn pill(
-    cv: &mut Canvas,
-    rect: (f64, f64, f64, f64),
-    rad: f64,
-    bg: u32,
-    border: u32,
-    alpha: f64,
-) {
-    let (bx, by, bw, bh) = rect;
-    let scale = cv.scale;
-    for py in (by * scale) as i32..((by + bh) * scale) as i32 {
-        for px in (bx * scale) as i32..((bx + bw) * scale) as i32 {
-            let d = rrect_sdf(
-                px as f64 / scale,
-                py as f64 / scale,
-                bx + bw / 2.0,
-                by + bh / 2.0,
-                bw / 2.0,
-                bh / 2.0,
-                rad,
+    fn bundled() -> Font {
+        let bytes = include_bytes!("../../qs-render/fonts/BeVietnamPro-Regular.ttf");
+        Font::from_bytes(bytes.as_slice(), fontdue::FontSettings::default()).unwrap()
+    }
+
+    #[test]
+    fn ascii_stays_on_the_primary_face() {
+        let f = bundled();
+        assert!(std::ptr::eq(face_for(&f, 'S'), &f));
+    }
+
+    #[test]
+    fn modifier_symbols_fall_back_when_a_symbol_font_exists() {
+        let f = bundled();
+        if symbol_font().is_none() {
+            eprintln!("no symbol font installed — skipped");
+            return;
+        }
+        for ch in ['⌘', '⇧', '⌥', '⌃'] {
+            assert_eq!(
+                f.lookup_glyph_index(ch),
+                0,
+                "{ch} is not in the bundled font"
             );
-            if d <= 0.0 {
-                cv.blend(px, py, bg, fill_cov(d, scale) * alpha);
-                let rim = stroke_cov(d, 0.7, scale);
-                if rim > 0.0 {
-                    cv.blend(px, py, border, rim);
-                }
-            }
+            let (m, bmp) = face_for(&f, ch).rasterize(ch, 14.0);
+            assert!(
+                m.width > 0 && bmp.iter().any(|&a| a > 0),
+                "{ch} drew nothing"
+            );
         }
     }
 }

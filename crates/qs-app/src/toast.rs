@@ -9,7 +9,7 @@ use fontdue::Font;
 use objc2::rc::Retained;
 #[cfg(target_os = "macos")]
 use objc2_app_kit::{NSAnimatablePropertyContainer, NSAnimationContext, NSView, NSWindow};
-use qs_overlay::sdf::{ellipse_sdf, fill_cov, seg_sdf, stroke_cov, Canvas};
+use qs_overlay::sdf::Canvas;
 #[cfg(target_os = "macos")]
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use softbuffer::{Context as SbContext, Surface};
@@ -24,19 +24,12 @@ use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowId, WindowLevel};
 
 use crate::settings::system_font;
-use crate::widgets::{card_chrome, Txt};
+use crate::ui::{card_chrome, disc, mark, ring, strip, Mark};
+use crate::widgets::Txt;
 
 const W: f64 = 272.0;
 const H: f64 = 58.0;
 const DONE_TTL: Duration = Duration::from_millis(1800);
-
-const CARD: u32 = 0xFFFFFF;
-const BORDER: u32 = 0xCBD0D8;
-const FRINGE: u32 = 0x1A1A1F;
-const FG: u32 = 0x24272D;
-const FG_DIM: u32 = 0x535A66;
-const OK: u32 = 0x28A745;
-const ERR: u32 = 0xD92D20;
 
 #[derive(Clone, Copy, PartialEq)]
 enum State {
@@ -223,23 +216,31 @@ impl Toast {
 
         // softbuffer ignores per-pixel alpha — the card must fill the whole
         // window or the uncovered corners render as an opaque black frame.
-        card_chrome(&mut cv, W, H, 11.0, CARD, BORDER, FRINGE);
+        card_chrome(
+            &mut cv,
+            W,
+            H,
+            11.0,
+            qs_theme::pal().popover,
+            qs_theme::pal().popover_border,
+            qs_theme::pal().fringe,
+        );
 
         // state icon: filled circle, glyph inside
         let (cx, cy, rad) = (28.0, H / 2.0 - 1.5, 11.0);
         match self.state {
             State::Working => {
                 let a = 0.45 + 0.55 * self.pulse.sin().abs();
-                fill_circle(&mut cv, cx, cy, rad, self.accent, a, scale);
-                ring(&mut cv, cx, cy, rad + 3.5, self.accent, a * 0.35, scale);
+                disc(&mut cv, cx, cy, rad, self.accent, a);
+                ring(&mut cv, cx, cy, rad + 3.5, 1.0, self.accent, a * 0.35);
             }
             State::Ok => {
-                fill_circle(&mut cv, cx, cy, rad, OK, 1.0, scale);
-                tick(&mut cv, cx, cy, scale);
+                disc(&mut cv, cx, cy, rad, qs_theme::pal().success, 1.0);
+                mark(&mut cv, Mark::Tick, cx, cy, 1.6, qs_theme::pal().on_accent);
             }
             State::Err => {
-                fill_circle(&mut cv, cx, cy, rad, ERR, 1.0, scale);
-                cross(&mut cv, cx, cy, scale);
+                disc(&mut cv, cx, cy, rad, qs_theme::pal().danger, 1.0);
+                mark(&mut cv, Mark::Cross, cx, cy, 1.6, qs_theme::pal().on_accent);
             }
         }
 
@@ -256,21 +257,23 @@ impl Toast {
             H / 2.0 + 4.0,
             13.0,
             &msg,
-            if working { FG_DIM } else { FG },
+            if working {
+                qs_theme::pal().fg_dim
+            } else {
+                qs_theme::pal().fg
+            },
         );
 
         // countdown bar: accent strip along the bottom edge while done
         if let Some(d) = self.deadline {
             let rem = (d - Instant::now()).as_secs_f64() / DONE_TTL.as_secs_f64();
             let frac = rem.clamp(0.0, 1.0);
-            let col = if self.state == State::Err { ERR } else { OK };
-            let bw = (W - 24.0) * frac;
-            let y = H - 4.0;
-            for py in (y * scale) as i32..((y + 2.0) * scale) as i32 {
-                for px in (12.0 * scale) as i32..((12.0 + bw) * scale) as i32 {
-                    cv.blend(px, py, col, 0.85);
-                }
-            }
+            let col = if self.state == State::Err {
+                qs_theme::pal().danger
+            } else {
+                qs_theme::pal().success
+            };
+            strip(&mut cv, (12.0, H - 4.0, (W - 24.0) * frac, 2.0), col, 0.85);
         }
 
         let _ = buf.present();
@@ -348,70 +351,4 @@ fn ellipsize(t: &Txt, size: f64, s: &str, max_w: f64) -> String {
         out.push(ch);
     }
     format!("{out}…")
-}
-
-fn fill_circle(cv: &mut Canvas, cx: f64, cy: f64, r: f64, rgb: u32, a: f64, s: f64) {
-    for py in ((cy - r) * s) as i32..((cy + r) * s) as i32 {
-        for px in ((cx - r) * s) as i32..((cx + r) * s) as i32 {
-            let d = ellipse_sdf(px as f64 / s, py as f64 / s, cx, cy, r, r);
-            let c = fill_cov(d, s) * a;
-            if c > 0.0 {
-                cv.blend(px, py, rgb, c);
-            }
-        }
-    }
-}
-
-fn ring(cv: &mut Canvas, cx: f64, cy: f64, r: f64, rgb: u32, a: f64, s: f64) {
-    for py in ((cy - r - 2.0) * s) as i32..((cy + r + 2.0) * s) as i32 {
-        for px in ((cx - r - 2.0) * s) as i32..((cx + r + 2.0) * s) as i32 {
-            let d = ellipse_sdf(px as f64 / s, py as f64 / s, cx, cy, r, r);
-            let c = stroke_cov(d, 1.0, s) * a;
-            if c > 0.0 {
-                cv.blend(px, py, rgb, c);
-            }
-        }
-    }
-}
-
-fn tick(cv: &mut Canvas, cx: f64, cy: f64, s: f64) {
-    for py in ((cy - 6.0) * s) as i32..((cy + 6.0) * s) as i32 {
-        for px in ((cx - 6.0) * s) as i32..((cx + 6.0) * s) as i32 {
-            let lx = px as f64 / s;
-            let ly = py as f64 / s;
-            let d = seg_sdf(lx, ly, cx - 4.0, cy, cx - 1.0, cy + 3.0).min(seg_sdf(
-                lx,
-                ly,
-                cx - 1.0,
-                cy + 3.0,
-                cx + 4.5,
-                cy - 3.5,
-            ));
-            let c = stroke_cov(d, 1.6, s);
-            if c > 0.0 {
-                cv.blend(px, py, 0xFFFFFF, c);
-            }
-        }
-    }
-}
-
-fn cross(cv: &mut Canvas, cx: f64, cy: f64, s: f64) {
-    for py in ((cy - 6.0) * s) as i32..((cy + 6.0) * s) as i32 {
-        for px in ((cx - 6.0) * s) as i32..((cx + 6.0) * s) as i32 {
-            let lx = px as f64 / s;
-            let ly = py as f64 / s;
-            let d = seg_sdf(lx, ly, cx - 3.0, cy - 3.0, cx + 3.0, cy + 3.0).min(seg_sdf(
-                lx,
-                ly,
-                cx - 3.0,
-                cy + 3.0,
-                cx + 3.0,
-                cy - 3.0,
-            ));
-            let c = stroke_cov(d, 1.6, s);
-            if c > 0.0 {
-                cv.blend(px, py, 0xFFFFFF, c);
-            }
-        }
-    }
 }

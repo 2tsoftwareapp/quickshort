@@ -1,8 +1,9 @@
 name: release
 
+# CI disabled on GitHub as requested
 on:
-  push:
-    tags: ["v*"]
+  # push:
+  #   tags: ["v*"]
   workflow_dispatch:
     inputs:
       version:

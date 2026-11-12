@@ -20,6 +20,8 @@ pub enum SaveTarget {
 #[derive(Debug)]
 pub enum Outcome {
     Saved(PathBuf),
+    /// flattened PNG + its editable `.qsdoc` sibling — open the editor
+    Edited(PathBuf, PathBuf),
     Copied,
     /// public URL of the shared file + where it was saved locally
     Shared(crate::share::SharedLink, PathBuf),
@@ -60,6 +62,8 @@ pub fn dispatch(
     let Some((mut img, scale)) = img else {
         anyhow::bail!("selection {sel:?} covers no monitor");
     };
+    // the editor wants the clean base under its editable objects
+    let base = (action == Action::Edit).then(|| img.clone());
     qs_overlay::annotate_image(&mut img, sel, annots, scale);
 
     let outcome = match action {
@@ -92,6 +96,18 @@ pub fn dispatch(
         Action::Copy => {
             copy_image_to_clipboard(&img, wait_clipboard);
             Outcome::Copied
+        }
+        Action::Edit => {
+            // the flattened PNG lands like a normal Save (recents, shelf,
+            // other apps); the `.qsdoc` beside it keeps every annotation
+            // editable — the editor saves both back
+            let base = base.expect("base kept for Edit");
+            let p = save(&img, target)?;
+            let doc = crate::to_doc::from_overlay(base.width(), base.height(), scale, sel, annots);
+            let dp = qs_doc::qsdoc::sibling_path(&p);
+            let thumb = qs_doc::qsdoc::make_thumb(&img);
+            qs_doc::qsdoc::write(&dp, &doc, &base, Some(&thumb))?;
+            Outcome::Edited(p, dp)
         }
         Action::Scroll | Action::Record => {
             // the caller handles it — these need a live capture session /
@@ -524,5 +540,40 @@ fn report_clipboard(r: Result<Result<(), arboard::Error>, arboard::Error>) {
         Ok(Ok(())) => eprintln!("copied to clipboard"),
         Ok(Err(e)) => eprintln!("clipboard set failed: {e}"),
         Err(e) => eprintln!("clipboard unavailable: {e}"),
+    }
+}
+
+/// Open an image or `.qsdoc` file in the Quickshort Editor.
+///
+/// If `qs-editor` binary is in the same directory as the current executable,
+/// it launches that binary; otherwise falls back to system `open_path`.
+pub fn open_editor(p: &Path) {
+    let self_exe = std::env::current_exe().ok();
+    let sibling_editor = self_exe.as_ref().and_then(|e| {
+        let parent = e.parent()?;
+        let cand = parent.join(if cfg!(windows) {
+            "qs-editor.exe"
+        } else {
+            "qs-editor"
+        });
+        cand.exists().then_some(cand)
+    });
+
+    if let Some(editor) = sibling_editor {
+        let mut cmd = std::process::Command::new(editor);
+        cmd.arg(p)
+            .env("QS_THEME", crate::config::Config::load().theme);
+        if let Err(e) = cmd.spawn() {
+            eprintln!("failed to spawn qs-editor: {e}; falling back to open_path");
+            open_path(p);
+        }
+    } else {
+        // Fallback: try PATH or default association
+        let mut cmd = std::process::Command::new("qs-editor");
+        cmd.arg(p)
+            .env("QS_THEME", crate::config::Config::load().theme);
+        if let Err(_) = cmd.spawn() {
+            open_path(p);
+        }
     }
 }

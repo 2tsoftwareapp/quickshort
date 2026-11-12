@@ -3,10 +3,11 @@
 # gate. Runs the same system deps as the release linux job.
 name: verify
 
+# CI disabled on GitHub as requested
 on:
-  push:
-    branches: [master, main]
-  pull_request:
+  # push:
+  #   branches: [master, main]
+  # pull_request:
   workflow_dispatch:
 
 jobs:

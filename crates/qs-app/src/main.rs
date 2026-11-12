@@ -25,8 +25,10 @@ mod recstop;
 mod scroll;
 mod settings;
 mod share;
+mod to_doc;
 mod toast;
 mod tray;
+mod ui;
 mod update;
 mod widgets;
 
@@ -222,6 +224,11 @@ fn run_one_shot(args: Args) -> Result<()> {
             &cfg.ocr_lang,
         )?;
         eprintln!("fullscreen saved, {:?} outcome", d.outcome);
+        if let actions::Outcome::Saved(p) = &d.outcome {
+            if cfg.after_capture() == config::AfterCapture::Editor {
+                actions::open_editor(p);
+            }
+        }
         return Ok(());
     }
 
