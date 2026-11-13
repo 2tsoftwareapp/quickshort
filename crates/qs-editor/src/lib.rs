@@ -5,6 +5,7 @@ pub mod canvas;
 pub mod clipboard;
 pub mod fonts;
 pub mod icons;
+pub mod image_panel;
 pub mod recovery;
 pub mod theme;
 pub mod toolbar;

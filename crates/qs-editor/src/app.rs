@@ -4,6 +4,7 @@ use crate::{
     canvas::{self, CanvasView},
     clipboard, fonts,
     icons::{self, ActionIcon},
+    image_panel::{self, OrientCmd},
     recovery,
     theme::{self, accent_blue, border_subtle, success_green, text_primary},
     toolbar::{self, ZoomCmd},
@@ -85,7 +86,8 @@ impl EditorApp {
         let canvas_background = doc.background;
         let mut view = CanvasView::default();
         let base_rect = RectF::new(0.0, 0.0, doc.base_size.w, doc.base_size.h);
-        view.center = base_rect.center();
+        view.sync(&doc);
+        view.center = view.map.to_display(base_rect.center());
         let initial_zoom = (700.0 / doc.base_size.w.max(1.0))
             .min(500.0 / doc.base_size.h.max(1.0))
             .clamp(0.2, 1.0);
@@ -142,7 +144,8 @@ impl EditorApp {
         let canvas_background = doc.background;
         let base_rect = RectF::new(0.0, 0.0, doc.base_size.w, doc.base_size.h);
         self.view = CanvasView::default();
-        self.view.center = base_rect.center();
+        self.view.sync(&doc);
+        self.view.center = self.view.map.to_display(base_rect.center());
         self.view.zoom = (700.0 / doc.base_size.w.max(1.0))
             .min(500.0 / doc.base_size.h.max(1.0))
             .clamp(0.2, 1.0);
@@ -421,7 +424,9 @@ impl EditorApp {
             self.canvas_insets = [0.0; 4];
             self.canvas_dialog_open = false;
         } else if apply {
-            let [top, right, bottom, left] = self.canvas_insets;
+            // the dialog's edges are the displayed ones
+            let insets = self.editor.doc().orientation.insets_to_input(self.canvas_insets);
+            let [top, right, bottom, left] = insets;
             if self.editor.update_canvas(top, right, bottom, left, self.canvas_background) {
                 self.touch();
             }
@@ -574,9 +579,8 @@ impl EditorApp {
             ZoomCmd::In => self.view.zoom_at(1.25, center, rect),
             ZoomCmd::Out => self.view.zoom_at(0.8, center, rect),
             ZoomCmd::Fit => {
-                let doc_rect =
-                    RectF::new(0.0, 0.0, self.editor.doc().view.w, self.editor.doc().view.h);
-                self.view.fit_to(doc_rect, rect, 40.0);
+                self.view.sync(self.editor.doc());
+                self.view.fit_to(self.view.display_rect(), rect, 40.0);
             }
         }
     }
@@ -593,6 +597,7 @@ impl EditorApp {
         let mut esc = false;
         let mut tool = None;
         let mut nudge = None;
+        let mut orient = None;
         let mut zoom_cmd = ZoomCmd::None;
 
         ctx.input_mut(|i| {
@@ -630,6 +635,17 @@ impl EditorApp {
 
             if i.consume_key(Modifiers::COMMAND, Key::O) || i.consume_key(Modifiers::CTRL, Key::O) {
                 open = true;
+            }
+
+            // Shift first: consume_key ignores an unrequested Shift
+            if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::R)
+                || i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::R)
+            {
+                orient = Some(OrientCmd::RotateCcw);
+            } else if i.consume_key(Modifiers::COMMAND, Key::R)
+                || i.consume_key(Modifiers::CTRL, Key::R)
+            {
+                orient = Some(OrientCmd::RotateCw);
             }
 
             if i.consume_key(Modifiers::COMMAND, Key::Plus)
@@ -755,7 +771,13 @@ impl EditorApp {
         if let Some(t) = tool {
             self.editor.set_tool(t);
         }
+        if let Some(cmd) = orient {
+            image_panel::apply_orient(&mut self.editor, cmd);
+            self.touch();
+        }
         if let Some((dx, dy)) = nudge {
+            // arrows move what the user sees, whatever the orientation
+            let (dx, dy) = self.editor.doc().orientation.unmap_vector(dx, dy);
             self.editor.nudge(dx, dy);
             self.touch();
         }
@@ -910,20 +932,33 @@ impl eframe::App for EditorApp {
         }
         self.canvas_dialog(&ctx);
 
+        let panel_mutated = egui::Panel::right("image_panel")
+            .resizable(false)
+            .exact_size(236.0)
+            .frame(
+                egui::Frame::NONE
+                    .fill(theme::bg_inspector_bot())
+                    .inner_margin(egui::Margin::same(12)),
+            )
+            .show(ui, |ui| image_panel::render(ui, &mut self.editor))
+            .inner;
+        if panel_mutated {
+            self.touch();
+        }
+
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ui, |ui| {
                 let (screen_rect, response) =
                     ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
                 self.last_canvas_rect = Some(screen_rect);
+                self.view.sync(self.editor.doc());
 
                 if self.needs_initial_fit
                     && screen_rect.width() > 32.0
                     && screen_rect.height() > 32.0
                 {
-                    let doc_rect =
-                        RectF::new(0.0, 0.0, self.editor.doc().view.w, self.editor.doc().view.h);
-                    self.view.fit_to(doc_rect, screen_rect, 40.0);
+                    self.view.fit_to(self.view.display_rect(), screen_rect, 40.0);
                     self.view.zoom = self.view.zoom.min(1.0);
                     self.needs_initial_fit = false;
                 }
@@ -1001,9 +1036,9 @@ impl eframe::App for EditorApp {
                 canvas::paint_workspace(&painter, screen_rect);
 
                 // 2. Document screen bounds + soft multi-layer drop shadow
-                let doc_rect =
-                    RectF::new(0.0, 0.0, self.editor.doc().view.w, self.editor.doc().view.h);
-                let img_screen_rect = self.view.doc_rect_to_screen(doc_rect, screen_rect);
+                self.view.sync(self.editor.doc());
+                let img_screen_rect =
+                    self.view.display_rect_to_screen(self.view.display_rect(), screen_rect);
 
                 canvas::paint_document_shadow(&painter, img_screen_rect);
 

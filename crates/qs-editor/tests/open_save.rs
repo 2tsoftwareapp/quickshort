@@ -53,3 +53,22 @@ fn test_roundtrip_qsdoc_in_editor_pipeline() {
     let _ = fs::remove_file(&export_path);
     let _ = fs::remove_dir(&tmp_dir);
 }
+
+#[test]
+fn rotated_document_survives_save_and_exports_swapped() {
+    let dir = std::env::temp_dir().join(format!("qs_test_orient_{}", std::process::id()));
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("rotated.qsdoc");
+    let mut ed = qs_edit::Editor::new(Document::new(120, 40, 2.0));
+    ed.rotate_cw();
+    ed.flip_h();
+    let base = RgbaImage::from_fn(120, 40, |x, y| image::Rgba([x as u8, y as u8, 9, 255]));
+    qsdoc::write(&path, ed.doc(), &base, None).expect("write");
+    let loaded = qsdoc::read(&path).expect("read");
+    assert_eq!(loaded.doc.orientation, qs_doc::Orientation::Transpose);
+    let flat = qs_render::render(&loaded.doc, &loaded.base);
+    assert_eq!(flat.dimensions(), (40, 120));
+    assert_eq!(flat.get_pixel(7, 100), base.get_pixel(100, 7), "transpose");
+    assert_eq!(loaded.base, base, "base pixels stay untouched");
+    let _ = fs::remove_dir_all(&dir);
+}

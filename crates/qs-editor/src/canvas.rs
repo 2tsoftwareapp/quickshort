@@ -5,17 +5,51 @@
 
 use crate::theme::{self, accent_blue, amber_orange, bg_workspace_bot, bg_workspace_top};
 use eframe::egui::{self, Color32, Pos2, Rect, Stroke, StrokeKind, Vec2};
-use qs_doc::{ObjectKind, PointF, RectF};
+use qs_doc::{Document, ObjectKind, Orientation, PointF, RectF, SizeF};
 
 pub const MIN_ZOOM: f32 = 0.1;
 pub const MAX_ZOOM: f32 = 16.0;
 
+/// Document -> oriented output ("display") coordinates: the current view
+/// origin and orientation, refreshed from the document every frame.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct DisplayMap {
+    pub view: RectF,
+    pub orientation: Orientation,
+}
+
+impl DisplayMap {
+    pub fn of(doc: &Document) -> Self {
+        Self { view: doc.view, orientation: doc.orientation }
+    }
+
+    fn view_size(&self) -> SizeF {
+        SizeF::new(self.view.w, self.view.h)
+    }
+
+    pub fn to_display(&self, p: PointF) -> PointF {
+        let local = PointF::new(p.x - self.view.x, p.y - self.view.y);
+        self.orientation.map(local, self.view_size())
+    }
+
+    pub fn from_display(&self, p: PointF) -> PointF {
+        let l = self.orientation.unmap(p, self.view_size());
+        PointF::new(l.x + self.view.x, l.y + self.view.y)
+    }
+
+    pub fn display_size(&self) -> SizeF {
+        self.orientation.output_size(self.view_size())
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct CanvasView {
-    /// Center of the viewport in document logical coords.
+    /// Center of the viewport in display (oriented output) logical coords.
     pub center: PointF,
     /// Scale factor: screen points per document logical pixel.
     pub zoom: f32,
+    /// How document coords land in display coords.
+    pub map: DisplayMap,
 }
 
 impl Default for CanvasView {
@@ -23,23 +57,40 @@ impl Default for CanvasView {
         Self {
             center: PointF::new(0.0, 0.0),
             zoom: 1.0,
+            map: DisplayMap::default(),
         }
     }
 }
 
 impl CanvasView {
-    /// Fit `doc_rect` inside `screen_rect` with margin, optionally clamping max auto-zoom.
-    pub fn fit_to(&mut self, doc_rect: RectF, screen_rect: Rect, margin: f32) {
-        let avail_w = (screen_rect.width() - 2.0 * margin).max(10.0);
-        let avail_h = (screen_rect.height() - 2.0 * margin).max(10.0);
-        let zw = avail_w / doc_rect.w.max(1.0);
-        let zh = avail_h / doc_rect.h.max(1.0);
-        self.zoom = zw.min(zh).clamp(MIN_ZOOM, 1.5);
-        self.center = doc_rect.center();
+    /// Adopt the document's current view / orientation, keeping the same
+    /// document point under the viewport centre.
+    pub fn sync(&mut self, doc: &Document) {
+        let map = DisplayMap::of(doc);
+        if map != self.map {
+            let doc_center = self.map.from_display(self.center);
+            self.map = map;
+            self.center = map.to_display(doc_center);
+        }
     }
 
-    /// Convert document logical point to screen point.
-    pub fn doc_to_screen(&self, p: PointF, screen_rect: Rect) -> Pos2 {
+    /// The oriented output in display coords (before effect padding).
+    pub fn display_rect(&self) -> RectF {
+        let s = self.map.display_size();
+        RectF::new(0.0, 0.0, s.w, s.h)
+    }
+
+    /// Fit `display_rect` inside `screen_rect` with margin, optionally clamping max auto-zoom.
+    pub fn fit_to(&mut self, display_rect: RectF, screen_rect: Rect, margin: f32) {
+        let avail_w = (screen_rect.width() - 2.0 * margin).max(10.0);
+        let avail_h = (screen_rect.height() - 2.0 * margin).max(10.0);
+        let zw = avail_w / display_rect.w.max(1.0);
+        let zh = avail_h / display_rect.h.max(1.0);
+        self.zoom = zw.min(zh).clamp(MIN_ZOOM, 1.5);
+        self.center = display_rect.center();
+    }
+
+    fn display_to_screen(&self, p: PointF, screen_rect: Rect) -> Pos2 {
         let screen_center = screen_rect.center();
         Pos2::new(
             screen_center.x + (p.x - self.center.x) * self.zoom,
@@ -47,8 +98,7 @@ impl CanvasView {
         )
     }
 
-    /// Convert screen point to document logical point.
-    pub fn screen_to_doc(&self, pos: Pos2, screen_rect: Rect) -> PointF {
+    fn screen_to_display(&self, pos: Pos2, screen_rect: Rect) -> PointF {
         let screen_center = screen_rect.center();
         PointF::new(
             self.center.x + (pos.x - screen_center.x) / self.zoom,
@@ -56,22 +106,40 @@ impl CanvasView {
         )
     }
 
-    /// Convert document logical rect to screen rect.
+    /// Convert document logical point to screen point.
+    pub fn doc_to_screen(&self, p: PointF, screen_rect: Rect) -> Pos2 {
+        self.display_to_screen(self.map.to_display(p), screen_rect)
+    }
+
+    /// Convert screen point to document logical point.
+    pub fn screen_to_doc(&self, pos: Pos2, screen_rect: Rect) -> PointF {
+        self.map.from_display(self.screen_to_display(pos, screen_rect))
+    }
+
+    /// Convert document logical rect to screen rect (axis-aligned under
+    /// every orientation).
     pub fn doc_rect_to_screen(&self, r: RectF, screen_rect: Rect) -> Rect {
         let a = self.doc_to_screen(PointF::new(r.x, r.y), screen_rect);
         let b = self.doc_to_screen(PointF::new(r.right(), r.bottom()), screen_rect);
         Rect::from_two_pos(a, b)
     }
 
+    /// Convert a display-space rect to screen.
+    pub fn display_rect_to_screen(&self, r: RectF, screen_rect: Rect) -> Rect {
+        let a = self.display_to_screen(PointF::new(r.x, r.y), screen_rect);
+        let b = self.display_to_screen(PointF::new(r.right(), r.bottom()), screen_rect);
+        Rect::from_two_pos(a, b)
+    }
+
     /// Zoom centered at `anchor_screen`.
     pub fn zoom_at(&mut self, factor: f32, anchor_screen: Pos2, screen_rect: Rect) {
-        let anchor_doc = self.screen_to_doc(anchor_screen, screen_rect);
+        let anchor_display = self.screen_to_display(anchor_screen, screen_rect);
         let new_zoom = (self.zoom * factor).clamp(MIN_ZOOM, MAX_ZOOM);
         self.zoom = new_zoom;
         let screen_center = screen_rect.center();
         self.center = PointF::new(
-            anchor_doc.x - (anchor_screen.x - screen_center.x) / new_zoom,
-            anchor_doc.y - (anchor_screen.y - screen_center.y) / new_zoom,
+            anchor_display.x - (anchor_screen.x - screen_center.x) / new_zoom,
+            anchor_display.y - (anchor_screen.y - screen_center.y) / new_zoom,
         );
     }
 
@@ -249,5 +317,51 @@ pub fn paint_handles(
                 painter.circle(p, handle_radius, Color32::WHITE, outline);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn screen() -> Rect {
+        Rect::from_min_size(Pos2::new(0.0, 0.0), Vec2::new(800.0, 600.0))
+    }
+
+    fn close(a: PointF, b: PointF) -> bool {
+        (a.x - b.x).abs() < 1e-3 && (a.y - b.y).abs() < 1e-3
+    }
+
+    #[test]
+    fn screen_round_trip_and_handles_follow_rotation() {
+        let mut d = Document::new(400, 200, 1.0);
+        d.view = RectF::new(50.0, 20.0, 300.0, 160.0);
+        d.orientation = Orientation::Rotate90;
+        let mut v = CanvasView::default();
+        v.sync(&d);
+        v.fit_to(v.display_rect(), screen(), 40.0);
+        let p = PointF::new(60.0, 30.0); // 10,10 inside the view's top-left
+        let s = v.doc_to_screen(p, screen());
+        assert!(close(v.screen_to_doc(s, screen()), p));
+        // clockwise: view's top-left corner shows at the displayed top-right
+        let tl = v.doc_to_screen(PointF::new(50.0, 20.0), screen());
+        let shown = v.display_rect_to_screen(v.display_rect(), screen());
+        assert!((tl.x - shown.max.x).abs() < 1e-3 && (tl.y - shown.min.y).abs() < 1e-3);
+        assert!((shown.width() / shown.height() - 160.0 / 300.0).abs() < 1e-3, "axes swap");
+        let r = v.doc_rect_to_screen(RectF::new(60.0, 30.0, 20.0, 10.0), screen());
+        assert!((r.width() - 10.0 * v.zoom).abs() < 1e-3 && (r.height() - 20.0 * v.zoom).abs() < 1e-3);
+    }
+
+    #[test]
+    fn sync_keeps_the_same_document_point_centred() {
+        let mut d = Document::new(400, 200, 1.0);
+        let mut v = CanvasView::default();
+        v.sync(&d);
+        v.center = PointF::new(100.0, 50.0);
+        let before = v.screen_to_doc(screen().center(), screen());
+        d.orientation = Orientation::Rotate270;
+        d.view = RectF::new(30.0, 0.0, 300.0, 200.0);
+        v.sync(&d);
+        assert!(close(v.screen_to_doc(screen().center(), screen()), before));
     }
 }

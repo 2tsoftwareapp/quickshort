@@ -9,7 +9,8 @@ use crate::text::{self, TextLayout};
 use ab_glyph::{point, Font, ScaleFont};
 use image::RgbaImage;
 use qs_doc::{
-    ArrowHead, BlurMode, Document, Fill, ObjectKind, PointF, RectF, Stroke, TextStyle,
+    ArrowHead, BlurMode, Document, Fill, ObjectKind, Orientation, PointF, RectF, SizeF, Stroke,
+    TextStyle,
 };
 use tiny_skia::{
     Color, FillRule, IntSize, LineCap, LineJoin, Paint, Path, PathBuilder, Pixmap, PixmapPaint,
@@ -403,14 +404,46 @@ fn to_image(pm: &Pixmap) -> RgbaImage {
 
 /// Output size in physical px for `doc`.
 pub fn output_size(doc: &Document) -> (u32, u32) {
+    let (w, h) = content_size(doc);
+    if doc.orientation.swaps_axes() {
+        (h, w)
+    } else {
+        (w, h)
+    }
+}
+
+/// Size of the rendered `view` before orientation, physical px.
+fn content_size(doc: &Document) -> (u32, u32) {
     let w = (doc.view.w * doc.scale).round().clamp(1.0, MAX_OUT);
     let h = (doc.view.h * doc.scale).round().clamp(1.0, MAX_OUT);
     (w as u32, h as u32)
 }
 
+/// Exact pixel remap of `img` by one of the eight rectangle symmetries;
+/// pixel centres follow [`Orientation::map`].
+pub fn orient(img: &RgbaImage, o: Orientation) -> RgbaImage {
+    if o == Orientation::Normal {
+        return img.clone();
+    }
+    let (w, h) = img.dimensions();
+    let s = SizeF::new(w as f32, h as f32);
+    let out_s = o.output_size(s);
+    let mut out = RgbaImage::new(out_s.w as u32, out_s.h as u32);
+    for (x, y, p) in img.enumerate_pixels() {
+        let q = o.map(PointF::new(x as f32 + 0.5, y as f32 + 0.5), s);
+        out.put_pixel(q.x as u32, q.y as u32, *p);
+    }
+    out
+}
+
 /// Flatten `doc` over `base` into a bitmap.
 pub fn render(doc: &Document, base: &RgbaImage) -> RgbaImage {
-    let (w, h) = output_size(doc);
+    orient(&render_content(doc, base), doc.orientation)
+}
+
+/// `view` with every annotation, before orientation and effects.
+fn render_content(doc: &Document, base: &RgbaImage) -> RgbaImage {
+    let (w, h) = content_size(doc);
     let Some(mut pm) = Pixmap::new(w, h) else {
         return RgbaImage::new(1, 1);
     };
@@ -639,6 +672,62 @@ mod tests {
             let o = render(&d, &base);
             assert_eq!(px(&o, 50, 50), [255, 0, 0]);
             assert!(ink(&o, RectF::new(78.0, 40.0, 12.0, 20.0), [200; 3]) > 20, "{head:?} head");
+        }
+    }
+
+    #[test]
+    fn orientation_rotates_base_and_annotations_together() {
+        use qs_doc::Orientation;
+        let base = RgbaImage::from_fn(30, 20, |x, y| image::Rgba([x as u8 * 8, y as u8 * 12, 7, 255]));
+        let mut d = Document::new(30, 20, 1.0);
+        d.push(ObjectKind::Rect {
+            r: RectF::new(2.0, 2.0, 4.0, 3.0),
+            stroke: Stroke::new(0xFF0000, 0.0),
+            fill: Fill::Solid { rgb: 0x0000FF, alpha: 1.0 },
+            radius: 0.0,
+        });
+        let plain = render(&d, &base);
+        d.orientation = Orientation::Rotate90;
+        assert_eq!(output_size(&d), (20, 30));
+        let o = render(&d, &base);
+        assert_eq!(o.dimensions(), (20, 30));
+        // physical pixel (x, y) -> (h-1-y, x) under a clockwise turn
+        for (x, y) in [(0, 0), (29, 0), (3, 3), (17, 11), (29, 19)] {
+            assert_eq!(o.get_pixel(19 - y, x), plain.get_pixel(x, y), "({x},{y})");
+        }
+        assert_eq!(px(&o, 19 - 3, 3), [0, 0, 255], "annotation follows the base");
+    }
+
+    #[test]
+    fn four_quarter_turns_and_double_flips_restore_pixels() {
+        use qs_doc::Orientation;
+        let img = RgbaImage::from_fn(7, 5, |x, y| image::Rgba([x as u8 * 30, y as u8 * 40, (x * y) as u8, 200]));
+        let mut r = img.clone();
+        for _ in 0..4 {
+            r = orient(&r, Orientation::Rotate90);
+        }
+        assert_eq!(r, img);
+        for o in [Orientation::FlipHorizontal, Orientation::FlipVertical, Orientation::Transpose] {
+            assert_ne!(orient(&img, o), img);
+            assert_eq!(orient(&orient(&img, o), o), img, "{o:?}");
+        }
+        assert_eq!(orient(&img, Orientation::Transpose).get_pixel(4, 6), img.get_pixel(6, 4));
+    }
+
+    #[test]
+    fn every_orientation_matches_document_point_mapping() {
+        use qs_doc::{Orientation, SizeF};
+        let img = RgbaImage::from_fn(6, 4, |x, y| image::Rgba([x as u8, y as u8, 0, 255]));
+        let s = SizeF::new(6.0, 4.0);
+        for o in [
+            Orientation::Normal, Orientation::Rotate90, Orientation::Rotate180, Orientation::Rotate270,
+            Orientation::FlipHorizontal, Orientation::FlipVertical, Orientation::Transpose, Orientation::Transverse,
+        ] {
+            let out = orient(&img, o);
+            for (x, y) in [(0u32, 0u32), (5, 0), (2, 3), (5, 3)] {
+                let q = o.map(PointF::new(x as f32 + 0.5, y as f32 + 0.5), s);
+                assert_eq!(out.get_pixel(q.x as u32, q.y as u32).0[..2], [x as u8, y as u8], "{o:?}");
+            }
         }
     }
 }

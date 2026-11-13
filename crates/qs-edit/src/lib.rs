@@ -13,8 +13,8 @@ pub mod trim;
 pub use hit::{Handle, HandleId};
 
 use qs_doc::{
-    Align, ArrowHead, BlurMode, CalloutShape, Document, Fill, Object, ObjectId, ObjectKind, PointF,
-    RectF, Stroke, TextStyle, MARKER_ALPHA, PALETTE, PIX_BLOCK, SIZES,
+    Align, ArrowHead, BlurMode, CalloutShape, Document, Fill, Object, ObjectId, ObjectKind,
+    Orientation, PointF, RectF, Stroke, TextStyle, MARKER_ALPHA, PALETTE, PIX_BLOCK, SIZES,
 };
 use qs_render::{bounds, text, text_block, CALLOUT_PAD};
 
@@ -119,6 +119,7 @@ struct Snap {
     region: Option<RectF>,
     background: u32,
     step_start: u32,
+    orientation: Orientation,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -356,6 +357,7 @@ impl Editor {
             region: self.doc.region,
             background: self.doc.background,
             step_start: self.doc.step_start,
+            orientation: self.doc.orientation,
         }
     }
 
@@ -365,6 +367,7 @@ impl Editor {
         self.doc.region = s.region;
         self.doc.background = s.background;
         self.doc.step_start = s.step_start;
+        self.doc.orientation = s.orientation;
         if self.selected.is_some_and(|id| self.doc.get(id).is_none()) {
             self.selected = None;
         }
@@ -1071,6 +1074,31 @@ impl Editor {
 
     pub fn set_background(&mut self, argb: u32) {
         self.record(|e| e.doc.background = argb);
+    }
+
+    fn reorient(&mut self, f: fn(Orientation) -> Orientation) {
+        self.end_text_edit();
+        self.record(|e| e.doc.orientation = f(e.doc.orientation));
+    }
+
+    /// Rotate the output 90° clockwise (one undo step).
+    pub fn rotate_cw(&mut self) {
+        self.reorient(Orientation::rotate_cw);
+    }
+
+    /// Rotate the output 90° counter-clockwise (one undo step).
+    pub fn rotate_ccw(&mut self) {
+        self.reorient(Orientation::rotate_ccw);
+    }
+
+    /// Mirror the output left-right as displayed (one undo step).
+    pub fn flip_h(&mut self) {
+        self.reorient(Orientation::flip_h);
+    }
+
+    /// Mirror the output top-bottom as displayed (one undo step).
+    pub fn flip_v(&mut self) {
+        self.reorient(Orientation::flip_v);
     }
 
     pub fn set_step_start(&mut self, n: u32) {
@@ -1790,5 +1818,44 @@ mod tests {
         drag(&mut e, pt(10.0, 10.0), pt(10.0, 10.0));
         assert_eq!(e.doc().region, None);
         assert!(!e.can_undo());
+    }
+
+    #[test]
+    fn rotate_and_flip_are_single_undo_steps() {
+        use qs_doc::Orientation;
+        let mut e = drawn_rect();
+        let id = e.doc().objects[0].id;
+        let before = e.doc().get(id).unwrap().kind.clone();
+        let rev = e.revision();
+        e.rotate_cw();
+        assert_eq!(e.doc().orientation, Orientation::Rotate90);
+        assert!(e.revision() != rev);
+        e.flip_h();
+        assert_eq!(e.doc().orientation, Orientation::Transpose);
+        assert_eq!(e.doc().get(id).unwrap().kind, before, "objects are untouched");
+        assert!(e.undo());
+        assert_eq!(e.doc().orientation, Orientation::Rotate90);
+        assert!(e.undo());
+        assert_eq!(e.doc().orientation, Orientation::Normal);
+        assert_eq!(e.doc().objects.len(), 1, "third undo would remove the rect");
+        assert!(e.redo());
+        assert_eq!(e.doc().orientation, Orientation::Rotate90);
+    }
+
+    #[test]
+    fn four_rotations_and_double_flips_preserve_document() {
+        let mut e = drawn_rect();
+        let start = e.doc().clone();
+        for _ in 0..4 {
+            e.rotate_cw();
+        }
+        assert_eq!(e.doc(), &start);
+        e.flip_h();
+        e.flip_h();
+        e.flip_v();
+        e.rotate_ccw();
+        e.rotate_cw();
+        e.flip_v();
+        assert_eq!(e.doc(), &start);
     }
 }

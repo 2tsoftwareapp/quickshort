@@ -9,4 +9,4 @@ pub mod shapes;
 pub mod text;
 
 pub use bounds::{bounds, text_block};
-pub use draw::{callout_layout, gaussian, output_size, pixelate, render, CALLOUT_PAD};
+pub use draw::{callout_layout, gaussian, orient, output_size, pixelate, render, CALLOUT_PAD};

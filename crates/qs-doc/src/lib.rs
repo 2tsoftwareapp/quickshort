@@ -9,9 +9,11 @@
 //! image's physical pixels (2.0 on a Retina / 200% capture).
 
 mod geom;
+mod orient;
 pub mod qsdoc;
 
 pub use geom::{PointF, RectF, SizeF};
+pub use orient::Orientation;
 
 use serde::{Deserialize, Serialize};
 
@@ -263,6 +265,10 @@ pub struct Document {
     pub step_start: u32,
     #[serde(default)]
     pub meta: Meta,
+    /// Rotation / mirror of the rendered `view`; objects stay in document
+    /// coordinates.
+    #[serde(default)]
+    pub orientation: Orientation,
 }
 
 fn white() -> u32 {
@@ -292,7 +298,26 @@ impl Document {
             next_id: 1,
             step_start: 1,
             meta: Meta::default(),
+            orientation: Orientation::Normal,
         }
+    }
+
+    /// Logical size of the oriented output (before effects).
+    pub fn display_size(&self) -> SizeF {
+        self.orientation.output_size(SizeF::new(self.view.w, self.view.h))
+    }
+
+    /// Document point -> oriented output point (logical, origin at the
+    /// output's top-left).
+    pub fn to_display(&self, p: PointF) -> PointF {
+        let local = PointF::new(p.x - self.view.x, p.y - self.view.y);
+        self.orientation.map(local, SizeF::new(self.view.w, self.view.h))
+    }
+
+    /// Inverse of [`Document::to_display`].
+    pub fn from_display(&self, p: PointF) -> PointF {
+        let l = self.orientation.unmap(p, SizeF::new(self.view.w, self.view.h));
+        PointF::new(l.x + self.view.x, l.y + self.view.y)
     }
 
     pub fn alloc_id(&mut self) -> ObjectId {
@@ -612,6 +637,7 @@ mod tests {
         let d = Document::from_json(j).unwrap();
         assert!(d.objects[0].visible);
         assert_eq!(d.step_start, 1);
+        assert_eq!(d.orientation, Orientation::Normal);
         match &d.objects[0].kind {
             ObjectKind::Rect { fill, radius, .. } => {
                 assert!(fill.is_none());
@@ -658,5 +684,19 @@ mod tests {
             }
             _ => unreachable!(),
         }
+    }
+
+    #[test]
+    fn display_mapping_follows_view_and_orientation() {
+        let mut d = Document::new(100, 50, 1.0);
+        d.view = RectF::new(10.0, 5.0, 40.0, 20.0);
+        let p = PointF::new(12.0, 9.0);
+        assert_eq!(d.to_display(p), PointF::new(2.0, 4.0));
+        d.orientation = Orientation::Rotate90;
+        assert_eq!(d.display_size(), SizeF::new(20.0, 40.0));
+        assert_eq!(d.to_display(p), PointF::new(16.0, 2.0));
+        assert_eq!(d.from_display(PointF::new(16.0, 2.0)), p);
+        let j = d.to_json().unwrap();
+        assert_eq!(Document::from_json(&j).unwrap().orientation, Orientation::Rotate90);
     }
 }
