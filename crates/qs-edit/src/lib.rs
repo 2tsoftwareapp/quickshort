@@ -8,6 +8,7 @@
 //! and only if something actually changed.
 
 pub mod hit;
+pub mod trim;
 
 pub use hit::{Handle, HandleId};
 

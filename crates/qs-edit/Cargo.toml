@@ -8,3 +8,4 @@ description = "Headless editing engine: tools, selection, handles, undo/redo, te
 [dependencies]
 qs-doc.workspace = true
 qs-render.workspace = true
+image.workspace = true

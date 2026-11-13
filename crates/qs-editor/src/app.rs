@@ -312,6 +312,7 @@ impl EditorApp {
         let mut apply = false;
         let mut fit_to_image = false;
         let mut fit_to_objects = false;
+        let mut trim = false;
         egui::Window::new("Canvas")
             .collapsible(false)
             .resizable(false)
@@ -377,6 +378,7 @@ impl EditorApp {
 
                 ui.separator();
                 ui.horizontal(|ui| {
+                    if ui.button("Trim edges").clicked() { trim = true; }
                     if ui.button("Fit to image").clicked() {
                         fit_to_image = true;
                     }
@@ -392,7 +394,15 @@ impl EditorApp {
             });
         self.canvas_dialog_open = open;
 
-        if fit_to_image {
+        if trim {
+            if let Some(rect) = qs_edit::trim::calculate_trim_rect(self.editor.doc(), &self.base, 6) {
+                self.editor.set_view(rect);
+                self.touch();
+                self.canvas_dialog_open = false;
+            } else {
+                self.show_toast("No safe uniform border to trim");
+            }
+        } else if fit_to_image {
             let view = self.editor.doc().view;
             let base = self.editor.doc().base_size;
             let top = view.y;
