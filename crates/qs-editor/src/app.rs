@@ -54,6 +54,18 @@ pub struct EditorApp {
     canvas_dialog_open: bool,
     canvas_insets: [f32; 4],
     canvas_background: u32,
+    canvas_anchor: (usize, usize),
+}
+
+fn anchored_insets(vertical: f32, horizontal: f32, anchor: (usize, usize)) -> [f32; 4] {
+    let distribute = |total: f32, position: usize| match position {
+        0 => (0.0, total),
+        1 => (total * 0.5, total - total * 0.5),
+        _ => (total, 0.0),
+    };
+    let (top, bottom) = distribute(vertical, anchor.1);
+    let (left, right) = distribute(horizontal, anchor.0);
+    [top, right, bottom, left]
 }
 
 impl EditorApp {
@@ -100,6 +112,7 @@ impl EditorApp {
             canvas_dialog_open: false,
             canvas_insets: [0.0; 4],
             canvas_background,
+            canvas_anchor: (1, 1),
         };
         app.update_texture(&cc.egui_ctx);
         app
@@ -137,6 +150,7 @@ impl EditorApp {
         self.editor = Editor::new(doc);
         self.canvas_background = canvas_background;
         self.canvas_insets = [0.0; 4];
+        self.canvas_anchor = (1, 1);
         self.texture = None;
         self.needs_render = true;
         self.needs_initial_fit = true;
@@ -297,6 +311,7 @@ impl EditorApp {
         let mut open = self.canvas_dialog_open;
         let mut apply = false;
         let mut fit_to_image = false;
+        let mut fit_to_objects = false;
         egui::Window::new("Canvas")
             .collapsible(false)
             .resizable(false)
@@ -317,6 +332,27 @@ impl EditorApp {
                             ui.end_row();
                         }
                     });
+                ui.label("Anchor");
+                egui::Grid::new("canvas_anchor")
+                    .num_columns(3)
+                    .spacing([4.0, 4.0])
+                    .show(ui, |ui| {
+                        let symbols = [["↖", "↑", "↗"], ["←", "•", "→"], ["↙", "↓", "↘"]];
+                        for (row, row_symbols) in symbols.iter().enumerate() {
+                            for (column, symbol) in row_symbols.iter().enumerate() {
+                                if ui
+                                    .selectable_label(self.canvas_anchor == (column, row), *symbol)
+                                    .clicked()
+                                {
+                                    let vertical = self.canvas_insets[0] + self.canvas_insets[2];
+                                    let horizontal = self.canvas_insets[1] + self.canvas_insets[3];
+                                    self.canvas_insets = anchored_insets(vertical, horizontal, (column, row));
+                                    self.canvas_anchor = (column, row);
+                                }
+                            }
+                            ui.end_row();
+                        }
+                    });
                 ui.label("Negative values crop that edge.");
 
                 let [a, r, g, b] = self.canvas_background.to_be_bytes();
@@ -327,11 +363,25 @@ impl EditorApp {
                 });
                 let [r, g, b, a] = color.to_srgba_unmultiplied();
                 self.canvas_background = u32::from_be_bytes([a, r, g, b]);
+                ui.horizontal(|ui| {
+                    if ui.button("Transparent").clicked() {
+                        self.canvas_background = 0;
+                    }
+                    if ui.button("White").clicked() {
+                        self.canvas_background = u32::MAX;
+                    }
+                    if ui.button("Black").clicked() {
+                        self.canvas_background = 255 << 24;
+                    }
+                });
 
                 ui.separator();
                 ui.horizontal(|ui| {
                     if ui.button("Fit to image").clicked() {
                         fit_to_image = true;
+                    }
+                    if ui.button("Fit to objects").clicked() {
+                        fit_to_objects = true;
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.button("Apply").clicked() {
@@ -350,6 +400,12 @@ impl EditorApp {
             let right = base.w - view.w - left;
             let bottom = base.h - view.h - top;
             if self.editor.update_canvas(top, right, bottom, left, self.canvas_background) {
+                self.touch();
+            }
+            self.canvas_insets = [0.0; 4];
+            self.canvas_dialog_open = false;
+        } else if fit_to_objects {
+            if self.editor.fit_canvas_to_objects_with_background(self.canvas_background) {
                 self.touch();
             }
             self.canvas_insets = [0.0; 4];
@@ -1089,6 +1145,18 @@ impl eframe::App for EditorApp {
         self.sync_unsaved();
         self.autosave_tick();
         self.sync_window_title(&ctx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn canvas_anchor_rebalances_added_space_without_changing_canvas_size() {
+        assert_eq!(anchored_insets(24.0, 36.0, (0, 2)), [24.0, 36.0, 0.0, 0.0]);
+        assert_eq!(anchored_insets(24.0, 36.0, (1, 1)), [12.0, 18.0, 12.0, 18.0]);
+        assert_eq!(anchored_insets(-20.0, -30.0, (2, 0)), [0.0, 0.0, -20.0, -30.0]);
     }
 }
 

@@ -1027,6 +1027,33 @@ impl Editor {
         true
     }
 
+    /// Expand the output canvas to contain every visible annotation.
+    /// Returns false when neither the view nor its background changes.
+    pub fn fit_canvas_to_objects(&mut self) -> bool {
+        let background = self.doc.background;
+        self.fit_canvas_to_objects_with_background(background)
+    }
+
+    /// Fit visible annotations and set the canvas background as one edit.
+    pub fn fit_canvas_to_objects_with_background(&mut self, background: u32) -> bool {
+        let current = self.doc.view;
+        let objects = self
+            .doc
+            .objects
+            .iter()
+            .filter(|object| object.visible)
+            .map(|object| qs_render::bounds(&object.kind))
+            .reduce(|bounds, next| bounds.union(&next));
+        let target = objects.map_or(current, |bounds| current.union(&bounds));
+        self.update_canvas(
+            current.y - target.y,
+            target.right() - current.right(),
+            target.bottom() - current.bottom(),
+            current.x - target.x,
+            background,
+        )
+    }
+
     /// Resize only the canvas, preserving its current background.
     pub fn resize_canvas(&mut self, top: f32, right: f32, bottom: f32, left: f32) -> bool {
         self.update_canvas(top, right, bottom, left, self.doc.background)
@@ -1631,6 +1658,66 @@ mod tests {
             }
             k => panic!("{k:?}"),
         }
+    }
+
+    #[test]
+    fn fit_canvas_to_objects_expands_for_visible_annotations_in_one_step() {
+        let mut doc = Document::new(400, 300, 1.0);
+        doc.push(ObjectKind::Rect {
+            r: RectF::new(-10.0, -20.0, 30.0, 40.0),
+            stroke: Stroke::new(0, 2.0),
+            fill: Fill::None,
+            radius: 0.0,
+        });
+        let hidden = doc.push(ObjectKind::Rect {
+            r: RectF::new(-500.0, -500.0, 20.0, 20.0),
+            stroke: Stroke::new(0, 2.0),
+            fill: Fill::None,
+            radius: 0.0,
+        });
+        doc.get_mut(hidden).unwrap().visible = false;
+        let mut e = Editor::new(doc);
+        assert!(e.fit_canvas_to_objects());
+        assert_eq!(e.doc().view, RectF::new(-11.0, -21.0, 411.0, 321.0));
+        assert!(e.undo());
+        assert_eq!(e.doc().view, RectF::new(0.0, 0.0, 400.0, 300.0));
+        assert!(!e.can_undo());
+        assert!(e.redo());
+        assert_eq!(e.doc().view, RectF::new(-11.0, -21.0, 411.0, 321.0));
+    }
+
+    #[test]
+    fn fit_canvas_to_objects_and_background_share_one_undo_step() {
+        let mut doc = Document::new(400, 300, 1.0);
+        doc.push(ObjectKind::Rect {
+            r: RectF::new(-10.0, -20.0, 30.0, 40.0),
+            stroke: Stroke::new(0, 2.0),
+            fill: Fill::None,
+            radius: 0.0,
+        });
+        let mut e = Editor::new(doc);
+        assert!(e.fit_canvas_to_objects_with_background(0xFF123456));
+        assert_eq!(e.doc().view, RectF::new(-11.0, -21.0, 411.0, 321.0));
+        assert_eq!(e.doc().background, 0xFF123456);
+        assert!(e.undo());
+        assert_eq!(e.doc().view, RectF::new(0.0, 0.0, 400.0, 300.0));
+        assert_eq!(e.doc().background, 0xFFFF_FFFF);
+        assert!(!e.can_undo());
+    }
+
+    #[test]
+    fn fit_canvas_to_objects_is_noop_when_objects_are_inside_canvas() {
+        let mut doc = Document::new(400, 300, 1.0);
+        doc.push(ObjectKind::Rect {
+            r: RectF::new(10.0, 10.0, 50.0, 30.0),
+            stroke: Stroke::new(0, 2.0),
+            fill: Fill::None,
+            radius: 0.0,
+        });
+        let mut e = Editor::new(doc);
+        assert!(!e.fit_canvas_to_objects());
+        assert_eq!(e.doc().view, RectF::new(0.0, 0.0, 400.0, 300.0));
+        assert!(!e.can_undo());
     }
 
     #[test]
