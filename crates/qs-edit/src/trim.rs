@@ -29,7 +29,14 @@ pub fn calculate_trim_rect(doc: &Document, base: &RgbaImage, tolerance: u8) -> O
     let area = (right-left) as f64 * (bottom-top) as f64;
     let original = (x1-x0) as f64 * (y1-y0) as f64;
     if area < original * 0.4 { return None; }
-    let r = RectF::new(left as f32/s, top as f32/s, (right-left) as f32/s, (bottom-top) as f32/s);
+    let mut r = RectF::new(left as f32/s, top as f32/s, (right-left) as f32/s, (bottom-top) as f32/s);
+    // Base pixels cannot reveal vector content in an otherwise uniform border.
+    // Retain the visible portion without restoring a previous crop.
+    for object in doc.objects.iter().filter(|o| o.visible) {
+        if let Some(visible) = qs_render::bounds(&object.kind).intersect(&v) {
+            r = r.union(&visible);
+        }
+    }
     if r == doc.view { None } else { Some(r) }
 }
 

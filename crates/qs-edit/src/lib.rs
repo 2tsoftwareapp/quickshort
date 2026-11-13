@@ -407,7 +407,11 @@ impl Editor {
     fn record(&mut self, f: impl FnOnce(&mut Self)) {
         self.finish_effects();
         if self.edit.is_some() {
+            let pre = self.snap();
             f(self);
+            if pre != self.snap() {
+                self.mark_modified();
+            }
             return;
         }
         let pre = self.snap();
@@ -494,10 +498,14 @@ impl Editor {
         if matches!(self.drag, Drag::Crop { .. }) {
             self.drag = Drag::None;
             self.crop_rect = None;
+            self.tool = Tool::Select;
+            return;
         }
         if matches!(self.drag, Drag::Region { .. }) {
             self.drag = Drag::None;
             self.region_rect = None;
+            self.tool = Tool::Select;
+            return;
         }
         if self.edit.is_some() {
             self.end_text_edit();
@@ -793,6 +801,9 @@ impl Editor {
         self.selected = if freehand { None } else { Some(id) };
         let pre = pre.unwrap_or_else(|| self.snap());
         if is_callout {
+            if pre != self.snap() {
+                self.mark_modified();
+            }
             self.begin_text_edit_with(id, pre);
         } else if pre != self.snap() {
             self.push_undo(pre);
@@ -851,9 +862,16 @@ impl Editor {
         };
         te.caret = clamp_boundary(t, te.caret);
         te.anchor = clamp_boundary(t, te.anchor);
+        let before = t.clone();
         f(t, &mut te);
+        let changed = *t != before;
         self.edit = Some(te);
         self.fit_callout(te.id);
+        if changed {
+            // Recovery/close guards must see live edits, while the session
+            // still contributes only one undo entry when it ends.
+            self.mark_modified();
+        }
         true
     }
 

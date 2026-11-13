@@ -282,7 +282,9 @@ impl EditorApp {
     }
 
     fn save_to(&mut self, path: &Path) -> anyhow::Result<()> {
+        // Finalize pending gestures before remembering the saved revision.
         self.editor.finish_effects();
+        self.editor.end_text_edit();
         let flat = qs_render::render(self.editor.doc(), &self.base);
         let thumb = qsdoc::make_thumb(&flat);
         qsdoc::write(path, self.editor.doc(), &self.base, Some(&thumb))?;
@@ -1190,6 +1192,11 @@ impl eframe::App for EditorApp {
 
         self.sync_unsaved();
         self.autosave_tick();
+        if self.unsaved {
+            // A second edit inside the throttle interval must be recovered
+            // even when no more input events wake this window.
+            ctx.request_repaint_after(recovery::AUTOSAVE_INTERVAL);
+        }
         self.sync_window_title(&ctx);
     }
 }
