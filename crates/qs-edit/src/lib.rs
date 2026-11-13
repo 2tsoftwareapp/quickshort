@@ -120,6 +120,7 @@ struct Snap {
     background: u32,
     step_start: u32,
     orientation: Orientation,
+    effects: qs_doc::Effects,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -144,6 +145,7 @@ pub struct Editor {
     redo: Vec<Snap>,
     edit: Option<TextEdit>,
     edit_pre: Option<Snap>,
+    effects_pre: Option<Snap>,
     /// Hit slack in logical px (UI sets `6.0 / zoom`).
     pub hit_tol: f32,
     /// Bumped on every document change, undo and redo. Editors compare it
@@ -264,6 +266,7 @@ impl Editor {
             redo: Vec::new(),
             edit: None,
             edit_pre: None,
+            effects_pre: None,
             hit_tol: 5.0,
             sticky_tools: false,
             rev: 0,
@@ -358,6 +361,7 @@ impl Editor {
             background: self.doc.background,
             step_start: self.doc.step_start,
             orientation: self.doc.orientation,
+            effects: self.doc.effects.clone(),
         }
     }
 
@@ -368,6 +372,7 @@ impl Editor {
         self.doc.background = s.background;
         self.doc.step_start = s.step_start;
         self.doc.orientation = s.orientation;
+        self.doc.effects = s.effects;
         if self.selected.is_some_and(|id| self.doc.get(id).is_none()) {
             self.selected = None;
         }
@@ -383,6 +388,7 @@ impl Editor {
     }
 
     fn begin_change(&mut self) {
+        self.finish_effects();
         if self.pre.is_none() {
             self.pre = Some(self.snap());
         }
@@ -399,6 +405,7 @@ impl Editor {
     /// Run `f` as one undo step (skipped when it changes nothing). Inside a
     /// text session the change folds into that session's step instead.
     fn record(&mut self, f: impl FnOnce(&mut Self)) {
+        self.finish_effects();
         if self.edit.is_some() {
             f(self);
             return;
@@ -410,7 +417,32 @@ impl Editor {
         }
     }
 
+    /// Live preview across slider frames; finish at the end of the gesture.
+    pub fn preview_effects(&mut self, effects: qs_doc::Effects) -> bool {
+        if effects.validate().is_err() || effects == self.doc.effects { return false; }
+        self.end_text_edit();
+        if self.effects_pre.is_none() { self.effects_pre = Some(self.snap()); }
+        self.doc.effects = effects;
+        self.rev = self.rev.wrapping_add(1);
+        true
+    }
+
+    pub fn finish_effects(&mut self) {
+        if let Some(pre) = self.effects_pre.take() {
+            if pre != self.snap() { self.push_undo(pre); }
+        }
+    }
+
+    /// Apply an entire effects draft as one history entry.
+    pub fn set_effects(&mut self, effects: qs_doc::Effects) -> bool {
+        if effects.validate().is_err() || effects == self.doc.effects { return false; }
+        self.end_text_edit();
+        self.record(|s| s.doc.effects = effects);
+        true
+    }
+
     pub fn undo(&mut self) -> bool {
+        self.finish_effects();
         self.end_text_edit();
         if self.is_dragging() {
             return false;
@@ -426,6 +458,7 @@ impl Editor {
     }
 
     pub fn redo(&mut self) -> bool {
+        self.finish_effects();
         self.end_text_edit();
         if self.is_dragging() {
             return false;
@@ -443,6 +476,7 @@ impl Editor {
     // ---- tool / selection ------------------------------------------------
 
     pub fn set_tool(&mut self, t: Tool) {
+        self.finish_effects();
         self.end_text_edit();
         self.tool = t;
         if t != Tool::Select {
@@ -499,6 +533,7 @@ impl Editor {
     }
 
     pub fn pointer_down(&mut self, p: PointF) {
+        self.finish_effects();
         self.drag = Drag::None;
         if let Some(te) = self.edit {
             let inside = self
@@ -769,6 +804,7 @@ impl Editor {
 
     /// Start editing the text of `id` (caret at the end).
     pub fn begin_text_edit(&mut self, id: ObjectId) -> bool {
+        self.finish_effects();
         let pre = self.snap();
         self.begin_text_edit_with(id, pre)
     }

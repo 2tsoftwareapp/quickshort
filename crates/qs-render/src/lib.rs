@@ -5,6 +5,7 @@
 
 mod bounds;
 mod draw;
+mod effects;
 pub mod shapes;
 pub mod text;
 

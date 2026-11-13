@@ -282,6 +282,7 @@ impl EditorApp {
     }
 
     fn save_to(&mut self, path: &Path) -> anyhow::Result<()> {
+        self.editor.finish_effects();
         let flat = qs_render::render(self.editor.doc(), &self.base);
         let thumb = qsdoc::make_thumb(&flat);
         qsdoc::write(path, self.editor.doc(), &self.base, Some(&thumb))?;
@@ -940,7 +941,7 @@ impl eframe::App for EditorApp {
                     .fill(theme::bg_inspector_bot())
                     .inner_margin(egui::Margin::same(12)),
             )
-            .show(ui, |ui| image_panel::render(ui, &mut self.editor))
+            .show(ui, |ui| egui::ScrollArea::vertical().show(ui, |ui| image_panel::render(ui, &mut self.editor)).inner)
             .inner;
         if panel_mutated {
             self.touch();
@@ -1196,6 +1197,32 @@ impl eframe::App for EditorApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saving_live_effects_finalizes_undo_before_recording_saved_revision() {
+        let base = RgbaImage::from_pixel(20,10,image::Rgba([30,60,90,255]));
+        let mut app = EditorApp {
+            editor: Editor::new(Document::new(20,10,1.0)), base, doc_path: None,
+            view: CanvasView::default(), texture: None, needs_render: true,
+            unsaved: false, saved_rev: 0, close_confirmed: false, confirm_close: false,
+            pending_recovery: None, autosave_at: None, window_title: None,
+            needs_initial_fit: true, last_canvas_rect: None, saw_drag_press: false,
+            toast: None, canvas_dialog_open: false, canvas_insets: [0.0;4],
+            canvas_background: 0, canvas_anchor: (1,1),
+        };
+        app.editor.preview_effects(qs_doc::Effects { border: Some(qs_doc::BorderEffect::default()), ..Default::default() });
+        let path = std::env::temp_dir().join(format!("qs_effect_save_{}.qsdoc",std::process::id()));
+        app.save_to(&path).unwrap();
+        let loaded = qsdoc::read(&path).unwrap();
+        assert_eq!(loaded.doc.effects,app.editor.doc().effects);
+        assert_eq!(qs_render::render(&loaded.doc,&loaded.base),qs_render::render(app.editor.doc(),&app.base));
+        app.editor.finish_effects(); app.sync_unsaved();
+        assert!(!app.unsaved,"finishing already-saved effects must not dirty the document");
+        assert!(app.editor.undo());
+        assert_eq!(app.editor.doc().effects,qs_doc::Effects::default());
+        assert!(!app.editor.undo());
+        let _ = std::fs::remove_file(path);
+    }
 
     #[test]
     fn canvas_anchor_rebalances_added_space_without_changing_canvas_size() {

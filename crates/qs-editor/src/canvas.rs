@@ -16,11 +16,12 @@ pub const MAX_ZOOM: f32 = 16.0;
 pub struct DisplayMap {
     pub view: RectF,
     pub orientation: Orientation,
+    pub layout: qs_doc::EffectLayout,
 }
 
 impl DisplayMap {
     pub fn of(doc: &Document) -> Self {
-        Self { view: doc.view, orientation: doc.orientation }
+        Self { view: doc.view, orientation: doc.orientation, layout: doc.effect_layout() }
     }
 
     fn view_size(&self) -> SizeF {
@@ -29,16 +30,18 @@ impl DisplayMap {
 
     pub fn to_display(&self, p: PointF) -> PointF {
         let local = PointF::new(p.x - self.view.x, p.y - self.view.y);
-        self.orientation.map(local, self.view_size())
+        let p = self.orientation.map(local, self.view_size());
+        p.offset(self.layout.content_origin.x, self.layout.content_origin.y)
     }
 
     pub fn from_display(&self, p: PointF) -> PointF {
+        let p = p.offset(-self.layout.content_origin.x, -self.layout.content_origin.y);
         let l = self.orientation.unmap(p, self.view_size());
         PointF::new(l.x + self.view.x, l.y + self.view.y)
     }
 
     pub fn display_size(&self) -> SizeF {
-        self.orientation.output_size(self.view_size())
+        self.layout.size
     }
 }
 
@@ -74,7 +77,7 @@ impl CanvasView {
         }
     }
 
-    /// The oriented output in display coords (before effect padding).
+    /// The complete texture bounds including effects padding.
     pub fn display_rect(&self) -> RectF {
         let s = self.map.display_size();
         RectF::new(0.0, 0.0, s.w, s.h)
@@ -350,6 +353,23 @@ mod tests {
         assert!((shown.width() / shown.height() - 160.0 / 300.0).abs() < 1e-3, "axes swap");
         let r = v.doc_rect_to_screen(RectF::new(60.0, 30.0, 20.0, 10.0), screen());
         assert!((r.width() - 10.0 * v.zoom).abs() < 1e-3 && (r.height() - 20.0 * v.zoom).abs() < 1e-3);
+    }
+
+    #[test]
+    fn effects_padding_keeps_rotated_cropped_hit_testing_and_texture_scale() {
+        let mut d = Document::new(160,80,2.0);
+        d.view = RectF::new(10.0,5.0,40.0,20.0);
+        d.orientation = Orientation::Rotate90;
+        d.effects.border = Some(qs_doc::BorderEffect { width: 2.0, ..Default::default() });
+        d.effects.shadow = Some(qs_doc::ShadowEffect { blur_radius: 1.0, offset: PointF::new(-3.0,2.0), ..Default::default() });
+        let mut v = CanvasView::default(); v.sync(&d); v.zoom = 1.0;
+        assert_eq!(qs_render::output_size(&d),(60,100));
+        assert_eq!(v.display_rect(),RectF::new(0.0,0.0,30.0,50.0));
+        let p = PointF::new(12.0,8.0);
+        assert_eq!(v.map.to_display(p),PointF::new(25.0,5.0));
+        assert!(close(v.screen_to_doc(v.doc_to_screen(p,screen()),screen()),p));
+        let bounds = v.doc_rect_to_screen(d.view,screen());
+        assert_eq!(bounds.size(),Vec2::new(20.0,40.0));
     }
 
     #[test]

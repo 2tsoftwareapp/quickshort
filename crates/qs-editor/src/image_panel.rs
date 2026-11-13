@@ -48,7 +48,46 @@ pub fn render(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
         apply_orient(editor, c);
         return true;
     }
-    false
+    effects_ui(ui, editor)
+}
+
+fn color(ui: &mut egui::Ui, label: &str, value: &mut u32) {
+    let mut c = egui::Color32::from_rgba_unmultiplied((*value >> 16) as u8, (*value >> 8) as u8, *value as u8, (*value >> 24) as u8);
+    ui.horizontal(|ui| {
+        ui.label(label);
+        if ui.color_edit_button_srgba(&mut c).changed() {
+            let [r,g,b,a] = c.to_srgba_unmultiplied();
+            *value = ((a as u32)<<24)|((r as u32)<<16)|((g as u32)<<8)|b as u32;
+        }
+    });
+}
+
+fn toggle<T: Default>(ui: &mut egui::Ui, label: &str, effect: &mut Option<T>) {
+    let mut on = effect.is_some();
+    if ui.checkbox(&mut on, label).changed() { *effect = on.then(T::default); }
+}
+
+fn effects_ui(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
+    section(ui, "Effects");
+    let mut effects = editor.doc().effects.clone();
+    toggle(ui, "Border", &mut effects.border);
+    if let Some(b) = &mut effects.border {
+        ui.add(egui::Slider::new(&mut b.width, 0.0..=256.0).text("Width"));
+        ui.add(egui::Slider::new(&mut b.radius, 0.0..=1024.0).text("Corner radius"));
+        ui.checkbox(&mut b.inset, "Inside image");
+        color(ui, "Border color", &mut b.color);
+    }
+    toggle(ui, "Drop shadow", &mut effects.shadow);
+    if let Some(s) = &mut effects.shadow {
+        ui.add(egui::Slider::new(&mut s.blur_radius, 0.0..=128.0).text("Blur"));
+        ui.add(egui::Slider::new(&mut s.offset.x, -2048.0..=2048.0).text("Offset X"));
+        ui.add(egui::Slider::new(&mut s.offset.y, -2048.0..=2048.0).text("Offset Y"));
+        ui.add(egui::Slider::new(&mut s.opacity, 0.0..=1.0).text("Opacity"));
+        color(ui, "Shadow color", &mut s.color);
+    }
+    let changed = editor.preview_effects(effects);
+    if !ui.input(|i| i.pointer.any_down()) && !ui.ctx().egui_wants_keyboard_input() { editor.finish_effects(); }
+    changed
 }
 
 #[cfg(test)]

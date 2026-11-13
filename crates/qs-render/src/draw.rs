@@ -404,12 +404,15 @@ fn to_image(pm: &Pixmap) -> RgbaImage {
 
 /// Output size in physical px for `doc`.
 pub fn output_size(doc: &Document) -> (u32, u32) {
-    let (w, h) = content_size(doc);
-    if doc.orientation.swaps_axes() {
-        (h, w)
-    } else {
-        (w, h)
-    }
+    checked_output_size(doc).unwrap_or((1,1))
+}
+
+fn checked_output_size(doc: &Document) -> Option<(u32,u32)> {
+    let layout = doc.effect_layout();
+    let w = (layout.size.w*doc.scale).round();
+    let h = (layout.size.h*doc.scale).round();
+    if doc.validate().is_err() || !w.is_finite() || !h.is_finite() || w < 1.0 || h < 1.0 || w > MAX_OUT || h > MAX_OUT || w*h > 64.0*1024.0*1024.0 { return None; }
+    Some((w as u32,h as u32))
 }
 
 /// Size of the rendered `view` before orientation, physical px.
@@ -438,7 +441,8 @@ pub fn orient(img: &RgbaImage, o: Orientation) -> RgbaImage {
 
 /// Flatten `doc` over `base` into a bitmap.
 pub fn render(doc: &Document, base: &RgbaImage) -> RgbaImage {
-    orient(&render_content(doc, base), doc.orientation)
+    if checked_output_size(doc).is_none() { return RgbaImage::new(1,1); }
+    crate::effects::apply(doc, orient(&render_content(doc, base), doc.orientation))
 }
 
 /// `view` with every annotation, before orientation and effects.

@@ -3955,6 +3955,7 @@ dependencies = [
  "qs-core",
  "qs-doc",
  "qs-overlay",
+ "serde_json",
  "tiny-skia",
 ]
 

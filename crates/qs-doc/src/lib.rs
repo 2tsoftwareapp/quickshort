@@ -8,10 +8,12 @@
 //! top-left of the base image. `Document::scale` maps logical to the base
 //! image's physical pixels (2.0 on a Retina / 200% capture).
 
+mod effects;
 mod geom;
 mod orient;
 pub mod qsdoc;
 
+pub use effects::{BorderEffect, EffectLayout, Effects, ShadowEffect};
 pub use geom::{PointF, RectF, SizeF};
 pub use orient::Orientation;
 
@@ -269,6 +271,8 @@ pub struct Document {
     /// coordinates.
     #[serde(default)]
     pub orientation: Orientation,
+    #[serde(default)]
+    pub effects: Effects,
 }
 
 fn white() -> u32 {
@@ -299,12 +303,19 @@ impl Document {
             step_start: 1,
             meta: Meta::default(),
             orientation: Orientation::Normal,
+            effects: Effects::default(),
         }
     }
 
     /// Logical size of the oriented output (before effects).
     pub fn display_size(&self) -> SizeF {
         self.orientation.output_size(SizeF::new(self.view.w, self.view.h))
+    }
+
+    /// Shared effects layout after orientation.
+    pub fn effect_layout(&self) -> EffectLayout {
+        let s = SizeF::new((self.view.w*self.scale).round().max(1.0)/self.scale, (self.view.h*self.scale).round().max(1.0)/self.scale);
+        self.effects.layout(self.orientation.output_size(s), self.scale)
     }
 
     /// Document point -> oriented output point (logical, origin at the
@@ -379,6 +390,7 @@ impl Document {
         if !self.base_size.is_finite() || !self.view.is_finite() {
             bail!("non-finite canvas geometry");
         }
+        self.effects.validate()?;
         let mut seen = std::collections::HashSet::new();
         for o in &self.objects {
             if !seen.insert(o.id) {
