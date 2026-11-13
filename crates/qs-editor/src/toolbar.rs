@@ -384,6 +384,7 @@ pub fn render_top_bar(
         (Tool::Callout, "Callout Bubble (C)"),
         (Tool::Step, "Step Counter (S)"),
         (Tool::Blur, "Blur / Pixelate (B)"),
+        (Tool::Magnify, "Magnify Lens (I)"),
         (Tool::Crop, "Crop / Trim (K)"),
     ];
 
@@ -560,6 +561,7 @@ enum ContextKind {
     Callout,
     Step,
     Blur,
+    Magnify,
 }
 
 pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
@@ -696,6 +698,17 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
             *strength,
             editor.style.text.clone(),
         ),
+        Some(ObjectKind::Magnify { stroke, .. }) => (
+            ContextKind::Magnify,
+            stroke.rgb,
+            stroke.width,
+            editor.style.fill,
+            editor.style.callout_shape,
+            editor.style.arrow_head,
+            editor.style.blur_mode,
+            editor.style.blur_strength,
+            editor.style.text.clone(),
+        ),
         None => {
             let kind = match editor.tool() {
                 Tool::Select => ContextKind::Generic,
@@ -706,6 +719,7 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
                 Tool::Callout => ContextKind::Callout,
                 Tool::Step => ContextKind::Step,
                 Tool::Blur => ContextKind::Blur,
+                Tool::Magnify => ContextKind::Magnify,
                 Tool::Crop => ContextKind::Generic,
                 Tool::SelectRegion => ContextKind::Generic,
             };
@@ -1188,6 +1202,30 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
                         mutated = true;
                     }
                 }
+            }
+        }
+        ContextKind::Magnify => {
+            x = draw_ins_divider(ui.painter(), x + 6.0, cy) + 6.0;
+            for (i, zoom) in [1.5_f32, 2.0, 3.0, 4.0].into_iter().enumerate() {
+                let r = Rect::from_min_size(Pos2::new(x, cy - 11.0), Vec2::new(32.0, 22.0));
+                let resp = ui.interact(r, ui.auto_id_with(("magnify_zoom", i)), Sense::click())
+                    .on_hover_text(format!("Magnification: {zoom}×"));
+                let active = (editor.style.magnify_zoom - zoom).abs() < 0.01;
+                paint_pill_button(ui.painter(), r, RADIUS_PILL, active, resp.hovered(), true, false);
+                ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, format!("{zoom}×"), FontId::proportional(11.0), text_primary());
+                if resp.clicked() { editor.set_magnify_zoom(zoom); mutated = true; }
+                x += 34.0;
+            }
+            x = draw_ins_divider(ui.painter(), x + 4.0, cy) + 4.0;
+            for (i, shape) in [qs_doc::MagnifyShape::Ellipse, qs_doc::MagnifyShape::Rect].into_iter().enumerate() {
+                let r = Rect::from_min_size(Pos2::new(x, cy - 11.0), Vec2::new(38.0, 22.0));
+                let resp = ui.interact(r, ui.auto_id_with(("magnify_shape", i)), Sense::click())
+                    .on_hover_text(match shape { qs_doc::MagnifyShape::Ellipse => "Circular lens", qs_doc::MagnifyShape::Rect => "Rectangular lens" });
+                let active = editor.style.magnify_shape == shape;
+                paint_pill_button(ui.painter(), r, RADIUS_PILL, active, resp.hovered(), true, false);
+                ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, if shape == qs_doc::MagnifyShape::Ellipse { "Circle" } else { "Rect" }, FontId::proportional(11.0), text_primary());
+                if resp.clicked() { editor.set_magnify_shape(shape); mutated = true; }
+                x += 40.0;
             }
         }
         ContextKind::Step => {

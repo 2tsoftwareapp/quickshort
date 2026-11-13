@@ -126,6 +126,13 @@ pub enum BlurMode {
     Gaussian,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MagnifyShape {
+    #[default]
+    Rect,
+    Ellipse,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum ObjectKind {
@@ -198,6 +205,14 @@ pub enum ObjectKind {
         r: RectF,
         mode: BlurMode,
         strength: f32,
+    },
+    /// Non-recursive loupe over the already composited pixels below it.
+    Magnify {
+        rect: RectF,
+        zoom: f32,
+        #[serde(default)]
+        shape: MagnifyShape,
+        stroke: Stroke,
     },
 }
 
@@ -402,6 +417,15 @@ impl Document {
             if !o.kind.is_finite() {
                 bail!("object {} has non-finite geometry", o.id.0);
             }
+            if let ObjectKind::Magnify { zoom, rect, stroke, .. } = &o.kind {
+                if !(1.5..=4.0).contains(zoom)
+                    || rect.w.abs() < 1.0
+                    || rect.h.abs() < 1.0
+                    || stroke.width < 0.0
+                {
+                    bail!("object {} has invalid magnifier settings", o.id.0);
+                }
+            }
         }
         Ok(())
     }
@@ -458,6 +482,9 @@ impl ObjectKind {
             }
             Step { center, radius, .. } => center.is_finite() && radius.is_finite(),
             Blur { r, strength, .. } => r.is_finite() && strength.is_finite(),
+            Magnify { rect, zoom, stroke, .. } => {
+                rect.is_finite() && zoom.is_finite() && stroke.width.is_finite()
+            }
         }
     }
 
@@ -475,6 +502,7 @@ impl ObjectKind {
             Callout { .. } => "Callout",
             Step { .. } => "Step",
             Blur { .. } => "Blur",
+            Magnify { .. } => "Magnify",
         }
     }
 
@@ -493,6 +521,7 @@ impl ObjectKind {
                 *b = b.offset(dx, dy);
             }
             Rect { r, .. } | Ellipse { r, .. } | Blur { r, .. } => *r = r.offset(dx, dy),
+            Magnify { rect, .. } => *rect = rect.offset(dx, dy),
             Text { pos, .. } => *pos = pos.offset(dx, dy),
             Callout { body, tail, .. } => {
                 *body = body.offset(dx, dy);

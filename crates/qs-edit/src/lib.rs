@@ -14,7 +14,7 @@ pub use hit::{Handle, HandleId};
 
 use qs_doc::{
     Align, ArrowHead, BlurMode, CalloutShape, Document, Fill, Object, ObjectId, ObjectKind,
-    Orientation, PointF, RectF, Stroke, TextStyle, MARKER_ALPHA, PALETTE, PIX_BLOCK, SIZES,
+    Orientation, PointF, RectF, Stroke, TextStyle, MagnifyShape, MARKER_ALPHA, PALETTE, PIX_BLOCK, SIZES,
 };
 use qs_render::{bounds, text, text_block, CALLOUT_PAD};
 
@@ -36,6 +36,7 @@ pub enum Tool {
     Callout,
     Step,
     Blur,
+    Magnify,
     Crop,
     SelectRegion,
 }
@@ -59,6 +60,8 @@ pub struct Style {
     pub callout_shape: CalloutShape,
     pub blur_mode: BlurMode,
     pub blur_strength: f32,
+    pub magnify_zoom: f32,
+    pub magnify_shape: MagnifyShape,
     pub step_radius: f32,
 }
 
@@ -73,6 +76,8 @@ impl Default for Style {
             callout_shape: CalloutShape::RoundRect,
             blur_mode: BlurMode::Pixelate,
             blur_strength: PIX_BLOCK,
+            magnify_zoom: 2.0,
+            magnify_shape: MagnifyShape::Ellipse,
             step_radius: 12.0,
         }
     }
@@ -206,7 +211,7 @@ fn constrain(tool: Tool, a: PointF, b: PointF, shift: bool) -> PointF {
             let len = dx.hypot(dy);
             PointF::new(a.x + len * ang.cos(), a.y + len * ang.sin())
         }
-        Tool::Rect | Tool::Ellipse | Tool::Blur | Tool::Callout => {
+        Tool::Rect | Tool::Ellipse | Tool::Blur | Tool::Callout | Tool::Magnify => {
             let m = dx.abs().max(dy.abs());
             PointF::new(a.x + m * dx.signum(), a.y + m * dy.signum())
         }
@@ -217,7 +222,7 @@ fn constrain(tool: Tool, a: PointF, b: PointF, shift: bool) -> PointF {
 fn degenerate(k: &ObjectKind) -> bool {
     match k {
         ObjectKind::Arrow { a, b, .. } | ObjectKind::Line { a, b, .. } => a.dist(*b) < 3.0,
-        ObjectKind::Rect { r, .. } | ObjectKind::Ellipse { r, .. } | ObjectKind::Blur { r, .. } => {
+        ObjectKind::Rect { r, .. } | ObjectKind::Ellipse { r, .. } | ObjectKind::Blur { r, .. } | ObjectKind::Magnify { rect: r, .. } => {
             r.w.abs() < 3.0 || r.h.abs() < 3.0
         }
         _ => false,
@@ -628,6 +633,7 @@ impl Editor {
             Tool::Rect => ObjectKind::Rect { r: r0, stroke, fill: st.fill, radius: 1.5 },
             Tool::Ellipse => ObjectKind::Ellipse { r: r0, stroke, fill: st.fill },
             Tool::Blur => ObjectKind::Blur { r: r0, mode: st.blur_mode, strength: st.blur_strength },
+            Tool::Magnify => ObjectKind::Magnify { rect: r0, zoom: st.magnify_zoom, shape: st.magnify_shape, stroke },
             Tool::Callout => {
                 let fill = if st.fill.is_none() {
                     Fill::Solid { rgb: 0xFFFFFF, alpha: 1.0 }
@@ -738,6 +744,7 @@ impl Editor {
                         ObjectKind::Rect { r, .. }
                         | ObjectKind::Ellipse { r, .. }
                         | ObjectKind::Blur { r, .. } => *r = RectF::from_points(start, q),
+                        ObjectKind::Magnify { rect, .. } => *rect = RectF::from_points(start, q),
                         ObjectKind::Callout { body, tail, .. } => {
                             *body = RectF::from_points(start, q);
                             *tail = default_tail(*body);
@@ -1228,6 +1235,20 @@ impl Editor {
         self.set_text_style(|s| s.align = a);
     }
 
+    pub fn set_magnify_zoom(&mut self, zoom: f32) {
+        if !(1.5..=4.0).contains(&zoom) { return; }
+        self.style.magnify_zoom = zoom;
+        self.update_selected(|k| {
+            if let ObjectKind::Magnify { zoom: z, .. } = k { *z = zoom; }
+        });
+    }
+
+    pub fn set_magnify_shape(&mut self, shape: MagnifyShape) {
+        self.style.magnify_shape = shape;
+        self.update_selected(|k| {
+            if let ObjectKind::Magnify { shape: s, .. } = k { *s = shape; }
+        });
+    }
     pub fn set_callout_shape(&mut self, shape: CalloutShape) {
         self.style.callout_shape = shape;
         self.update_selected(|k| {

@@ -108,6 +108,11 @@ pub fn draw_tool_icon(painter: &Painter, c: Pos2, tool: Tool, color: Color32) {
                 .collect();
             painter.add(PathShape::closed_line(pts, st));
         }
+        Tool::Magnify => {
+            painter.circle_stroke(c, 4.0, st);
+            painter.line_segment([p(c, 2.8, 2.8), p(c, 5.8, 5.8)], Stroke::new(2.0, color));
+            painter.circle_stroke(c, 1.7, thin);
+        }
         Tool::Text => {
             // Geometric serif-hinted T (SF Symbol textbox aesthetic)
             painter.line_segment([p(c, -5.0, -4.6), p(c, 5.0, -4.6)], Stroke::new(1.6, color));

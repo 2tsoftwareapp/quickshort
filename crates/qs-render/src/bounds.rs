@@ -28,6 +28,7 @@ pub fn bounds(kind: &ObjectKind) -> RectF {
         }
         Step { center, radius, .. } => RectF::new(center.x - radius, center.y - radius, radius * 2.0, radius * 2.0),
         Blur { r, .. } => r.normalized(),
+        Magnify { rect, stroke, .. } => rect.normalized().inflate(stroke.width / 2.0),
     }
 }
 

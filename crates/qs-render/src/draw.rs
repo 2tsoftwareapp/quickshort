@@ -282,6 +282,42 @@ fn draw_object(pm: &mut Pixmap, xf: &Xf, kind: &ObjectKind, step_no: u32) {
             );
             draw_text(pm, xf, pos, &label, &st, &lay);
         }
+        ObjectKind::Magnify { rect, zoom, shape, stroke } => {
+            let r = rect.normalized();
+            let (x0, y0, x1, y1) = (
+                xf.px(r.x).round() as i32,
+                xf.py(r.y).round() as i32,
+                xf.px(r.right()).round() as i32,
+                xf.py(r.bottom()).round() as i32,
+            );
+            if x1 <= x0 || y1 <= y0 { return; }
+            // Sample a frozen snapshot of the current composite: the lens itself
+            // cannot feed its own pixels back into the source.
+            let source = pm.data().to_vec();
+            let (w, h) = (pm.width() as i32, pm.height() as i32);
+            let (cx, cy) = ((x0 + x1) as f32 / 2.0, (y0 + y1) as f32 / 2.0);
+            let (rx, ry) = ((x1 - x0) as f32 / 2.0, (y1 - y0) as f32 / 2.0);
+            for y in y0.max(0)..y1.min(h) {
+                for x in x0.max(0)..x1.min(w) {
+                    if *shape == qs_doc::MagnifyShape::Ellipse {
+                        let nx = (x as f32 + 0.5 - cx) / rx;
+                        let ny = (y as f32 + 0.5 - cy) / ry;
+                        if nx * nx + ny * ny > 1.0 { continue; }
+                    }
+                    let sx = (cx + (x as f32 + 0.5 - cx) / zoom).floor() as i32;
+                    let sy = (cy + (y as f32 + 0.5 - cy) / zoom).floor() as i32;
+                    if sx < 0 || sy < 0 || sx >= w || sy >= h { continue; }
+                    let si = ((sy * w + sx) * 4) as usize;
+                    let di = ((y * w + x) * 4) as usize;
+                    pm.data_mut()[di..di + 4].copy_from_slice(&source[si..si + 4]);
+                }
+            }
+            let path = match shape {
+                qs_doc::MagnifyShape::Rect => poly_path(&rrect_poly(*rect, 3.0), true),
+                qs_doc::MagnifyShape::Ellipse => poly_path(&ellipse_poly(*rect), true),
+            };
+            if let Some(path) = path { stroke_path(pm, xf, &path, stroke, LineJoin::Round); }
+        }
         ObjectKind::Blur { r, mode, strength } => {
             let (x0, y0) = (xf.px(r.x).round() as i32, xf.py(r.y).round() as i32);
             let (x1, y1) = (xf.px(r.right()).round() as i32, xf.py(r.bottom()).round() as i32);

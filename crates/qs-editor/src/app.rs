@@ -704,6 +704,8 @@ impl EditorApp {
                     Some(Tool::Highlighter)
                 } else if i.key_pressed(Key::B) {
                     Some(Tool::Blur)
+                } else if i.key_pressed(Key::I) {
+                    Some(Tool::Magnify)
                 } else if i.key_pressed(Key::K) {
                     Some(Tool::Crop)
                 } else if i.key_pressed(Key::M) {
