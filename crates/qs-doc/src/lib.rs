@@ -13,7 +13,7 @@ mod geom;
 mod orient;
 pub mod qsdoc;
 
-pub use effects::{BorderEffect, EffectLayout, Effects, ShadowEffect};
+pub use effects::{Anchor, BorderEffect, EdgeEffect, EffectLayout, Effects, ShadowEffect, WatermarkEffect};
 pub use geom::{PointF, RectF, SizeF};
 pub use orient::Orientation;
 

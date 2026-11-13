@@ -36,8 +36,123 @@ fn coverage(x: u32, y: u32, inset: f32, w: f32, h: f32, radius: f32) -> f32 {
     n as f32 / 4.0
 }
 
-pub fn apply(doc: &Document, content: RgbaImage) -> RgbaImage {
-    if doc.effects == Default::default() {
+fn hash(seed: u32, i: u32) -> f32 {
+    let mut x = seed.wrapping_mul(0x9E37_79B1) ^ i.wrapping_mul(0x85EB_CA6B);
+    x ^= x >> 15;
+    x = x.wrapping_mul(0x2C1B_3C6D);
+    x ^= x >> 12;
+    x = x.wrapping_mul(0x297A_2D39);
+    x ^= x >> 15;
+    (x & 0xffff) as f32 / 65535.0
+}
+
+/// 1-D value noise in [0,1] with a lattice every `period` pixels.
+fn noise(seed: u32, i: u32, period: f32) -> f32 {
+    let f = i as f32 / period;
+    let (k, t) = (f.floor() as u32, f.fract());
+    let t = t * t * (3.0 - 2.0 * t);
+    hash(seed, k) * (1.0 - t) + hash(seed, k + 1) * t
+}
+
+fn tear(img: &mut RgbaImage, e: &qs_doc::EdgeEffect, scale: f32) {
+    let (w, h) = img.dimensions();
+    let amp = (e.amplitude * scale).max(1.0);
+    let depth = |seed: u32, i: u32| (1.0 + noise(seed, i, 6.0 * scale.max(1.0)) * (amp - 1.0)).round() as u32;
+    for (side, on, len, seed) in [
+        (0, e.top, w, e.seed),
+        (1, e.bottom, w, e.seed.wrapping_add(1)),
+        (2, e.left, h, e.seed.wrapping_add(2)),
+        (3, e.right, h, e.seed.wrapping_add(3)),
+    ] {
+        if !on {
+            continue;
+        }
+        for i in 0..len {
+            for d in 0..depth(seed, i) {
+                let (x, y) = match side {
+                    0 => (i, d),
+                    1 => (i, h.wrapping_sub(1 + d)),
+                    2 => (d, i),
+                    _ => (w.wrapping_sub(1 + d), i),
+                };
+                if x < w && y < h {
+                    img.put_pixel(x, y, Rgba([0, 0, 0, 0]));
+                }
+            }
+        }
+    }
+}
+
+fn stamp(img: &mut RgbaImage, wm: &qs_doc::WatermarkEffect, scale: f32) {
+    if wm.text.is_empty() || wm.opacity <= 0.0 {
+        return;
+    }
+    use ab_glyph::{point, Font, ScaleFont};
+    use qs_doc::Anchor::*;
+    let px = 24.0 * wm.font_scale;
+    let style = qs_doc::TextStyle { px, ..Default::default() };
+    let lay = crate::text::layout(&wm.text, &style, None);
+    let (bw, bh) = (lay.width * scale, lay.height * scale);
+    let margin = 8.0 * scale;
+    let (iw, ih) = (img.width() as f32, img.height() as f32);
+    let x = match wm.anchor {
+        TopLeft | Left | BottomLeft => margin,
+        Top | Center | Bottom => (iw - bw) / 2.0,
+        _ => iw - bw - margin,
+    };
+    let y = match wm.anchor {
+        TopLeft | Top | TopRight => margin,
+        Left | Center | Right => (ih - bh) / 2.0,
+        _ => ih - bh - margin,
+    };
+    let (sr, sg, sb) = ((wm.color >> 16) as u8, (wm.color >> 8) as u8, wm.color as u8);
+    let strength = wm.opacity * (wm.color >> 24) as f32 / 255.0;
+    crate::text::with_font(px, false, |f| {
+        let sc = f.as_scaled(px);
+        for l in &lay.lines {
+            let mut pen = l.x;
+            let mut prev = None;
+            for c in wm.text[l.start..l.end].chars() {
+                let id = sc.glyph_id(c);
+                if let Some(p) = prev {
+                    pen += sc.kern(p, id);
+                }
+                let at = point(x + pen * scale, y + lay.ascent * scale);
+                if let Some(og) = f.outline_glyph(id.with_scale_and_position(px * scale, at)) {
+                    let bb = og.px_bounds();
+                    og.draw(|gx, gy, cov| {
+                        let (xx, yy) = (bb.min.x as i32 + gx as i32, bb.min.y as i32 + gy as i32);
+                        if xx < 0 || yy < 0 || xx >= img.width() as i32 || yy >= img.height() as i32 {
+                            return;
+                        }
+                        let a = (cov * strength).clamp(0.0, 1.0);
+                        let p = img.get_pixel_mut(xx as u32, yy as u32);
+                        let da = p[3] as f32 / 255.0;
+                        let oa = a + da * (1.0 - a);
+                        if oa <= 0.0 {
+                            return;
+                        }
+                        for (k, s) in [sr, sg, sb].into_iter().enumerate() {
+                            p[k] = ((s as f32 * a + p[k] as f32 * da * (1.0 - a)) / oa).round() as u8;
+                        }
+                        p[3] = (oa * 255.0).round() as u8;
+                    });
+                }
+                pen += sc.h_advance(id);
+                prev = Some(id);
+            }
+        }
+    });
+}
+
+pub fn apply(doc: &Document, mut content: RgbaImage) -> RgbaImage {
+    if let Some(wm) = &doc.effects.watermark {
+        stamp(&mut content, wm, doc.scale);
+    }
+    if let Some(e) = &doc.effects.edge {
+        tear(&mut content, e, doc.scale);
+    }
+    if doc.effects.border.is_none() && doc.effects.shadow.is_none() {
         return content;
     }
     let scale = doc.scale;

@@ -7,6 +7,69 @@ use serde::{Deserialize, Serialize};
 pub struct Effects {
     pub border: Option<BorderEffect>,
     pub shadow: Option<ShadowEffect>,
+    pub watermark: Option<WatermarkEffect>,
+    pub edge: Option<EdgeEffect>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Anchor {
+    TopLeft,
+    Top,
+    TopRight,
+    Left,
+    Center,
+    Right,
+    BottomLeft,
+    Bottom,
+    #[default]
+    BottomRight,
+}
+
+/// Text stamped over the oriented content. `font_scale` multiplies a 24px base.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WatermarkEffect {
+    pub text: String,
+    pub anchor: Anchor,
+    pub opacity: f32,
+    pub font_scale: f32,
+    pub color: u32,
+}
+impl Default for WatermarkEffect {
+    fn default() -> Self {
+        Self {
+            text: String::new(),
+            anchor: Anchor::BottomRight,
+            opacity: 0.5,
+            font_scale: 1.0,
+            color: 0xff000000,
+        }
+    }
+}
+
+/// Deterministic torn edge on the selected sides; cuts alpha inward up to `amplitude`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EdgeEffect {
+    pub top: bool,
+    pub bottom: bool,
+    pub left: bool,
+    pub right: bool,
+    pub amplitude: f32,
+    pub seed: u32,
+}
+impl Default for EdgeEffect {
+    fn default() -> Self {
+        Self {
+            top: true,
+            bottom: false,
+            left: false,
+            right: false,
+            amplitude: 8.0,
+            seed: 1,
+        }
+    }
 }
 
 /// Colors use the same straight 0xAARRGGBB representation as Document.background.
@@ -73,6 +136,17 @@ impl Effects {
                     && range(s.opacity, 0.0, 1.0),
                 "invalid shadow geometry or opacity"
             );
+        }
+        if let Some(w) = &self.watermark {
+            anyhow::ensure!(
+                range(w.opacity, 0.0, 1.0)
+                    && range(w.font_scale, 0.05, 32.0)
+                    && w.text.len() <= 1024,
+                "invalid watermark"
+            );
+        }
+        if let Some(e) = &self.edge {
+            anyhow::ensure!(range(e.amplitude, 0.0, 256.0), "invalid torn edge");
         }
         Ok(())
     }

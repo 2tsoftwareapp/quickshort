@@ -85,6 +85,35 @@ fn effects_ui(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
         ui.add(egui::Slider::new(&mut s.opacity, 0.0..=1.0).text("Opacity"));
         color(ui, "Shadow color", &mut s.color);
     }
+    toggle(ui, "Watermark", &mut effects.watermark);
+    if let Some(w) = &mut effects.watermark {
+        ui.text_edit_singleline(&mut w.text);
+        egui::ComboBox::from_label("Position")
+            .selected_text(format!("{:?}", w.anchor))
+            .show_ui(ui, |ui| {
+                use qs_doc::Anchor::*;
+                for a in [TopLeft, Top, TopRight, Left, Center, Right, BottomLeft, Bottom, BottomRight] {
+                    ui.selectable_value(&mut w.anchor, a, format!("{a:?}"));
+                }
+            });
+        ui.add(egui::Slider::new(&mut w.font_scale, 0.05..=32.0).logarithmic(true).text("Size"));
+        ui.add(egui::Slider::new(&mut w.opacity, 0.0..=1.0).text("Watermark opacity"));
+        color(ui, "Watermark color", &mut w.color);
+    }
+    toggle(ui, "Torn edge", &mut effects.edge);
+    if let Some(e) = &mut effects.edge {
+        ui.horizontal_wrapped(|ui| {
+            ui.checkbox(&mut e.top, "Top");
+            ui.checkbox(&mut e.bottom, "Bottom");
+            ui.checkbox(&mut e.left, "Left");
+            ui.checkbox(&mut e.right, "Right");
+        });
+        ui.add(egui::Slider::new(&mut e.amplitude, 0.0..=256.0).text("Depth"));
+        let mut seed = e.seed;
+        if ui.add(egui::DragValue::new(&mut seed).prefix("Seed ")).changed() {
+            e.seed = seed;
+        }
+    }
     let changed = editor.preview_effects(effects);
     if !ui.input(|i| i.pointer.any_down()) && !ui.ctx().egui_wants_keyboard_input() { editor.finish_effects(); }
     changed
