@@ -85,6 +85,12 @@ fn effects_ui(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
         ui.add(egui::Slider::new(&mut s.opacity, 0.0..=1.0).text("Opacity"));
         color(ui, "Shadow color", &mut s.color);
     }
+    toggle(ui, "Color adjustments", &mut effects.color_adjust);
+    if let Some(c) = &mut effects.color_adjust {
+        ui.add(egui::Slider::new(&mut c.brightness, -1.0..=1.0).text("Brightness"));
+        ui.add(egui::Slider::new(&mut c.contrast, -1.0..=1.0).text("Contrast"));
+        ui.add(egui::Slider::new(&mut c.saturation, 0.0..=2.0).text("Saturation"));
+    }
     toggle(ui, "Watermark", &mut effects.watermark);
     if let Some(w) = &mut effects.watermark {
         ui.text_edit_singleline(&mut w.text);

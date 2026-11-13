@@ -145,7 +145,25 @@ fn stamp(img: &mut RgbaImage, wm: &qs_doc::WatermarkEffect, scale: f32) {
     });
 }
 
+/// Straight-RGBA per-pixel adjustment; alpha is untouched.
+fn adjust(img: &mut RgbaImage, c: &qs_doc::ColorAdjustEffect) {
+    let k = if c.contrast >= 0.0 { 1.0 + c.contrast * 3.0 } else { 1.0 + c.contrast };
+    for p in img.pixels_mut() {
+        let (r, g, b) = (p[0] as f32, p[1] as f32, p[2] as f32);
+        let luma = 0.299 * r + 0.587 * g + 0.114 * b;
+        for (i, v) in [r, g, b].into_iter().enumerate() {
+            let v = luma + (v - luma) * c.saturation;
+            let v = (v - 128.0) * k + 128.0 + c.brightness * 255.0;
+            p[i] = v.round().clamp(0.0, 255.0) as u8;
+        }
+    }
+}
+
 pub fn apply(doc: &Document, mut content: RgbaImage) -> RgbaImage {
+    // Adjust content + annotations first so watermark/border/shadow keep their chosen colors.
+    if let Some(c) = &doc.effects.color_adjust {
+        adjust(&mut content, c);
+    }
     if let Some(wm) = &doc.effects.watermark {
         stamp(&mut content, wm, doc.scale);
     }

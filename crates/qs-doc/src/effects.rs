@@ -9,6 +9,21 @@ pub struct Effects {
     pub shadow: Option<ShadowEffect>,
     pub watermark: Option<WatermarkEffect>,
     pub edge: Option<EdgeEffect>,
+    pub color_adjust: Option<ColorAdjustEffect>,
+}
+
+/// Brightness/contrast in -1..=1, saturation 0..=2; defaults are identity.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ColorAdjustEffect {
+    pub brightness: f32,
+    pub contrast: f32,
+    pub saturation: f32,
+}
+impl Default for ColorAdjustEffect {
+    fn default() -> Self {
+        Self { brightness: 0.0, contrast: 0.0, saturation: 1.0 }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -143,6 +158,14 @@ impl Effects {
                     && range(w.font_scale, 0.05, 32.0)
                     && w.text.len() <= 1024,
                 "invalid watermark"
+            );
+        }
+        if let Some(c) = &self.color_adjust {
+            anyhow::ensure!(
+                range(c.brightness, -1.0, 1.0)
+                    && range(c.contrast, -1.0, 1.0)
+                    && range(c.saturation, 0.0, 2.0),
+                "invalid color adjustment"
             );
         }
         if let Some(e) = &self.edge {
