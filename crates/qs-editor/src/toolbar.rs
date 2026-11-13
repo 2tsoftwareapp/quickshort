@@ -29,6 +29,7 @@ pub struct TopBarResult {
     pub save_as: bool,
     pub open: bool,
     pub export: bool,
+    pub canvas: bool,
     pub zoom: ZoomCmd,
 }
 
@@ -168,6 +169,23 @@ pub fn render_top_bar(
     ) && editor.redo()
     {
         res.mutated = true;
+    }
+
+    // Canvas controls live beside history, away from the centered tool capsule.
+    let canvas_rect = Rect::from_min_size(
+        Pos2::new(hist_rect.right() + 8.0, cy - hist_h * 0.5),
+        Vec2::new(72.0, hist_h),
+    );
+    if chrome_button(
+        ui,
+        "tb_canvas",
+        canvas_rect,
+        ActionIcon::Canvas,
+        "Canvas",
+        false,
+        "Resize canvas and change its background",
+    ) {
+        res.canvas = true;
     }
 
     // Only show filename if window is very wide (> 1120px) so center tool capsule remains dead-center

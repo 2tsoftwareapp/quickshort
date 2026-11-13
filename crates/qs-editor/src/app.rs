@@ -51,6 +51,9 @@ pub struct EditorApp {
     last_canvas_rect: Option<Rect>,
     saw_drag_press: bool,
     toast: Option<(String, std::time::Instant)>,
+    canvas_dialog_open: bool,
+    canvas_insets: [f32; 4],
+    canvas_background: u32,
 }
 
 impl EditorApp {
@@ -67,6 +70,7 @@ impl EditorApp {
         // file; hold them until the first frame can ask what to do.
         let pending = Self::pending_recovery(doc_path.as_deref());
 
+        let canvas_background = doc.background;
         let mut view = CanvasView::default();
         let base_rect = RectF::new(0.0, 0.0, doc.base_size.w, doc.base_size.h);
         view.center = base_rect.center();
@@ -93,6 +97,9 @@ impl EditorApp {
             last_canvas_rect: None,
             saw_drag_press: false,
             toast: None,
+            canvas_dialog_open: false,
+            canvas_insets: [0.0; 4],
+            canvas_background,
         };
         app.update_texture(&cc.egui_ctx);
         app
@@ -119,6 +126,7 @@ impl EditorApp {
 
     /// Puts an already-loaded document in place of the current one.
     fn apply_document(&mut self, doc: Document, base: RgbaImage) {
+        let canvas_background = doc.background;
         let base_rect = RectF::new(0.0, 0.0, doc.base_size.w, doc.base_size.h);
         self.view = CanvasView::default();
         self.view.center = base_rect.center();
@@ -127,6 +135,8 @@ impl EditorApp {
             .clamp(0.2, 1.0);
         self.base = base;
         self.editor = Editor::new(doc);
+        self.canvas_background = canvas_background;
+        self.canvas_insets = [0.0; 4];
         self.texture = None;
         self.needs_render = true;
         self.needs_initial_fit = true;
@@ -276,6 +286,81 @@ impl EditorApp {
         match picked {
             Some(path) => self.load_path(&path),
             None => Ok(()),
+        }
+    }
+
+    fn canvas_dialog(&mut self, ctx: &egui::Context) {
+        if !self.canvas_dialog_open {
+            return;
+        }
+
+        let mut open = self.canvas_dialog_open;
+        let mut apply = false;
+        let mut fit_to_image = false;
+        egui::Window::new("Canvas")
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.label("Canvas insets (px)");
+                egui::Grid::new("canvas_insets")
+                    .num_columns(2)
+                    .spacing([16.0, 8.0])
+                    .show(ui, |ui| {
+                        for (label, index) in [("Top", 0), ("Right", 1), ("Bottom", 2), ("Left", 3)] {
+                            ui.label(label);
+                            ui.add(
+                                egui::DragValue::new(&mut self.canvas_insets[index])
+                                    .speed(1.0)
+                                    .range(-100_000.0..=100_000.0),
+                            );
+                            ui.end_row();
+                        }
+                    });
+                ui.label("Negative values crop that edge.");
+
+                let [a, r, g, b] = self.canvas_background.to_be_bytes();
+                let mut color = Color32::from_rgba_unmultiplied(r, g, b, a);
+                ui.horizontal(|ui| {
+                    ui.label("Canvas color");
+                    ui.color_edit_button_srgba(&mut color);
+                });
+                let [r, g, b, a] = color.to_srgba_unmultiplied();
+                self.canvas_background = u32::from_be_bytes([a, r, g, b]);
+
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui.button("Fit to image").clicked() {
+                        fit_to_image = true;
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("Apply").clicked() {
+                            apply = true;
+                        }
+                    });
+                });
+            });
+        self.canvas_dialog_open = open;
+
+        if fit_to_image {
+            let view = self.editor.doc().view;
+            let base = self.editor.doc().base_size;
+            let top = view.y;
+            let left = view.x;
+            let right = base.w - view.w - left;
+            let bottom = base.h - view.h - top;
+            if self.editor.update_canvas(top, right, bottom, left, self.canvas_background) {
+                self.touch();
+            }
+            self.canvas_insets = [0.0; 4];
+            self.canvas_dialog_open = false;
+        } else if apply {
+            let [top, right, bottom, left] = self.canvas_insets;
+            if self.editor.update_canvas(top, right, bottom, left, self.canvas_background) {
+                self.touch();
+            }
+            self.canvas_insets = [0.0; 4];
+            self.canvas_dialog_open = false;
         }
     }
 
@@ -750,9 +835,14 @@ impl eframe::App for EditorApp {
         if top_res.export {
             let _ = self.export_png(None);
         }
+        if top_res.canvas {
+            self.canvas_dialog_open = !self.canvas_dialog_open;
+            self.canvas_background = self.editor.doc().background;
+        }
         if top_res.zoom != ZoomCmd::None {
             self.apply_zoom_cmd(top_res.zoom);
         }
+        self.canvas_dialog(&ctx);
 
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)

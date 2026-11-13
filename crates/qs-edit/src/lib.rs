@@ -995,6 +995,43 @@ impl Editor {
         });
     }
 
+    /// Resize the output canvas and update its background as one undoable edit.
+    /// Insets are added to each named edge; negative values crop that edge.
+    pub fn update_canvas(
+        &mut self,
+        top: f32,
+        right: f32,
+        bottom: f32,
+        left: f32,
+        background: u32,
+    ) -> bool {
+        if ![top, right, bottom, left].iter().all(|v| v.is_finite()) {
+            return false;
+        }
+        let view = RectF::new(
+            self.doc.view.x - left,
+            self.doc.view.y - top,
+            self.doc.view.w + left + right,
+            self.doc.view.h + top + bottom,
+        );
+        if !view.is_finite() || view.w < 1.0 || view.h < 1.0 {
+            return false;
+        }
+        if view == self.doc.view && background == self.doc.background {
+            return false;
+        }
+        self.record(|e| {
+            e.doc.view = view;
+            e.doc.background = background;
+        });
+        true
+    }
+
+    /// Resize only the canvas, preserving its current background.
+    pub fn resize_canvas(&mut self, top: f32, right: f32, bottom: f32, left: f32) -> bool {
+        self.update_canvas(top, right, bottom, left, self.doc.background)
+    }
+
     /// Output region (crop / extended canvas), logical px.
     pub fn set_view(&mut self, view: RectF) {
         let v = view.normalized();
@@ -1594,6 +1631,31 @@ mod tests {
             }
             k => panic!("{k:?}"),
         }
+    }
+
+    #[test]
+    fn resize_canvas_updates_background_in_one_undo_step() {
+        let mut e = editor();
+        assert!(e.update_canvas(10.0, 20.0, 30.0, 40.0, 0xFF123456));
+        assert_eq!(e.doc().view, RectF::new(-40.0, -10.0, 460.0, 340.0));
+        assert_eq!(e.doc().background, 0xFF123456);
+        assert!(e.undo());
+        assert_eq!(e.doc().view, RectF::new(0.0, 0.0, 400.0, 300.0));
+        assert_eq!(e.doc().background, 0xFFFF_FFFF);
+        assert!(!e.can_undo());
+        assert!(e.redo());
+        assert_eq!(e.doc().view, RectF::new(-40.0, -10.0, 460.0, 340.0));
+        assert_eq!(e.doc().background, 0xFF123456);
+    }
+
+    #[test]
+    fn resize_canvas_rejects_non_finite_or_empty_dimensions() {
+        let mut e = editor();
+        assert!(!e.update_canvas(0.0, 0.0, 0.0, -400.0, 0xFF000000));
+        assert!(!e.update_canvas(f32::NAN, 0.0, 0.0, 0.0, 0xFF000000));
+        assert_eq!(e.doc().view, RectF::new(0.0, 0.0, 400.0, 300.0));
+        assert_eq!(e.doc().background, 0xFFFF_FFFF);
+        assert!(!e.can_undo());
     }
 
     #[test]

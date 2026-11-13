@@ -30,6 +30,7 @@ pub enum ActionIcon {
     CheckCircle,
     Open,
     SaveAs,
+    Canvas,
 }
 
 #[inline]
@@ -285,6 +286,16 @@ pub fn draw_action_icon(painter: &Painter, c: Pos2, icon: ActionIcon, color: Col
             );
             painter.line_segment([p(c, 3.3, 3.6), p(c, 6.3, 3.6)], st);
             painter.line_segment([p(c, 4.8, 2.1), p(c, 4.8, 5.1)], st);
+        }
+        ActionIcon::Canvas => {
+            painter.rect_stroke(
+                Rect::from_center_size(c, Vec2::splat(9.0)),
+                CornerRadius::ZERO,
+                thin,
+                StrokeKind::Middle,
+            );
+            painter.line_segment([p(c, -6.5, -2.0), p(c, 6.5, -2.0)], thin);
+            painter.line_segment([p(c, -6.5, 2.0), p(c, 6.5, 2.0)], thin);
         }
         ActionIcon::ZoomOut => {
             painter.line_segment([p(c, -4.0, 0.0), p(c, 4.0, 0.0)], Stroke::new(1.5, color));
