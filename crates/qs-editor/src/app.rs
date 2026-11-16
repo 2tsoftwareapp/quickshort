@@ -14,7 +14,7 @@ use eframe::egui::{
     TextureHandle, TextureOptions, Vec2,
 };
 use image::RgbaImage;
-use qs_doc::{qsdoc, Document, PointF, RectF};
+use qs_doc::{qsdoc, Document, ObjectId, PointF, RectF};
 use qs_edit::{Editor, Motion, Tool};
 use std::path::{Path, PathBuf};
 
@@ -56,6 +56,7 @@ pub struct EditorApp {
     canvas_insets: [f32; 4],
     canvas_background: u32,
     canvas_anchor: (usize, usize),
+    layer_drag_id: Option<ObjectId>,
 }
 
 fn anchored_insets(vertical: f32, horizontal: f32, anchor: (usize, usize)) -> [f32; 4] {
@@ -115,6 +116,7 @@ impl EditorApp {
             canvas_insets: [0.0; 4],
             canvas_background,
             canvas_anchor: (1, 1),
+            layer_drag_id: None,
         };
         app.update_texture(&cc.egui_ctx);
         app
@@ -943,6 +945,55 @@ impl eframe::App for EditorApp {
         }
         self.canvas_dialog(&ctx);
 
+        let layers_mutated = egui::Panel::left("layers_panel")
+            .resizable(true)
+            .default_size(208.0)
+            .size_range(176.0..=300.0)
+            .frame(egui::Frame::NONE.fill(theme::bg_inspector_bot()).inner_margin(egui::Margin::same(10)))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.heading("Layers");
+                    ui.label(format!("{}", self.editor.doc().objects.len()));
+                });
+                ui.separator();
+                let mut changed = false;
+                let rows: Vec<_> = self.editor.doc().objects.iter().enumerate().rev()
+                    .map(|(index, o)| (index, o.id, o.kind.label(), o.visible, o.locked, o.id == self.editor.selected().unwrap_or(ObjectId(0))))
+                    .collect();
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    for (index, id, label, visible, locked, selected) in rows {
+                        let response = ui.horizontal(|ui| {
+                            let eye = if visible { "◉" } else { "○" };
+                            if ui.small_button(eye).on_hover_text(if visible { "Hide layer" } else { "Show layer" }).clicked() {
+                                changed |= self.editor.set_visible(id, !visible);
+                            }
+                            if ui.small_button(if locked { "🔒" } else { "🔓" }).on_hover_text(if locked { "Unlock layer" } else { "Lock layer" }).clicked() {
+                                changed |= self.editor.set_locked(id, !locked);
+                            }
+                            let text = format!("{label}  #{}", id.0);
+                            if ui.selectable_label(selected, text).clicked() {
+                                self.editor.select(Some(id));
+                            }
+                        }).response;
+                        if response.drag_started() {
+                            self.layer_drag_id = Some(id);
+                        }
+                        if response.dragged() {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                        }
+                        if response.drag_stopped() {
+                            if let Some(drag_id) = self.layer_drag_id.take() {
+                                if drag_id != id {
+                                    changed |= self.editor.move_layer(drag_id, index);
+                                }
+                            }
+                        }
+                    }
+                });
+                changed
+            }).inner;
+        if layers_mutated { self.touch(); }
+
         let panel_mutated = egui::Panel::right("image_panel")
             .resizable(false)
             .exact_size(236.0)
@@ -1241,7 +1292,7 @@ mod tests {
             pending_recovery: None, autosave_at: None, window_title: None,
             needs_initial_fit: true, last_canvas_rect: None, saw_drag_press: false,
             toast: None, canvas_dialog_open: false, canvas_insets: [0.0;4],
-            canvas_background: 0, canvas_anchor: (1,1),
+            canvas_background: 0, canvas_anchor: (1,1), layer_drag_id: None,
         };
         app.editor.preview_effects(qs_doc::Effects { border: Some(qs_doc::BorderEffect::default()), ..Default::default() });
         let path = std::env::temp_dir().join(format!("qs_effect_save_{}.qsdoc",std::process::id()));

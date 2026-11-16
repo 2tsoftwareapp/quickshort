@@ -1202,20 +1202,32 @@ impl Editor {
         self.update_selected(|k| k.translate(dx, dy))
     }
 
-    pub fn set_locked(&mut self, id: ObjectId, locked: bool) {
+    pub fn set_locked(&mut self, id: ObjectId, locked: bool) -> bool {
+        if self.doc.get(id).is_none_or(|o| o.locked == locked) { return false; }
         self.record(|e| {
-            if let Some(o) = e.doc.get_mut(id) {
-                o.locked = locked;
-            }
+            if let Some(o) = e.doc.get_mut(id) { o.locked = locked; }
         });
+        true
     }
 
-    pub fn set_visible(&mut self, id: ObjectId, visible: bool) {
+    pub fn set_visible(&mut self, id: ObjectId, visible: bool) -> bool {
+        if self.doc.get(id).is_none_or(|o| o.visible == visible) { return false; }
         self.record(|e| {
-            if let Some(o) = e.doc.get_mut(id) {
-                o.visible = visible;
-            }
+            if let Some(o) = e.doc.get_mut(id) { o.visible = visible; }
         });
+        true
+    }
+
+    /// Move an object to a document index (bottom = 0), preserving identity.
+    pub fn move_layer(&mut self, id: ObjectId, to: usize) -> bool {
+        let Some(from) = self.doc.index_of(id) else { return false; };
+        let to = to.min(self.doc.objects.len().saturating_sub(1));
+        if from == to { return false; }
+        self.record(|e| {
+            let object = e.doc.objects.remove(from);
+            e.doc.objects.insert(to, object);
+        });
+        true
     }
 
     /// Resize the output canvas and update its background as one undoable edit.
@@ -1774,6 +1786,31 @@ mod tests {
         assert_eq!(e.doc().step_number(b), Some(1));
         e.undo();
         assert_eq!(e.doc().step_number(b), Some(2));
+    }
+
+    #[test]
+    fn layer_visibility_lock_reorder_and_undo() {
+        let mut e = two_rects();
+        let low = e.doc().objects[0].id;
+        let high = e.doc().objects[1].id;
+        assert!(e.set_visible(low, false));
+        assert!(!e.doc().get(low).unwrap().visible);
+        assert!(e.undo());
+        assert!(e.doc().get(low).unwrap().visible);
+        assert!(e.redo());
+        assert!(!e.doc().get(low).unwrap().visible);
+
+        assert!(e.set_locked(high, true));
+        assert!(e.doc().get(high).unwrap().locked);
+        assert!(e.undo());
+        assert!(!e.doc().get(high).unwrap().locked);
+
+        assert!(e.move_layer(high, 0));
+        assert_eq!(e.doc().objects[0].id, high);
+        assert!(e.undo());
+        assert_eq!(e.doc().objects[0].id, low);
+        assert!(e.redo());
+        assert_eq!(e.doc().objects[0].id, high);
     }
 
     #[test]
