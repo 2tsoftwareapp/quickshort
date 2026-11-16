@@ -142,7 +142,9 @@ struct Snap {
 #[derive(Clone, Debug, PartialEq)]
 enum Drag {
     None,
-    Move { id: ObjectId, start: PointF, orig: ObjectKind },
+    /// `items`: (id, kind at drag start) for every moved object.
+    Move { items: Vec<(ObjectId, ObjectKind)>, start: PointF },
+    Marquee { start: PointF },
     Handle { id: ObjectId, h: HandleId, orig: ObjectKind },
     Create { id: ObjectId, start: PointF },
     TextSelect,
@@ -154,7 +156,8 @@ pub struct Editor {
     doc: Document,
     tool: Tool,
     pub style: Style,
-    selected: Option<ObjectId>,
+    /// Selected object ids; the last one is the primary (handles/text edit).
+    selection: Vec<ObjectId>,
     drag: Drag,
     pre: Option<Snap>,
     undo: Vec<Snap>,
@@ -174,6 +177,10 @@ pub struct Editor {
     crop_rect: Option<RectF>,
     /// Region rectangle being previewed by the SelectRegion tool (transient, logical px).
     region_rect: Option<RectF>,
+    /// Marquee rectangle being previewed by the Select tool (transient, logical px).
+    marquee_rect: Option<RectF>,
+    /// Shift state of the in-flight pointer_down (for Select toggling).
+    pending_shift: bool,
 }
 
 /// Readable text colour on `rgb`.
@@ -276,7 +283,7 @@ impl Editor {
             doc,
             tool: Tool::Select,
             style: Style::default(),
-            selected: None,
+            selection: Vec::new(),
             drag: Drag::None,
             pre: None,
             undo: Vec::new(),
@@ -289,6 +296,8 @@ impl Editor {
             rev: 0,
             crop_rect: None,
             region_rect: None,
+            marquee_rect: None,
+            pending_shift: false,
         }
     }
 
@@ -300,6 +309,11 @@ impl Editor {
     /// Crop rectangle currently previewed by the Crop tool, if a drag is on.
     pub fn crop_rect(&self) -> Option<RectF> {
         self.crop_rect
+    }
+
+    /// Marquee rectangle preview (Select tool drag on empty canvas).
+    pub fn marquee_rect(&self) -> Option<RectF> {
+        self.marquee_rect
     }
 
     /// Region selected by the SelectRegion tool (committed rect, logical px).
@@ -331,11 +345,25 @@ impl Editor {
     pub fn tool(&self) -> Tool {
         self.tool
     }
+    /// Primary (last-clicked) selected object.
     pub fn selected(&self) -> Option<ObjectId> {
-        self.selected
+        self.selection.last().copied()
+    }
+    /// All selected ids, primary last.
+    pub fn selection(&self) -> &[ObjectId] {
+        &self.selection
     }
     pub fn selected_object(&self) -> Option<&Object> {
-        self.selected.and_then(|id| self.doc.get(id))
+        self.selected().and_then(|id| self.doc.get(id))
+    }
+    /// Union of selected objects' bounds (for a multi-selection outline).
+    pub fn selection_bounds(&self) -> Option<RectF> {
+        self.selection
+            .iter()
+            .filter_map(|id| self.doc.get(*id))
+            .filter(|o| o.visible)
+            .map(|o| qs_render::bounds(&o.kind))
+            .reduce(|a, b| a.union(&b))
     }
     pub fn edit(&self) -> Option<&TextEdit> {
         self.edit.as_ref()
@@ -350,8 +378,11 @@ impl Editor {
         !matches!(self.drag, Drag::None)
     }
 
-    /// Handles of the selected (unlocked) object.
+    /// Resize handles — only for a single unlocked selection.
     pub fn selection_handles(&self) -> Vec<Handle> {
+        if self.selection.len() != 1 {
+            return vec![];
+        }
         match self.selected_object() {
             Some(o) if !o.locked => hit::handles(&o.kind),
             _ => vec![],
@@ -390,9 +421,7 @@ impl Editor {
         self.doc.step_start = s.step_start;
         self.doc.orientation = s.orientation;
         self.doc.effects = s.effects;
-        if self.selected.is_some_and(|id| self.doc.get(id).is_none()) {
-            self.selected = None;
-        }
+        self.selection.retain(|id| self.doc.get(*id).is_some());
     }
 
     fn push_undo(&mut self, pre: Snap) {
@@ -501,13 +530,39 @@ impl Editor {
         self.end_text_edit();
         self.tool = t;
         if t != Tool::Select {
-            self.selected = None;
+            self.selection.clear();
         }
     }
 
     pub fn select(&mut self, id: Option<ObjectId>) {
         self.end_text_edit();
-        self.selected = id.filter(|i| self.doc.get(*i).is_some());
+        self.selection = id
+            .filter(|i| self.doc.get(*i).is_some())
+            .into_iter()
+            .collect();
+    }
+
+    /// Replace the selection with `ids` (invalid ids dropped, primary last).
+    pub fn select_many(&mut self, ids: impl IntoIterator<Item = ObjectId>) {
+        self.end_text_edit();
+        self.selection = ids
+            .into_iter()
+            .filter(|i| self.doc.get(*i).is_some())
+            .collect();
+    }
+
+    /// Toggle `id` in the selection (Shift+click). Returns the new membership.
+    pub fn toggle_select(&mut self, id: ObjectId) -> bool {
+        self.end_text_edit();
+        if let Some(pos) = self.selection.iter().position(|i| *i == id) {
+            self.selection.remove(pos);
+            false
+        } else if self.doc.get(id).is_some() {
+            self.selection.push(id);
+            true
+        } else {
+            false
+        }
     }
 
     /// Esc: leave text edit, else deselect, else back to Select / clear region.
@@ -526,8 +581,8 @@ impl Editor {
         }
         if self.edit.is_some() {
             self.end_text_edit();
-        } else if self.selected.is_some() {
-            self.selected = None;
+        } else if !self.selection.is_empty() {
+            self.selection.clear();
         } else if self.tool == Tool::SelectRegion {
             self.set_region(None);
             self.tool = Tool::Select;
@@ -558,6 +613,12 @@ impl Editor {
     }
 
     pub fn pointer_down(&mut self, p: PointF) {
+        self.pointer_down_mod(p, false);
+    }
+
+    /// `pointer_down` with the Shift modifier state (multi-select).
+    pub fn pointer_down_mod(&mut self, p: PointF, shift: bool) {
+        self.pending_shift = shift;
         self.finish_effects();
         self.drag = Drag::None;
         if let Some(te) = self.edit {
@@ -584,7 +645,7 @@ impl Editor {
             return;
         }
         match self.tool {
-            Tool::Select => self.select_down(p),
+            Tool::Select => self.select_down(p, shift),
             Tool::Text => self.text_down(p),
             Tool::Step => self.step_down(p),
             _ => self.create_down(p),
@@ -608,25 +669,53 @@ impl Editor {
         }
     }
 
-    fn select_down(&mut self, p: PointF) {
-        if let Some(o) = self.selected_object() {
-            if !o.locked {
-                let (id, orig) = (o.id, o.kind.clone());
-                let slack = self.hit_tol * 1.8;
-                if let Some(hd) = hit::handles(&orig).into_iter().find(|hd| hd.pos.dist(p) <= slack) {
-                    self.begin_change();
-                    self.drag = Drag::Handle { id, h: hd.id, orig };
-                    return;
+    fn select_down(&mut self, p: PointF, shift: bool) {
+        // Resize handles only exist for a single selection.
+        if self.selection.len() == 1 {
+            if let Some(o) = self.selected_object() {
+                if !o.locked {
+                    let (id, orig) = (o.id, o.kind.clone());
+                    let slack = self.hit_tol * 1.8;
+                    if let Some(hd) = hit::handles(&orig).into_iter().find(|hd| hd.pos.dist(p) <= slack) {
+                        self.begin_change();
+                        self.drag = Drag::Handle { id, h: hd.id, orig };
+                        return;
+                    }
                 }
             }
         }
-        self.selected = self.pick(p);
-        if let Some(o) = self.selected_object() {
-            if !o.locked {
-                let (id, orig) = (o.id, o.kind.clone());
-                self.begin_change();
-                self.drag = Drag::Move { id, start: p, orig };
+        let picked = self.pick(p);
+        match picked {
+            Some(id) if shift => {
+                // Shift+click toggles membership without starting a drag.
+                self.toggle_select(id);
+                return;
             }
+            Some(id) => {
+                if !self.selection.contains(&id) {
+                    self.selection = vec![id];
+                }
+            }
+            None => {
+                if !shift {
+                    self.selection.clear();
+                }
+                self.drag = Drag::Marquee { start: p };
+                self.marquee_rect = Some(RectF::new(p.x, p.y, 0.0, 0.0));
+                return;
+            }
+        }
+        // Move every selected, unlocked object together (one undo step).
+        let items: Vec<(ObjectId, ObjectKind)> = self
+            .selection
+            .iter()
+            .filter_map(|id| self.doc.get(*id))
+            .filter(|o| !o.locked)
+            .map(|o| (o.id, o.kind.clone()))
+            .collect();
+        if !items.is_empty() {
+            self.begin_change();
+            self.drag = Drag::Move { items, start: p };
         }
     }
 
@@ -715,7 +804,7 @@ impl Editor {
             rgb: self.style.rgb,
             text_rgb: contrast(self.style.rgb),
         });
-        self.selected = Some(id);
+        self.selection = vec![id];
         self.push_undo(pre);
         self.reset_tool();
     }
@@ -737,12 +826,18 @@ impl Editor {
                 let start = *start;
                 self.region_rect = Some(RectF::from_points(start, p));
             }
-            Drag::Move { id, start, orig } => {
-                let id = *id;
+            Drag::Marquee { start } => {
+                let start = *start;
+                self.marquee_rect = Some(RectF::from_points(start, p));
+            }
+            Drag::Move { items, start } => {
+                let (items, start) = (items.clone(), *start);
                 let (dx, dy) = (p.x - start.x, p.y - start.y);
-                let mut k = orig.clone();
-                k.translate(dx, dy);
-                self.set_kind(id, k);
+                for (id, orig) in &items {
+                    let mut k = orig.clone();
+                    k.translate(dx, dy);
+                    self.set_kind(*id, k);
+                }
             }
             Drag::Handle { id, h, orig } => {
                 let (id, k) = (*id, hit::resized(orig, *h, p));
@@ -792,6 +887,34 @@ impl Editor {
                 self.reset_tool();
             }
             Drag::Move { .. } | Drag::Handle { .. } => self.end_change(),
+            Drag::Marquee { .. } => {
+                let additive = self.pending_shift;
+                if let Some(r) = self.marquee_rect.take() {
+                    let r = r.normalized();
+                    if r.w >= 3.0 && r.h >= 3.0 {
+                        let hits: Vec<ObjectId> = self
+                            .doc
+                            .objects
+                            .iter()
+                            .filter(|o| o.visible)
+                            .filter(|o| {
+                                let b = qs_render::bounds(&o.kind);
+                                !(b.right() < r.x || b.x > r.right() || b.bottom() < r.y || b.y > r.bottom())
+                            })
+                            .map(|o| o.id)
+                            .collect();
+                        if additive {
+                            for id in hits {
+                                if !self.selection.contains(&id) {
+                                    self.selection.push(id);
+                                }
+                            }
+                        } else {
+                            self.selection = hits;
+                        }
+                    }
+                }
+            }
             Drag::TextSelect | Drag::None => {}
         }
     }
@@ -819,11 +942,11 @@ impl Editor {
         };
         if !keep {
             self.doc.remove(id);
-            self.selected = None;
+            self.selection.retain(|i| *i != id);
             return;
         }
         let freehand = self.tool.keeps_tool();
-        self.selected = if freehand { None } else { Some(id) };
+        self.selection = if freehand { Vec::new() } else { vec![id] };
         let pre = pre.unwrap_or_else(|| self.snap());
         if is_callout {
             if pre != self.snap() {
@@ -855,7 +978,7 @@ impl Editor {
         }
         let Some(t) = o.kind.text() else { return false };
         let len = t.len();
-        self.selected = Some(id);
+        self.selection = vec![id];
         self.edit = Some(TextEdit { id, caret: len, anchor: len });
         self.edit_pre = Some(pre);
         true
@@ -869,9 +992,7 @@ impl Editor {
         });
         if empty_text {
             self.doc.remove(te.id);
-            if self.selected == Some(te.id) {
-                self.selected = None;
-            }
+            self.selection.retain(|i| *i != te.id);
         }
         if let Some(pre) = pre {
             if pre != self.snap() {
@@ -1009,37 +1130,56 @@ impl Editor {
 
     // ---- commands ----------------------------------------------------------------
 
-    fn selected_unlocked(&self) -> Option<ObjectId> {
-        let o = self.selected_object()?;
-        (!o.locked).then_some(o.id)
+    /// Selected, unlocked object ids (deletion / batch edits target these).
+    fn selected_unlocked_ids(&self) -> Vec<ObjectId> {
+        self.selection
+            .iter()
+            .copied()
+            .filter(|id| self.doc.get(*id).is_some_and(|o| !o.locked))
+            .collect()
     }
 
+    /// Delete every selected unlocked object in one undo step.
     pub fn delete_selected(&mut self) -> bool {
         self.end_text_edit();
-        let Some(id) = self.selected_unlocked() else { return false };
+        let ids = self.selected_unlocked_ids();
+        if ids.is_empty() {
+            return false;
+        }
         self.record(|e| {
-            e.doc.remove(id);
+            for id in &ids {
+                e.doc.remove(*id);
+            }
         });
-        self.selected = None;
+        self.selection.retain(|id| !ids.contains(id));
         true
     }
 
+    /// Duplicate every selected object (+12px), selecting the copies.
+    /// Returns the primary (last) new id.
     pub fn duplicate_selected(&mut self) -> Option<ObjectId> {
         self.end_text_edit();
-        let id = self.selected?;
-        let src = self.doc.get(id)?.kind.clone();
-        let mut new = None;
+        let ids: Vec<ObjectId> = self.selection.clone();
+        if ids.is_empty() {
+            return None;
+        }
+        let mut news = Vec::new();
         self.record(|e| {
-            let mut k = src;
-            k.translate(12.0, 12.0);
-            new = Some(e.doc.push(k));
+            for id in &ids {
+                if let Some(src) = e.doc.get(*id).map(|o| o.kind.clone()) {
+                    let mut k = src;
+                    k.translate(12.0, 12.0);
+                    news.push(e.doc.push(k));
+                }
+            }
         });
-        self.selected = new;
-        new
+        let last = news.last().copied();
+        self.selection = news;
+        last
     }
 
     pub fn reorder(&mut self, z: ZOrder) -> bool {
-        let Some(id) = self.selected else { return false };
+        let Some(id) = self.selected() else { return false };
         let Some(i) = self.doc.index_of(id) else { return false };
         let n = self.doc.objects.len();
         let j = match z {
@@ -1184,15 +1324,22 @@ impl Editor {
         self.record(|e| e.doc.step_start = n);
     }
 
-    /// Edit the selected object as one undo step.
-    pub fn update_selected(&mut self, f: impl FnOnce(&mut ObjectKind)) -> bool {
-        let Some(id) = self.selected_unlocked() else { return false };
+    /// Edit every selected unlocked object as one undo step.
+    pub fn update_selected(&mut self, f: impl Fn(&mut ObjectKind)) -> bool {
+        let ids = self.selected_unlocked_ids();
+        if ids.is_empty() {
+            return false;
+        }
         self.record(|e| {
-            if let Some(o) = e.doc.get_mut(id) {
-                f(&mut o.kind);
+            for id in &ids {
+                if let Some(o) = e.doc.get_mut(*id) {
+                    f(&mut o.kind);
+                }
             }
         });
-        self.fit_callout(id);
+        for id in ids {
+            self.fit_callout(id);
+        }
         true
     }
 
@@ -1883,6 +2030,94 @@ mod tests {
         assert!(e.redo());
         assert_eq!(e.doc().view, RectF::new(-40.0, -10.0, 460.0, 340.0));
         assert_eq!(e.doc().background, 0xFF123456);
+    }
+
+    fn two_rects() -> Editor {
+        let mut e = editor();
+        e.set_tool(Tool::Rect);
+        drag(&mut e, pt(10.0, 10.0), pt(60.0, 40.0));
+        e.set_tool(Tool::Rect);
+        drag(&mut e, pt(100.0, 100.0), pt(150.0, 140.0));
+        e
+    }
+
+    #[test]
+    fn marquee_selects_all_intersecting_objects() {
+        let mut e = two_rects();
+        e.pointer_down_mod(pt(0.0, 0.0), false);
+        e.pointer_move(pt(200.0, 200.0), false);
+        e.pointer_up(pt(200.0, 200.0));
+        assert_eq!(e.selection().len(), 2);
+        assert_eq!(e.doc().objects.len(), 2);
+    }
+
+    #[test]
+    fn marquee_partial_overlap_selects_and_shift_adds() {
+        let mut e = two_rects();
+        // Marquee covering only the first rect.
+        e.pointer_down_mod(pt(0.0, 0.0), false);
+        e.pointer_move(pt(70.0, 50.0), false);
+        e.pointer_up(pt(70.0, 50.0));
+        assert_eq!(e.selection().len(), 1);
+        // Shift+marquee over the second adds it.
+        e.pointer_down_mod(pt(90.0, 90.0), true);
+        e.pointer_move(pt(200.0, 200.0), true);
+        e.pointer_up(pt(200.0, 200.0));
+        assert_eq!(e.selection().len(), 2);
+    }
+
+    #[test]
+    fn shift_click_toggles_membership() {
+        let mut e = two_rects();
+        let ids: Vec<_> = e.doc().objects.iter().map(|o| o.id).collect();
+        e.select_many(ids);
+        assert_eq!(e.selection().len(), 2);
+        let id = e.doc().objects[0].id;
+        e.pointer_down_mod(pt(10.0, 25.0), true); // on the stroke edge
+        e.pointer_up(pt(10.0, 25.0));
+        assert_eq!(e.selection().len(), 1);
+        assert_eq!(e.selected(), Some(e.doc().objects[1].id));
+        let _ = id;
+    }
+
+    #[test]
+    fn multi_move_delete_and_color_are_single_undo_steps() {
+        let mut e = two_rects();
+        e.pointer_down_mod(pt(0.0, 0.0), false);
+        e.pointer_move(pt(200.0, 200.0), false);
+        e.pointer_up(pt(200.0, 200.0));
+        assert_eq!(e.selection().len(), 2);
+
+        // Move both by dragging the first rect's stroke edge.
+        e.pointer_down(pt(10.0, 25.0));
+        e.pointer_move(pt(20.0, 35.0), false);
+        e.pointer_up(pt(20.0, 35.0));
+        assert_eq!(rect_of(&e, 0), RectF::new(20.0, 20.0, 50.0, 30.0));
+        assert_eq!(rect_of(&e, 1), RectF::new(110.0, 110.0, 50.0, 40.0));
+        assert!(e.undo(), "one undo reverts the whole multi-move");
+        assert_eq!(rect_of(&e, 0), RectF::new(10.0, 10.0, 50.0, 30.0));
+        assert_eq!(rect_of(&e, 1), RectF::new(100.0, 100.0, 50.0, 40.0));
+        assert!(e.redo());
+
+        // Color applies to every selected object.
+        e.set_color(0xFF0000);
+        for o in &e.doc().objects {
+            match &o.kind {
+                ObjectKind::Rect { stroke, .. } => assert_eq!(stroke.rgb, 0xFF0000),
+                k => panic!("{k:?}"),
+            }
+        }
+        assert!(e.undo());
+        match &e.doc().objects[0].kind {
+            ObjectKind::Rect { stroke, .. } => assert_ne!(stroke.rgb, 0xFF0000),
+            _ => unreachable!(),
+        }
+
+        // Delete removes all selected in one step.
+        assert!(e.delete_selected());
+        assert!(e.doc().objects.is_empty());
+        assert!(e.undo());
+        assert_eq!(e.doc().objects.len(), 2);
     }
 
     #[test]

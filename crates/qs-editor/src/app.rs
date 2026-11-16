@@ -1012,7 +1012,7 @@ impl eframe::App for EditorApp {
                     self.saw_drag_press = true;
                     if let Some(pos) = response.interact_pointer_pos() {
                         let doc_p = self.view.screen_to_doc(pos, screen_rect);
-                        self.editor.pointer_down(doc_p);
+                        self.editor.pointer_down_mod(doc_p, shift_held);
                         self.touch();
                     }
                 } else if response.dragged() {
@@ -1031,7 +1031,7 @@ impl eframe::App for EditorApp {
                 } else if response.clicked() && !self.saw_drag_press {
                     if let Some(pos) = response.interact_pointer_pos() {
                         let doc_p = self.view.screen_to_doc(pos, screen_rect);
-                        self.editor.pointer_down(doc_p);
+                        self.editor.pointer_down_mod(doc_p, shift_held);
                         self.editor.pointer_up(doc_p);
                         self.touch();
                     }
@@ -1085,6 +1085,24 @@ impl eframe::App for EditorApp {
                     let region = self.editor.region().unwrap();
                     let region_screen = self.view.doc_rect_to_screen(region, screen_rect);
                     canvas::paint_region(&mut painter, region_screen);
+                }
+
+                // 5d. Marquee preview while dragging on empty canvas
+                if self.editor.tool() == Tool::Select {
+                    if let Some(m) = self.editor.marquee_rect() {
+                        if m.w >= 1.0 || m.h >= 1.0 {
+                            let m_screen = self.view.doc_rect_to_screen(m.normalized(), screen_rect);
+                            canvas::paint_region(&mut painter, m_screen);
+                        }
+                    }
+                }
+
+                // 5e. Multi-selection bounding outline (no handles)
+                if self.editor.selection().len() > 1 {
+                    if let Some(b) = self.editor.selection_bounds() {
+                        let b_screen = self.view.doc_rect_to_screen(b, screen_rect);
+                        painter.rect_stroke(b_screen, 0.0, Stroke::new(1.0, accent_blue()), StrokeKind::Outside);
+                    }
                 }
 
                 // 6. Selection outline & handles
