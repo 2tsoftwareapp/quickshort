@@ -386,6 +386,7 @@ pub fn render_top_bar(
         (Tool::Blur, "Blur / Pixelate (B)"),
         (Tool::Magnify, "Magnify Lens (I)"),
         (Tool::Spotlight, "Spotlight (F)"),
+        (Tool::Stamp, "Stamp (G)"),
         (Tool::Crop, "Crop / Trim (K)"),
     ];
 
@@ -564,6 +565,7 @@ enum ContextKind {
     Blur,
     Magnify,
     Spotlight,
+    Stamp,
 }
 
 pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
@@ -722,6 +724,10 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
             editor.style.blur_strength,
             editor.style.text.clone(),
         ),
+        Some(ObjectKind::Stamp { .. }) => {
+            (ContextKind::Stamp, editor.style.rgb, editor.style.width, editor.style.fill, editor.style.callout_shape,
+             editor.style.arrow_head, editor.style.blur_mode, editor.style.blur_strength, editor.style.text.clone())
+        }
         None => {
             let kind = match editor.tool() {
                 Tool::Select => ContextKind::Generic,
@@ -734,6 +740,7 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
                 Tool::Blur => ContextKind::Blur,
                 Tool::Magnify => ContextKind::Magnify,
                 Tool::Spotlight => ContextKind::Spotlight,
+                Tool::Stamp => ContextKind::Stamp,
                 Tool::Crop => ContextKind::Generic,
                 Tool::SelectRegion => ContextKind::Generic,
             };
@@ -1264,6 +1271,19 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
                 ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, label, FontId::proportional(11.0), text_primary());
                 if resp.clicked() { editor.set_spotlight(None, Some(blur)); mutated = true; }
                 x += 54.0;
+            }
+        }
+        ContextKind::Stamp => {
+            x = draw_ins_divider(ui.painter(), x + 6.0, cy) + 6.0;
+            for (i, kind) in qs_doc::StampKind::ALL.into_iter().enumerate() {
+                let r = Rect::from_min_size(Pos2::new(x, cy - 11.0), Vec2::new(58.0, 22.0));
+                let resp = ui.interact(r, ui.auto_id_with(("stamp_kind", i)), Sense::click())
+                    .on_hover_text(format!("{} stamp", kind.label()));
+                let active = editor.style.stamp_kind == kind;
+                paint_pill_button(ui.painter(), r, RADIUS_PILL, active, resp.hovered(), true, false);
+                ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, kind.label(), FontId::proportional(10.5), text_primary());
+                if resp.clicked() { editor.set_stamp_kind(kind); mutated = true; }
+                x += 60.0;
             }
         }
         ContextKind::Step => {

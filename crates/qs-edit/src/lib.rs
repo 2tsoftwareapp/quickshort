@@ -14,7 +14,7 @@ pub use hit::{Handle, HandleId};
 
 use qs_doc::{
     Align, ArrowHead, BlurMode, CalloutShape, Document, Fill, Object, ObjectId, ObjectKind,
-    Orientation, PointF, RectF, Stroke, TextStyle, MagnifyShape, MARKER_ALPHA, PALETTE, PIX_BLOCK, SIZES,
+    Orientation, PointF, RectF, Stroke, StampKind, TextStyle, MagnifyShape, MARKER_ALPHA, PALETTE, PIX_BLOCK, SIZES,
 };
 use qs_render::{bounds, text, text_block, CALLOUT_PAD};
 
@@ -38,6 +38,7 @@ pub enum Tool {
     Blur,
     Magnify,
     Spotlight,
+    Stamp,
     Crop,
     SelectRegion,
 }
@@ -65,6 +66,7 @@ pub struct Style {
     pub magnify_shape: MagnifyShape,
     pub spot_dim: f32,
     pub spot_blur: f32,
+    pub stamp_kind: StampKind,
     pub step_radius: f32,
 }
 
@@ -83,6 +85,7 @@ impl Default for Style {
             magnify_shape: MagnifyShape::Ellipse,
             spot_dim: 0.6,
             spot_blur: 0.0,
+            stamp_kind: StampKind::Approved,
             step_radius: 12.0,
         }
     }
@@ -216,7 +219,7 @@ fn constrain(tool: Tool, a: PointF, b: PointF, shift: bool) -> PointF {
             let len = dx.hypot(dy);
             PointF::new(a.x + len * ang.cos(), a.y + len * ang.sin())
         }
-        Tool::Rect | Tool::Ellipse | Tool::Blur | Tool::Callout | Tool::Magnify | Tool::Spotlight => {
+        Tool::Rect | Tool::Ellipse | Tool::Blur | Tool::Callout | Tool::Magnify | Tool::Spotlight | Tool::Stamp => {
             let m = dx.abs().max(dy.abs());
             PointF::new(a.x + m * dx.signum(), a.y + m * dy.signum())
         }
@@ -227,7 +230,7 @@ fn constrain(tool: Tool, a: PointF, b: PointF, shift: bool) -> PointF {
 fn degenerate(k: &ObjectKind) -> bool {
     match k {
         ObjectKind::Arrow { a, b, .. } | ObjectKind::Line { a, b, .. } => a.dist(*b) < 3.0,
-        ObjectKind::Rect { r, .. } | ObjectKind::Ellipse { r, .. } | ObjectKind::Blur { r, .. } | ObjectKind::Magnify { rect: r, .. } | ObjectKind::Spotlight { rect: r, .. } => {
+        ObjectKind::Rect { r, .. } | ObjectKind::Ellipse { r, .. } | ObjectKind::Blur { r, .. } | ObjectKind::Magnify { rect: r, .. } | ObjectKind::Spotlight { rect: r, .. } | ObjectKind::Stamp { rect: r, .. } => {
             r.w.abs() < 3.0 || r.h.abs() < 3.0
         }
         _ => false,
@@ -640,6 +643,7 @@ impl Editor {
             Tool::Blur => ObjectKind::Blur { r: r0, mode: st.blur_mode, strength: st.blur_strength },
             Tool::Magnify => ObjectKind::Magnify { rect: r0, zoom: st.magnify_zoom, shape: st.magnify_shape, stroke },
             Tool::Spotlight => ObjectKind::Spotlight { rect: r0, dim_opacity: st.spot_dim, blur: st.spot_blur },
+            Tool::Stamp => ObjectKind::Stamp { rect: r0, kind: st.stamp_kind, rgb: st.rgb },
             Tool::Callout => {
                 let fill = if st.fill.is_none() {
                     Fill::Solid { rgb: 0xFFFFFF, alpha: 1.0 }
@@ -750,7 +754,7 @@ impl Editor {
                         ObjectKind::Rect { r, .. }
                         | ObjectKind::Ellipse { r, .. }
                         | ObjectKind::Blur { r, .. } => *r = RectF::from_points(start, q),
-                        ObjectKind::Magnify { rect, .. } | ObjectKind::Spotlight { rect, .. } => *rect = RectF::from_points(start, q),
+                        ObjectKind::Magnify { rect, .. } | ObjectKind::Spotlight { rect, .. } | ObjectKind::Stamp { rect, .. } => *rect = RectF::from_points(start, q),
                         ObjectKind::Callout { body, tail, .. } => {
                             *body = RectF::from_points(start, q);
                             *tail = default_tail(*body);
@@ -1194,6 +1198,7 @@ impl Editor {
             }
             match k {
                 ObjectKind::Text { style, .. } => style.rgb = rgb,
+                ObjectKind::Stamp { rgb: r, .. } => *r = rgb,
                 ObjectKind::Step { rgb: r, text_rgb, .. } => {
                     *r = rgb;
                     *text_rgb = contrast(rgb);
@@ -1258,6 +1263,13 @@ impl Editor {
                 if dim.is_some() { *dim_opacity = d; }
                 if bl.is_some() { *blur = b; }
             }
+        });
+    }
+
+    pub fn set_stamp_kind(&mut self, kind: StampKind) {
+        self.style.stamp_kind = kind;
+        self.update_selected(|k| {
+            if let ObjectKind::Stamp { kind: s, .. } = k { *s = kind; }
         });
     }
 

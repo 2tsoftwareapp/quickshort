@@ -708,6 +708,8 @@ impl EditorApp {
                     Some(Tool::Magnify)
                 } else if i.key_pressed(Key::F) {
                     Some(Tool::Spotlight)
+                } else if i.key_pressed(Key::G) {
+                    Some(Tool::Stamp)
                 } else if i.key_pressed(Key::K) {
                     Some(Tool::Crop)
                 } else if i.key_pressed(Key::M) {

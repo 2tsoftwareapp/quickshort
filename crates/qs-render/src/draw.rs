@@ -9,13 +9,60 @@ use crate::text::{self, TextLayout};
 use ab_glyph::{point, Font, ScaleFont};
 use image::RgbaImage;
 use qs_doc::{
-    ArrowHead, BlurMode, Document, Fill, ObjectKind, Orientation, PointF, RectF, SizeF, Stroke,
+    ArrowHead, BlurMode, Document, Fill, ObjectKind, Orientation, PointF, RectF, SizeF, StampKind, Stroke,
     TextStyle,
 };
 use tiny_skia::{
     Color, FillRule, IntSize, LineCap, LineJoin, Paint, Path, PathBuilder, Pixmap, PixmapPaint,
     Transform,
 };
+
+/// Logical unit coords of each stamp glyph (drawn into a 100x100 box).
+fn stamp_poly(kind: StampKind) -> Option<Vec<(f32, f32)>> {
+    use StampKind::*;
+    Some(match kind {
+        Cursor => vec![(20., 12.), (52., 42.), (38., 48.), (46., 66.), (38., 70.), (30., 52.), (12., 68.)],
+        Check => vec![(20., 52.), (42., 74.), (80., 26.)],
+        Cross => vec![(28., 28.), (72., 72.), (72., 28.), (28., 72.)],
+        Warning => vec![(50., 14.), (92., 82.), (8., 82.)],
+        Star => (0..10).map(|i| {
+            let a = std::f32::consts::PI / 2.0 + i as f32 * std::f32::consts::PI / 5.0;
+            let r = if i % 2 == 0 { 42.0 } else { 18.0 };
+            (50.0 + r * a.cos(), 50.0 - r * a.sin())
+        }).collect(),
+        _ => return None,
+    })
+}
+
+fn draw_stamp(pm: &mut Pixmap, xf: &Xf, rect: &RectF, kind: StampKind, rgb: u32) {
+    let r = rect.normalized();
+    let fill = Fill::Solid { rgb, alpha: 1.0 };
+    match kind {
+        StampKind::Approved | StampKind::Draft | StampKind::Verified => {
+            let pad = (r.h * 0.18).max(2.0);
+            let body = RectF::new(r.x + pad, r.y + pad, r.w - 2.0 * pad, r.h - 2.0 * pad);
+            if body.w > 1.0 && body.h > 1.0 {
+                let path = poly_path(&rrect_poly(body, body.h * 0.2), true);
+                let stroke = Stroke::new(rgb, body.h * 0.08);
+                if let Some(path) = path {
+                    fill_path(pm, xf, &path, &fill);
+                    stroke_path(pm, xf, &path, &stroke, LineJoin::Round);
+                }
+                let label = kind.label();
+                let px = (body.h * 0.52).min(body.w / (label.len() as f32 * 0.62));
+                let st = TextStyle { px, bold: true, rgb: 0xFFFFFF, ..Default::default() };
+                let lay = text::layout(label, &st, None);
+                draw_text(pm, xf, PointF::new(body.center().x - lay.width / 2.0, body.center().y - lay.height / 2.0), label, &st, &lay);
+            }
+        }
+        _ => {
+            let pts = stamp_poly(kind).unwrap_or_default();
+            if let Some(path) = poly_path(&pts.iter().map(|(x, y)| PointF::new(r.x + r.w * x / 100.0, r.y + r.h * y / 100.0)).collect::<Vec<_>>(), true) {
+                fill_path(pm, xf, &path, &fill);
+            }
+        }
+    }
+}
 
 /// Inner padding of callout text, logical px.
 pub const CALLOUT_PAD: f32 = 8.0;
@@ -318,6 +365,7 @@ fn draw_object(pm: &mut Pixmap, xf: &Xf, kind: &ObjectKind, step_no: u32) {
             };
             if let Some(path) = path { stroke_path(pm, xf, &path, stroke, LineJoin::Round); }
         }
+        ObjectKind::Stamp { rect, kind, rgb } => draw_stamp(pm, xf, rect, *kind, *rgb),
         ObjectKind::Spotlight { rect, dim_opacity, blur } => {
             // Black overlay over the whole canvas with `rect` punched out;
             // `blur` feathers the hole outward. Premultiplied: c *= 1 - a.

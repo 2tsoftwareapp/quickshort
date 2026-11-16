@@ -133,6 +133,35 @@ pub enum MagnifyShape {
     Ellipse,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StampKind {
+    #[default]
+    Approved,
+    Draft,
+    Verified,
+    Cursor,
+    Check,
+    Cross,
+    Warning,
+    Star,
+}
+
+impl StampKind {
+    pub const ALL: [StampKind; 8] = [
+        StampKind::Approved, StampKind::Draft, StampKind::Verified, StampKind::Cursor,
+        StampKind::Check, StampKind::Cross, StampKind::Warning, StampKind::Star,
+    ];
+    pub fn label(self) -> &'static str {
+        match self {
+            StampKind::Approved => "Approved", StampKind::Draft => "Draft",
+            StampKind::Verified => "Verified", StampKind::Cursor => "Cursor",
+            StampKind::Check => "Check", StampKind::Cross => "Cross",
+            StampKind::Warning => "Warning", StampKind::Star => "Star",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum ObjectKind {
@@ -213,6 +242,12 @@ pub enum ObjectKind {
         #[serde(default)]
         shape: MagnifyShape,
         stroke: Stroke,
+    },
+    /// Library stamp, drawn as vector and tinted with `rgb`.
+    Stamp {
+        rect: RectF,
+        kind: StampKind,
+        rgb: u32,
     },
     /// Dims the whole canvas except `rect`. `blur` = feather width, logical px.
     Spotlight {
@@ -424,6 +459,11 @@ impl Document {
             if !o.kind.is_finite() {
                 bail!("object {} has non-finite geometry", o.id.0);
             }
+            if let ObjectKind::Stamp { rect, .. } = &o.kind {
+                if rect.w.abs() < 1.0 || rect.h.abs() < 1.0 {
+                    bail!("object {} has a degenerate stamp", o.id.0);
+                }
+            }
             if let ObjectKind::Spotlight { rect, dim_opacity, blur } = &o.kind {
                 if !(0.0..=1.0).contains(dim_opacity)
                     || rect.w.abs() < 1.0
@@ -504,6 +544,7 @@ impl ObjectKind {
             Spotlight { rect, dim_opacity, blur } => {
                 rect.is_finite() && dim_opacity.is_finite() && blur.is_finite()
             }
+            Stamp { rect, .. } => rect.is_finite(),
         }
     }
 
@@ -523,6 +564,7 @@ impl ObjectKind {
             Blur { .. } => "Blur",
             Magnify { .. } => "Magnify",
             Spotlight { .. } => "Spotlight",
+            Stamp { .. } => "Stamp",
         }
     }
 
@@ -541,7 +583,7 @@ impl ObjectKind {
                 *b = b.offset(dx, dy);
             }
             Rect { r, .. } | Ellipse { r, .. } | Blur { r, .. } => *r = r.offset(dx, dy),
-            Magnify { rect, .. } | Spotlight { rect, .. } => *rect = rect.offset(dx, dy),
+            Magnify { rect, .. } | Spotlight { rect, .. } | Stamp { rect, .. } => *rect = rect.offset(dx, dy),
             Text { pos, .. } => *pos = pos.offset(dx, dy),
             Callout { body, tail, .. } => {
                 *body = body.offset(dx, dy);

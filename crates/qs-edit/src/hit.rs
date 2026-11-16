@@ -87,7 +87,7 @@ pub fn hit(kind: &ObjectKind, p: PointF, tol: f32) -> bool {
         Step { center, radius, .. } => p.dist(*center) <= radius + tol,
         Blur { r, .. } => r.normalized().inflate(tol).contains(p),
         Magnify { rect, stroke, .. } => rect.normalized().inflate(stroke.width / 2.0 + tol).contains(p),
-        Spotlight { rect, .. } => rect.normalized().inflate(tol).contains(p),
+        Spotlight { rect, .. } | Stamp { rect, .. } => rect.normalized().inflate(tol).contains(p),
     }
 }
 
@@ -116,7 +116,7 @@ pub fn handles(kind: &ObjectKind) -> Vec<Handle> {
     use ObjectKind::*;
     match kind {
         Rect { r, .. } | Ellipse { r, .. } | Blur { r, .. } => box_handles(*r),
-        Magnify { rect, .. } | Spotlight { rect, .. } => box_handles(*rect),
+        Magnify { rect, .. } | Spotlight { rect, .. } | Stamp { rect, .. } => box_handles(*rect),
         Callout { body, tail, .. } => {
             let mut v = box_handles(*body);
             v.push(h(HandleId::Tail, tail.x, tail.y));
@@ -176,7 +176,7 @@ pub fn resized(orig: &ObjectKind, hd: HandleId, to: PointF) -> ObjectKind {
     let mut k = orig.clone();
     match &mut k {
         Rect { r, .. } | Ellipse { r, .. } | Blur { r, .. } => *r = min_size(resize_rect(*r, hd, to)),
-        Magnify { rect, .. } | Spotlight { rect, .. } => *rect = min_size(resize_rect(*rect, hd, to)),
+        Magnify { rect, .. } | Spotlight { rect, .. } | Stamp { rect, .. } => *rect = min_size(resize_rect(*rect, hd, to)),
         Callout { body, tail, .. } => {
             if hd == HandleId::Tail {
                 *tail = to;
