@@ -14,8 +14,8 @@ use eframe::egui::{
     TextureHandle, TextureOptions, Vec2,
 };
 use image::RgbaImage;
-use qs_doc::{qsdoc, Document, ObjectId, PointF, RectF};
-use qs_edit::{Editor, Motion, Tool};
+use qs_doc::{Document, ObjectId, PointF, RectF, qsdoc};
+use qs_edit::{Alignment, Axis, Editor, Motion, Tool};
 use std::path::{Path, PathBuf};
 
 /// What the user picked in the "unsaved changes" dialog.
@@ -57,6 +57,7 @@ pub struct EditorApp {
     canvas_background: u32,
     canvas_anchor: (usize, usize),
     layer_drag_id: Option<ObjectId>,
+    alignment_open: bool,
 }
 
 fn anchored_insets(vertical: f32, horizontal: f32, anchor: (usize, usize)) -> [f32; 4] {
@@ -117,6 +118,7 @@ impl EditorApp {
             canvas_background,
             canvas_anchor: (1, 1),
             layer_drag_id: None,
+            alignment_open: false,
         };
         app.update_texture(&cc.egui_ctx);
         app
@@ -331,7 +333,8 @@ impl EditorApp {
                     .num_columns(2)
                     .spacing([16.0, 8.0])
                     .show(ui, |ui| {
-                        for (label, index) in [("Top", 0), ("Right", 1), ("Bottom", 2), ("Left", 3)] {
+                        for (label, index) in [("Top", 0), ("Right", 1), ("Bottom", 2), ("Left", 3)]
+                        {
                             ui.label(label);
                             ui.add(
                                 egui::DragValue::new(&mut self.canvas_insets[index])
@@ -355,7 +358,8 @@ impl EditorApp {
                                 {
                                     let vertical = self.canvas_insets[0] + self.canvas_insets[2];
                                     let horizontal = self.canvas_insets[1] + self.canvas_insets[3];
-                                    self.canvas_insets = anchored_insets(vertical, horizontal, (column, row));
+                                    self.canvas_insets =
+                                        anchored_insets(vertical, horizontal, (column, row));
                                     self.canvas_anchor = (column, row);
                                 }
                             }
@@ -386,7 +390,9 @@ impl EditorApp {
 
                 ui.separator();
                 ui.horizontal(|ui| {
-                    if ui.button("Trim edges").clicked() { trim = true; }
+                    if ui.button("Trim edges").clicked() {
+                        trim = true;
+                    }
                     if ui.button("Fit to image").clicked() {
                         fit_to_image = true;
                     }
@@ -403,7 +409,8 @@ impl EditorApp {
         self.canvas_dialog_open = open;
 
         if trim {
-            if let Some(rect) = qs_edit::trim::calculate_trim_rect(self.editor.doc(), &self.base, 6) {
+            if let Some(rect) = qs_edit::trim::calculate_trim_rect(self.editor.doc(), &self.base, 6)
+            {
                 self.editor.set_view(rect);
                 self.touch();
                 self.canvas_dialog_open = false;
@@ -417,22 +424,35 @@ impl EditorApp {
             let left = view.x;
             let right = base.w - view.w - left;
             let bottom = base.h - view.h - top;
-            if self.editor.update_canvas(top, right, bottom, left, self.canvas_background) {
+            if self
+                .editor
+                .update_canvas(top, right, bottom, left, self.canvas_background)
+            {
                 self.touch();
             }
             self.canvas_insets = [0.0; 4];
             self.canvas_dialog_open = false;
         } else if fit_to_objects {
-            if self.editor.fit_canvas_to_objects_with_background(self.canvas_background) {
+            if self
+                .editor
+                .fit_canvas_to_objects_with_background(self.canvas_background)
+            {
                 self.touch();
             }
             self.canvas_insets = [0.0; 4];
             self.canvas_dialog_open = false;
         } else if apply {
             // the dialog's edges are the displayed ones
-            let insets = self.editor.doc().orientation.insets_to_input(self.canvas_insets);
+            let insets = self
+                .editor
+                .doc()
+                .orientation
+                .insets_to_input(self.canvas_insets);
             let [top, right, bottom, left] = insets;
-            if self.editor.update_canvas(top, right, bottom, left, self.canvas_background) {
+            if self
+                .editor
+                .update_canvas(top, right, bottom, left, self.canvas_background)
+            {
                 self.touch();
             }
             self.canvas_insets = [0.0; 4];
@@ -949,32 +969,77 @@ impl eframe::App for EditorApp {
             .resizable(true)
             .default_size(208.0)
             .size_range(176.0..=300.0)
-            .frame(egui::Frame::NONE.fill(theme::bg_inspector_bot()).inner_margin(egui::Margin::same(10)))
+            .frame(
+                egui::Frame::NONE
+                    .fill(theme::bg_inspector_bot())
+                    .inner_margin(egui::Margin::same(10)),
+            )
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.heading("Layers");
                     ui.label(format!("{}", self.editor.doc().objects.len()));
+                    if self.editor.selection().len() >= 2 {
+                        self.alignment_open =
+                            ui.small_button("Align").clicked() || self.alignment_open;
+                    }
                 });
                 ui.separator();
                 let mut changed = false;
-                let rows: Vec<_> = self.editor.doc().objects.iter().enumerate().rev()
-                    .map(|(index, o)| (index, o.id, o.kind.label(), o.visible, o.locked, o.id == self.editor.selected().unwrap_or(ObjectId(0))))
+                let rows: Vec<_> = self
+                    .editor
+                    .doc()
+                    .objects
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .map(|(index, o)| {
+                        (
+                            index,
+                            o.id,
+                            o.kind.label(),
+                            o.visible,
+                            o.locked,
+                            o.id == self.editor.selected().unwrap_or(ObjectId(0)),
+                        )
+                    })
                     .collect();
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     for (index, id, label, visible, locked, selected) in rows {
-                        let response = ui.horizontal(|ui| {
-                            let eye = if visible { "◉" } else { "○" };
-                            if ui.small_button(eye).on_hover_text(if visible { "Hide layer" } else { "Show layer" }).clicked() {
-                                changed |= self.editor.set_visible(id, !visible);
-                            }
-                            if ui.small_button(if locked { "🔒" } else { "🔓" }).on_hover_text(if locked { "Unlock layer" } else { "Lock layer" }).clicked() {
-                                changed |= self.editor.set_locked(id, !locked);
-                            }
-                            let text = format!("{label}  #{}", id.0);
-                            if ui.selectable_label(selected, text).clicked() {
-                                self.editor.select(Some(id));
-                            }
-                        }).response;
+                        let response = ui
+                            .horizontal(|ui| {
+                                let eye = if visible { "◉" } else { "○" };
+                                if ui
+                                    .small_button(eye)
+                                    .on_hover_text(if visible {
+                                        "Hide layer"
+                                    } else {
+                                        "Show layer"
+                                    })
+                                    .clicked()
+                                {
+                                    changed |= self.editor.set_visible(id, !visible);
+                                }
+                                if ui
+                                    .small_button(if locked { "🔒" } else { "🔓" })
+                                    .on_hover_text(if locked {
+                                        "Unlock layer"
+                                    } else {
+                                        "Lock layer"
+                                    })
+                                    .clicked()
+                                {
+                                    changed |= self.editor.set_locked(id, !locked);
+                                }
+                                let text = format!("{label}  #{}", id.0);
+                                if ui
+                                    .selectable_label(selected, text)
+                                    .on_hover_text(format!("Drag to reorder · index {}", index + 1))
+                                    .clicked()
+                                {
+                                    self.editor.select(Some(id));
+                                }
+                            })
+                            .response;
                         if response.drag_started() {
                             self.layer_drag_id = Some(id);
                         }
@@ -991,8 +1056,51 @@ impl eframe::App for EditorApp {
                     }
                 });
                 changed
-            }).inner;
-        if layers_mutated { self.touch(); }
+            })
+            .inner;
+        if layers_mutated {
+            self.touch();
+        }
+        if self.alignment_open {
+            let mut open = self.alignment_open;
+            egui::Window::new("Align & Distribute")
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .show(&ctx, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        for (label, a) in [
+                            ("Left", Alignment::Left),
+                            ("Center X", Alignment::HCenter),
+                            ("Right", Alignment::Right),
+                            ("Top", Alignment::Top),
+                            ("Center Y", Alignment::VCenter),
+                            ("Bottom", Alignment::Bottom),
+                        ] {
+                            if ui.button(label).clicked() && self.editor.align_selected(a) {
+                                self.touch();
+                            }
+                        }
+                    });
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        let enabled = self.editor.selection().len() >= 3;
+                        ui.add_enabled_ui(enabled, |ui| {
+                            if ui.button("Distribute horizontally").clicked()
+                                && self.editor.distribute_selected(Axis::Horizontal)
+                            {
+                                self.touch();
+                            }
+                            if ui.button("Distribute vertically").clicked()
+                                && self.editor.distribute_selected(Axis::Vertical)
+                            {
+                                self.touch();
+                            }
+                        });
+                    });
+                });
+            self.alignment_open = open;
+        }
 
         let panel_mutated = egui::Panel::right("image_panel")
             .resizable(false)
@@ -1002,7 +1110,11 @@ impl eframe::App for EditorApp {
                     .fill(theme::bg_inspector_bot())
                     .inner_margin(egui::Margin::same(12)),
             )
-            .show(ui, |ui| egui::ScrollArea::vertical().show(ui, |ui| image_panel::render(ui, &mut self.editor)).inner)
+            .show(ui, |ui| {
+                egui::ScrollArea::vertical()
+                    .show(ui, |ui| image_panel::render(ui, &mut self.editor))
+                    .inner
+            })
             .inner;
         if panel_mutated {
             self.touch();
@@ -1020,7 +1132,8 @@ impl eframe::App for EditorApp {
                     && screen_rect.width() > 32.0
                     && screen_rect.height() > 32.0
                 {
-                    self.view.fit_to(self.view.display_rect(), screen_rect, 40.0);
+                    self.view
+                        .fit_to(self.view.display_rect(), screen_rect, 40.0);
                     self.view.zoom = self.view.zoom.min(1.0);
                     self.needs_initial_fit = false;
                 }
@@ -1099,8 +1212,9 @@ impl eframe::App for EditorApp {
 
                 // 2. Document screen bounds + soft multi-layer drop shadow
                 self.view.sync(self.editor.doc());
-                let img_screen_rect =
-                    self.view.display_rect_to_screen(self.view.display_rect(), screen_rect);
+                let img_screen_rect = self
+                    .view
+                    .display_rect_to_screen(self.view.display_rect(), screen_rect);
 
                 canvas::paint_document_shadow(&painter, img_screen_rect);
 
@@ -1142,7 +1256,8 @@ impl eframe::App for EditorApp {
                 if self.editor.tool() == Tool::Select {
                     if let Some(m) = self.editor.marquee_rect() {
                         if m.w >= 1.0 || m.h >= 1.0 {
-                            let m_screen = self.view.doc_rect_to_screen(m.normalized(), screen_rect);
+                            let m_screen =
+                                self.view.doc_rect_to_screen(m.normalized(), screen_rect);
                             canvas::paint_region(&mut painter, m_screen);
                         }
                     }
@@ -1152,7 +1267,12 @@ impl eframe::App for EditorApp {
                 if self.editor.selection().len() > 1 {
                     if let Some(b) = self.editor.selection_bounds() {
                         let b_screen = self.view.doc_rect_to_screen(b, screen_rect);
-                        painter.rect_stroke(b_screen, 0.0, Stroke::new(1.0, accent_blue()), StrokeKind::Outside);
+                        painter.rect_stroke(
+                            b_screen,
+                            0.0,
+                            Stroke::new(1.0, accent_blue()),
+                            StrokeKind::Outside,
+                        );
                     }
                 }
 
@@ -1284,26 +1404,53 @@ mod tests {
 
     #[test]
     fn saving_live_effects_finalizes_undo_before_recording_saved_revision() {
-        let base = RgbaImage::from_pixel(20,10,image::Rgba([30,60,90,255]));
+        let base = RgbaImage::from_pixel(20, 10, image::Rgba([30, 60, 90, 255]));
         let mut app = EditorApp {
-            editor: Editor::new(Document::new(20,10,1.0)), base, doc_path: None,
-            view: CanvasView::default(), texture: None, needs_render: true,
-            unsaved: false, saved_rev: 0, close_confirmed: false, confirm_close: false,
-            pending_recovery: None, autosave_at: None, window_title: None,
-            needs_initial_fit: true, last_canvas_rect: None, saw_drag_press: false,
-            toast: None, canvas_dialog_open: false, canvas_insets: [0.0;4],
-            canvas_background: 0, canvas_anchor: (1,1), layer_drag_id: None,
+            editor: Editor::new(Document::new(20, 10, 1.0)),
+            base,
+            doc_path: None,
+            view: CanvasView::default(),
+            texture: None,
+            needs_render: true,
+            unsaved: false,
+            saved_rev: 0,
+            close_confirmed: false,
+            confirm_close: false,
+            pending_recovery: None,
+            autosave_at: None,
+            window_title: None,
+            needs_initial_fit: true,
+            last_canvas_rect: None,
+            saw_drag_press: false,
+            toast: None,
+            canvas_dialog_open: false,
+            canvas_insets: [0.0; 4],
+            canvas_background: 0,
+            canvas_anchor: (1, 1),
+            layer_drag_id: None,
+            alignment_open: false,
         };
-        app.editor.preview_effects(qs_doc::Effects { border: Some(qs_doc::BorderEffect::default()), ..Default::default() });
-        let path = std::env::temp_dir().join(format!("qs_effect_save_{}.qsdoc",std::process::id()));
+        app.editor.preview_effects(qs_doc::Effects {
+            border: Some(qs_doc::BorderEffect::default()),
+            ..Default::default()
+        });
+        let path =
+            std::env::temp_dir().join(format!("qs_effect_save_{}.qsdoc", std::process::id()));
         app.save_to(&path).unwrap();
         let loaded = qsdoc::read(&path).unwrap();
-        assert_eq!(loaded.doc.effects,app.editor.doc().effects);
-        assert_eq!(qs_render::render(&loaded.doc,&loaded.base),qs_render::render(app.editor.doc(),&app.base));
-        app.editor.finish_effects(); app.sync_unsaved();
-        assert!(!app.unsaved,"finishing already-saved effects must not dirty the document");
+        assert_eq!(loaded.doc.effects, app.editor.doc().effects);
+        assert_eq!(
+            qs_render::render(&loaded.doc, &loaded.base),
+            qs_render::render(app.editor.doc(), &app.base)
+        );
+        app.editor.finish_effects();
+        app.sync_unsaved();
+        assert!(
+            !app.unsaved,
+            "finishing already-saved effects must not dirty the document"
+        );
         assert!(app.editor.undo());
-        assert_eq!(app.editor.doc().effects,qs_doc::Effects::default());
+        assert_eq!(app.editor.doc().effects, qs_doc::Effects::default());
         assert!(!app.editor.undo());
         let _ = std::fs::remove_file(path);
     }
@@ -1311,8 +1458,14 @@ mod tests {
     #[test]
     fn canvas_anchor_rebalances_added_space_without_changing_canvas_size() {
         assert_eq!(anchored_insets(24.0, 36.0, (0, 2)), [24.0, 36.0, 0.0, 0.0]);
-        assert_eq!(anchored_insets(24.0, 36.0, (1, 1)), [12.0, 18.0, 12.0, 18.0]);
-        assert_eq!(anchored_insets(-20.0, -30.0, (2, 0)), [0.0, 0.0, -20.0, -30.0]);
+        assert_eq!(
+            anchored_insets(24.0, 36.0, (1, 1)),
+            [12.0, 18.0, 12.0, 18.0]
+        );
+        assert_eq!(
+            anchored_insets(-20.0, -30.0, (2, 0)),
+            [0.0, 0.0, -20.0, -30.0]
+        );
     }
 }
 

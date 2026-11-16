@@ -13,10 +13,11 @@ pub mod trim;
 pub use hit::{Handle, HandleId};
 
 use qs_doc::{
-    Align, ArrowHead, BlurMode, CalloutShape, Document, Fill, Object, ObjectId, ObjectKind,
-    Orientation, PointF, RectF, Stroke, StampKind, TextStyle, MagnifyShape, MARKER_ALPHA, PALETTE, PIX_BLOCK, SIZES,
+    Align, ArrowHead, BlurMode, CalloutShape, Document, Fill, MARKER_ALPHA, MagnifyShape, Object,
+    ObjectId, ObjectKind, Orientation, PALETTE, PIX_BLOCK, PointF, RectF, SIZES, StampKind, Stroke,
+    TextStyle,
 };
-use qs_render::{bounds, text, text_block, CALLOUT_PAD};
+use qs_render::{CALLOUT_PAD, bounds, text, text_block};
 
 const MAX_UNDO: usize = 200;
 /// Highlighter width = stroke width × this (S/M/L ≈ overlay marker sizes).
@@ -114,6 +115,22 @@ pub enum ZOrder {
     Backward,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Alignment {
+    Left,
+    HCenter,
+    Right,
+    Top,
+    VCenter,
+    Bottom,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Axis {
+    Horizontal,
+    Vertical,
+}
+
 /// Active text edit: caret + selection anchor (byte offsets).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TextEdit {
@@ -143,13 +160,29 @@ struct Snap {
 enum Drag {
     None,
     /// `items`: (id, kind at drag start) for every moved object.
-    Move { items: Vec<(ObjectId, ObjectKind)>, start: PointF },
-    Marquee { start: PointF },
-    Handle { id: ObjectId, h: HandleId, orig: ObjectKind },
-    Create { id: ObjectId, start: PointF },
+    Move {
+        items: Vec<(ObjectId, ObjectKind)>,
+        start: PointF,
+    },
+    Marquee {
+        start: PointF,
+    },
+    Handle {
+        id: ObjectId,
+        h: HandleId,
+        orig: ObjectKind,
+    },
+    Create {
+        id: ObjectId,
+        start: PointF,
+    },
     TextSelect,
-    Crop { start: PointF },
-    Region { start: PointF },
+    Crop {
+        start: PointF,
+    },
+    Region {
+        start: PointF,
+    },
 }
 
 pub struct Editor {
@@ -187,11 +220,7 @@ pub struct Editor {
 pub fn contrast(rgb: u32) -> u32 {
     let (r, g, b) = ((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255);
     let l = 0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32;
-    if l > 150.0 {
-        0x000000
-    } else {
-        0xFFFFFF
-    }
+    if l > 150.0 { 0x000000 } else { 0xFFFFFF }
 }
 
 fn clamp_boundary(s: &str, i: usize) -> usize {
@@ -204,7 +233,11 @@ fn clamp_boundary(s: &str, i: usize) -> usize {
 
 fn prev_boundary(s: &str, i: usize) -> usize {
     let i = clamp_boundary(s, i);
-    s[..i].char_indices().next_back().map(|(b, _)| b).unwrap_or(0)
+    s[..i]
+        .char_indices()
+        .next_back()
+        .map(|(b, _)| b)
+        .unwrap_or(0)
 }
 
 fn next_boundary(s: &str, i: usize) -> usize {
@@ -229,7 +262,13 @@ fn constrain(tool: Tool, a: PointF, b: PointF, shift: bool) -> PointF {
             let len = dx.hypot(dy);
             PointF::new(a.x + len * ang.cos(), a.y + len * ang.sin())
         }
-        Tool::Rect | Tool::Ellipse | Tool::Blur | Tool::Callout | Tool::Magnify | Tool::Spotlight | Tool::Stamp => {
+        Tool::Rect
+        | Tool::Ellipse
+        | Tool::Blur
+        | Tool::Callout
+        | Tool::Magnify
+        | Tool::Spotlight
+        | Tool::Stamp => {
             let m = dx.abs().max(dy.abs());
             PointF::new(a.x + m * dx.signum(), a.y + m * dy.signum())
         }
@@ -240,9 +279,12 @@ fn constrain(tool: Tool, a: PointF, b: PointF, shift: bool) -> PointF {
 fn degenerate(k: &ObjectKind) -> bool {
     match k {
         ObjectKind::Arrow { a, b, .. } | ObjectKind::Line { a, b, .. } => a.dist(*b) < 3.0,
-        ObjectKind::Rect { r, .. } | ObjectKind::Ellipse { r, .. } | ObjectKind::Blur { r, .. } | ObjectKind::Magnify { rect: r, .. } | ObjectKind::Spotlight { rect: r, .. } | ObjectKind::Stamp { rect: r, .. } => {
-            r.w.abs() < 3.0 || r.h.abs() < 3.0
-        }
+        ObjectKind::Rect { r, .. }
+        | ObjectKind::Ellipse { r, .. }
+        | ObjectKind::Blur { r, .. }
+        | ObjectKind::Magnify { rect: r, .. }
+        | ObjectKind::Spotlight { rect: r, .. }
+        | ObjectKind::Stamp { rect: r, .. } => r.w.abs() < 3.0 || r.h.abs() < 3.0,
         ObjectKind::Eraser { pts, .. } => pts.len() < 2 || pts.iter().all(|p| p.dist(pts[0]) < 1.0),
         _ => false,
     }
@@ -265,7 +307,9 @@ fn stroke_mut(k: &mut ObjectKind) -> Option<&mut Stroke> {
 fn fill_mut(k: &mut ObjectKind) -> Option<&mut Fill> {
     use ObjectKind::*;
     match k {
-        Rect { fill, .. } | Ellipse { fill, .. } | Text { fill, .. } | Callout { fill, .. } => Some(fill),
+        Rect { fill, .. } | Ellipse { fill, .. } | Text { fill, .. } | Callout { fill, .. } => {
+            Some(fill)
+        }
         _ => None,
     }
 }
@@ -469,9 +513,13 @@ impl Editor {
 
     /// Live preview across slider frames; finish at the end of the gesture.
     pub fn preview_effects(&mut self, effects: qs_doc::Effects) -> bool {
-        if effects.validate().is_err() || effects == self.doc.effects { return false; }
+        if effects.validate().is_err() || effects == self.doc.effects {
+            return false;
+        }
         self.end_text_edit();
-        if self.effects_pre.is_none() { self.effects_pre = Some(self.snap()); }
+        if self.effects_pre.is_none() {
+            self.effects_pre = Some(self.snap());
+        }
         self.doc.effects = effects;
         self.rev = self.rev.wrapping_add(1);
         true
@@ -479,13 +527,17 @@ impl Editor {
 
     pub fn finish_effects(&mut self) {
         if let Some(pre) = self.effects_pre.take() {
-            if pre != self.snap() { self.push_undo(pre); }
+            if pre != self.snap() {
+                self.push_undo(pre);
+            }
         }
     }
 
     /// Apply an entire effects draft as one history entry.
     pub fn set_effects(&mut self, effects: qs_doc::Effects) -> bool {
-        if effects.validate().is_err() || effects == self.doc.effects { return false; }
+        if effects.validate().is_err() || effects == self.doc.effects {
+            return false;
+        }
         self.end_text_edit();
         self.record(|s| s.doc.effects = effects);
         true
@@ -622,14 +674,19 @@ impl Editor {
         self.finish_effects();
         self.drag = Drag::None;
         if let Some(te) = self.edit {
-            let inside = self
-                .doc
-                .get(te.id)
-                .is_some_and(|o| Self::text_hit_rect(&o.kind).inflate(self.hit_tol).contains(p));
+            let inside = self.doc.get(te.id).is_some_and(|o| {
+                Self::text_hit_rect(&o.kind)
+                    .inflate(self.hit_tol)
+                    .contains(p)
+            });
             if inside {
                 if let Some((origin, lay)) = self.edit_block() {
                     let i = lay.index_at(p.x - origin.x, p.y - origin.y);
-                    self.edit = Some(TextEdit { id: te.id, caret: i, anchor: i });
+                    self.edit = Some(TextEdit {
+                        id: te.id,
+                        caret: i,
+                        anchor: i,
+                    });
                     self.drag = Drag::TextSelect;
                 }
                 return;
@@ -664,7 +721,11 @@ impl Editor {
         if self.begin_text_edit_with(id, pre) {
             if let Some((origin, lay)) = self.edit_block() {
                 let i = lay.index_at(p.x - origin.x, p.y - origin.y);
-                self.edit = Some(TextEdit { id, caret: i, anchor: i });
+                self.edit = Some(TextEdit {
+                    id,
+                    caret: i,
+                    anchor: i,
+                });
             }
         }
     }
@@ -676,7 +737,10 @@ impl Editor {
                 if !o.locked {
                     let (id, orig) = (o.id, o.kind.clone());
                     let slack = self.hit_tol * 1.8;
-                    if let Some(hd) = hit::handles(&orig).into_iter().find(|hd| hd.pos.dist(p) <= slack) {
+                    if let Some(hd) = hit::handles(&orig)
+                        .into_iter()
+                        .find(|hd| hd.pos.dist(p) <= slack)
+                    {
                         self.begin_change();
                         self.drag = Drag::Handle { id, h: hd.id, orig };
                         return;
@@ -724,26 +788,70 @@ impl Editor {
         let stroke = Stroke::new(st.rgb, st.width);
         let r0 = RectF::new(p.x, p.y, 0.0, 0.0);
         let kind = match self.tool {
-            Tool::Pen => ObjectKind::Pen { pts: vec![p], stroke },
+            Tool::Pen => ObjectKind::Pen {
+                pts: vec![p],
+                stroke,
+            },
             Tool::Highlighter => ObjectKind::Highlighter {
                 pts: vec![p],
-                stroke: Stroke { rgb: st.rgb, alpha: MARKER_ALPHA, width: st.width * MARKER_K },
+                stroke: Stroke {
+                    rgb: st.rgb,
+                    alpha: MARKER_ALPHA,
+                    width: st.width * MARKER_K,
+                },
             },
-            Tool::Arrow => ObjectKind::Arrow { a: p, b: p, stroke, head: st.arrow_head },
+            Tool::Arrow => ObjectKind::Arrow {
+                a: p,
+                b: p,
+                stroke,
+                head: st.arrow_head,
+            },
             Tool::Line => ObjectKind::Line { a: p, b: p, stroke },
-            Tool::Rect => ObjectKind::Rect { r: r0, stroke, fill: st.fill, radius: 1.5 },
-            Tool::Ellipse => ObjectKind::Ellipse { r: r0, stroke, fill: st.fill },
-            Tool::Blur => ObjectKind::Blur { r: r0, mode: st.blur_mode, strength: st.blur_strength },
-            Tool::Magnify => ObjectKind::Magnify { rect: r0, zoom: st.magnify_zoom, shape: st.magnify_shape, stroke },
-            Tool::Spotlight => ObjectKind::Spotlight { rect: r0, dim_opacity: st.spot_dim, blur: st.spot_blur },
+            Tool::Rect => ObjectKind::Rect {
+                r: r0,
+                stroke,
+                fill: st.fill,
+                radius: 1.5,
+            },
+            Tool::Ellipse => ObjectKind::Ellipse {
+                r: r0,
+                stroke,
+                fill: st.fill,
+            },
+            Tool::Blur => ObjectKind::Blur {
+                r: r0,
+                mode: st.blur_mode,
+                strength: st.blur_strength,
+            },
+            Tool::Magnify => ObjectKind::Magnify {
+                rect: r0,
+                zoom: st.magnify_zoom,
+                shape: st.magnify_shape,
+                stroke,
+            },
+            Tool::Spotlight => ObjectKind::Spotlight {
+                rect: r0,
+                dim_opacity: st.spot_dim,
+                blur: st.spot_blur,
+            },
             Tool::Eraser => {
                 let pts = vec![p, p];
-                ObjectKind::Eraser { pts, width: st.eraser_width }
+                ObjectKind::Eraser {
+                    pts,
+                    width: st.eraser_width,
+                }
             }
-            Tool::Stamp => ObjectKind::Stamp { rect: r0, kind: st.stamp_kind, rgb: st.rgb },
+            Tool::Stamp => ObjectKind::Stamp {
+                rect: r0,
+                kind: st.stamp_kind,
+                rgb: st.rgb,
+            },
             Tool::Callout => {
                 let fill = if st.fill.is_none() {
-                    Fill::Solid { rgb: 0xFFFFFF, alpha: 1.0 }
+                    Fill::Solid {
+                        rgb: 0xFFFFFF,
+                        alpha: 1.0,
+                    }
                 } else {
                     st.fill
                 };
@@ -779,12 +887,19 @@ impl Editor {
             if self.begin_text_edit_with(id, pre) {
                 if let Some((origin, lay)) = self.edit_block() {
                     let i = lay.index_at(p.x - origin.x, p.y - origin.y);
-                    self.edit = Some(TextEdit { id, caret: i, anchor: i });
+                    self.edit = Some(TextEdit {
+                        id,
+                        caret: i,
+                        anchor: i,
+                    });
                 }
             }
             return;
         }
-        let style = TextStyle { rgb: self.style.rgb, ..self.style.text };
+        let style = TextStyle {
+            rgb: self.style.rgb,
+            ..self.style.text
+        };
         let id = self.doc.push(ObjectKind::Text {
             pos: p,
             text: String::new(),
@@ -848,7 +963,9 @@ impl Editor {
                 let q = constrain(self.tool, start, p, shift);
                 if let Some(o) = self.doc.get_mut(id) {
                     match &mut o.kind {
-                        ObjectKind::Pen { pts, .. } | ObjectKind::Highlighter { pts, .. } | ObjectKind::Eraser { pts, .. } => {
+                        ObjectKind::Pen { pts, .. }
+                        | ObjectKind::Highlighter { pts, .. }
+                        | ObjectKind::Eraser { pts, .. } => {
                             if pts.last().is_none_or(|l| l.dist(p) >= 0.5) {
                                 pts.push(p);
                             }
@@ -857,7 +974,9 @@ impl Editor {
                         ObjectKind::Rect { r, .. }
                         | ObjectKind::Ellipse { r, .. }
                         | ObjectKind::Blur { r, .. } => *r = RectF::from_points(start, q),
-                        ObjectKind::Magnify { rect, .. } | ObjectKind::Spotlight { rect, .. } | ObjectKind::Stamp { rect, .. } => *rect = RectF::from_points(start, q),
+                        ObjectKind::Magnify { rect, .. }
+                        | ObjectKind::Spotlight { rect, .. }
+                        | ObjectKind::Stamp { rect, .. } => *rect = RectF::from_points(start, q),
                         ObjectKind::Callout { body, tail, .. } => {
                             *body = RectF::from_points(start, q);
                             *tail = default_tail(*body);
@@ -899,7 +1018,10 @@ impl Editor {
                             .filter(|o| o.visible)
                             .filter(|o| {
                                 let b = qs_render::bounds(&o.kind);
-                                !(b.right() < r.x || b.x > r.right() || b.bottom() < r.y || b.y > r.bottom())
+                                !(b.right() < r.x
+                                    || b.x > r.right()
+                                    || b.bottom() < r.y
+                                    || b.y > r.bottom())
                             })
                             .map(|o| o.id)
                             .collect();
@@ -927,7 +1049,9 @@ impl Editor {
 
     fn finish_create(&mut self, id: ObjectId, start: PointF) {
         let pre = self.pre.take();
-        let Some(o) = self.doc.get_mut(id) else { return };
+        let Some(o) = self.doc.get_mut(id) else {
+            return;
+        };
         let is_callout = matches!(o.kind, ObjectKind::Callout { .. });
         let keep = match &mut o.kind {
             ObjectKind::Callout { body, tail, .. } => {
@@ -972,14 +1096,20 @@ impl Editor {
         if self.edit.is_some() {
             self.end_text_edit();
         }
-        let Some(o) = self.doc.get(id) else { return false };
+        let Some(o) = self.doc.get(id) else {
+            return false;
+        };
         if o.locked {
             return false;
         }
         let Some(t) = o.kind.text() else { return false };
         let len = t.len();
         self.selection = vec![id];
-        self.edit = Some(TextEdit { id, caret: len, anchor: len });
+        self.edit = Some(TextEdit {
+            id,
+            caret: len,
+            anchor: len,
+        });
         self.edit_pre = Some(pre);
         true
     }
@@ -988,7 +1118,8 @@ impl Editor {
         let Some(te) = self.edit.take() else { return };
         let pre = self.edit_pre.take();
         let empty_text = self.doc.get(te.id).is_some_and(|o| {
-            matches!(o.kind, ObjectKind::Text { .. }) && o.kind.text().is_some_and(|t| t.trim().is_empty())
+            matches!(o.kind, ObjectKind::Text { .. })
+                && o.kind.text().is_some_and(|t| t.trim().is_empty())
         });
         if empty_text {
             self.doc.remove(te.id);
@@ -1002,7 +1133,9 @@ impl Editor {
     }
 
     fn edit_text(&mut self, f: impl FnOnce(&mut String, &mut TextEdit)) -> bool {
-        let Some(mut te) = self.edit else { return false };
+        let Some(mut te) = self.edit else {
+            return false;
+        };
         let Some(t) = self.doc.get_mut(te.id).and_then(|o| o.kind.text_mut()) else {
             return false;
         };
@@ -1023,8 +1156,16 @@ impl Editor {
 
     /// Grow a callout so its wrapped text fits (never shrinks).
     fn fit_callout(&mut self, id: ObjectId) {
-        let Some(o) = self.doc.get_mut(id) else { return };
-        if let ObjectKind::Callout { body, text: t, style, .. } = &mut o.kind {
+        let Some(o) = self.doc.get_mut(id) else {
+            return;
+        };
+        if let ObjectKind::Callout {
+            body,
+            text: t,
+            style,
+            ..
+        } = &mut o.kind
+        {
             let b = body.normalized();
             let lay = text::layout(t, style, Some((b.w - 2.0 * CALLOUT_PAD).max(8.0)));
             let need = lay.height + 2.0 * CALLOUT_PAD;
@@ -1035,7 +1176,10 @@ impl Editor {
     }
 
     pub fn text_insert(&mut self, s: &str) {
-        let clean: String = s.chars().filter(|c| *c == '\n' || !c.is_control()).collect();
+        let clean: String = s
+            .chars()
+            .filter(|c| *c == '\n' || !c.is_control())
+            .collect();
         if clean.is_empty() {
             return;
         }
@@ -1079,8 +1223,16 @@ impl Editor {
 
     pub fn text_select_all(&mut self) {
         let Some(te) = self.edit else { return };
-        let len = self.doc.get(te.id).and_then(|o| o.kind.text()).map_or(0, str::len);
-        self.edit = Some(TextEdit { caret: len, anchor: 0, ..te });
+        let len = self
+            .doc
+            .get(te.id)
+            .and_then(|o| o.kind.text())
+            .map_or(0, str::len);
+        self.edit = Some(TextEdit {
+            caret: len,
+            anchor: 0,
+            ..te
+        });
     }
 
     /// Currently selected text, for copy / cut.
@@ -1101,12 +1253,20 @@ impl Editor {
             (true, Motion::Right) => b,
             _ => self.motion_target(te, m),
         };
-        self.edit = Some(TextEdit { caret: new, anchor: if extend { te.anchor } else { new }, ..te });
+        self.edit = Some(TextEdit {
+            caret: new,
+            anchor: if extend { te.anchor } else { new },
+            ..te
+        });
     }
 
     fn motion_target(&self, te: TextEdit, m: Motion) -> usize {
-        let Some(o) = self.doc.get(te.id) else { return te.caret };
-        let Some(t) = o.kind.text() else { return te.caret };
+        let Some(o) = self.doc.get(te.id) else {
+            return te.caret;
+        };
+        let Some(t) = o.kind.text() else {
+            return te.caret;
+        };
         let i = clamp_boundary(t, te.caret);
         match m {
             Motion::Left => prev_boundary(t, i),
@@ -1114,7 +1274,9 @@ impl Editor {
             Motion::DocStart => 0,
             Motion::DocEnd => t.len(),
             Motion::Home | Motion::End | Motion::Up | Motion::Down => {
-                let Some((_, lay)) = text_block(&o.kind) else { return i };
+                let Some((_, lay)) = text_block(&o.kind) else {
+                    return i;
+                };
                 let li = lay.line_of(i);
                 match m {
                     Motion::Home => lay.lines[li].start,
@@ -1178,9 +1340,129 @@ impl Editor {
         last
     }
 
+    /// Align selected unlocked objects by their bounds. The reference bounds
+    /// are the union of the current selection.
+    pub fn align_selected(&mut self, alignment: Alignment) -> bool {
+        let ids = self.selected_unlocked_ids();
+        if ids.len() < 2 {
+            return false;
+        }
+        let bounds = ids
+            .iter()
+            .filter_map(|id| self.doc.get(*id).map(|o| qs_render::bounds(&o.kind)))
+            .collect::<Vec<_>>();
+        let union = bounds.iter().copied().reduce(|a, b| a.union(&b)).unwrap();
+        let offsets = ids
+            .iter()
+            .zip(bounds.iter())
+            .map(|(id, b)| {
+                let (dx, dy) = match alignment {
+                    Alignment::Left => (union.x - b.x, 0.0),
+                    Alignment::HCenter => (union.center().x - b.center().x, 0.0),
+                    Alignment::Right => (union.right() - b.right(), 0.0),
+                    Alignment::Top => (0.0, union.y - b.y),
+                    Alignment::VCenter => (0.0, union.center().y - b.center().y),
+                    Alignment::Bottom => (0.0, union.bottom() - b.bottom()),
+                };
+                (*id, dx, dy)
+            })
+            .collect::<Vec<_>>();
+        if offsets
+            .iter()
+            .all(|(_, dx, dy)| dx.abs() < f32::EPSILON && dy.abs() < f32::EPSILON)
+        {
+            return false;
+        }
+        self.record(|e| {
+            for (id, dx, dy) in offsets {
+                if let Some(o) = e.doc.get_mut(id) {
+                    o.kind.translate(dx, dy);
+                }
+            }
+        });
+        true
+    }
+
+    /// Evenly distribute selected object centers between the outermost
+    /// centers along the requested axis. Requires three unlocked objects.
+    pub fn distribute_selected(&mut self, axis: Axis) -> bool {
+        let ids = self.selected_unlocked_ids();
+        if ids.len() < 3 {
+            return false;
+        }
+        let mut items = ids
+            .iter()
+            .filter_map(|id| self.doc.get(*id).map(|o| (*id, qs_render::bounds(&o.kind))))
+            .collect::<Vec<_>>();
+        if items.len() < 3 {
+            return false;
+        }
+        items.sort_by(|a, b| {
+            let av = if axis == Axis::Horizontal {
+                a.1.center().x
+            } else {
+                a.1.center().y
+            };
+            let bv = if axis == Axis::Horizontal {
+                b.1.center().x
+            } else {
+                b.1.center().y
+            };
+            av.total_cmp(&bv)
+        });
+        let first = items.first().unwrap().1;
+        let last = items.last().unwrap().1;
+        let start = if axis == Axis::Horizontal {
+            first.center().x
+        } else {
+            first.center().y
+        };
+        let end = if axis == Axis::Horizontal {
+            last.center().x
+        } else {
+            last.center().y
+        };
+        let step = (end - start) / (items.len() - 1) as f32;
+        let offsets = items
+            .iter()
+            .enumerate()
+            .map(|(i, (id, b))| {
+                let current = if axis == Axis::Horizontal {
+                    b.center().x
+                } else {
+                    b.center().y
+                };
+                let delta = start + step * i as f32 - current;
+                (
+                    *id,
+                    if axis == Axis::Horizontal { delta } else { 0.0 },
+                    if axis == Axis::Vertical { delta } else { 0.0 },
+                )
+            })
+            .collect::<Vec<_>>();
+        if offsets
+            .iter()
+            .all(|(_, dx, dy)| dx.abs() < f32::EPSILON && dy.abs() < f32::EPSILON)
+        {
+            return false;
+        }
+        self.record(|e| {
+            for (id, dx, dy) in offsets {
+                if let Some(o) = e.doc.get_mut(id) {
+                    o.kind.translate(dx, dy);
+                }
+            }
+        });
+        true
+    }
+
     pub fn reorder(&mut self, z: ZOrder) -> bool {
-        let Some(id) = self.selected() else { return false };
-        let Some(i) = self.doc.index_of(id) else { return false };
+        let Some(id) = self.selected() else {
+            return false;
+        };
+        let Some(i) = self.doc.index_of(id) else {
+            return false;
+        };
         let n = self.doc.objects.len();
         let j = match z {
             ZOrder::Front => n - 1,
@@ -1202,27 +1484,45 @@ impl Editor {
         self.update_selected(|k| k.translate(dx, dy))
     }
 
-    pub fn set_locked(&mut self, id: ObjectId, locked: bool) -> bool {
-        if self.doc.get(id).is_none_or(|o| o.locked == locked) { return false; }
+    fn set_layer_visible_and_locked(&mut self, id: ObjectId, visible: bool, locked: bool) -> bool {
+        let Some(object) = self.doc.get(id) else {
+            return false;
+        };
+        if object.visible == visible && object.locked == locked {
+            return false;
+        }
         self.record(|e| {
-            if let Some(o) = e.doc.get_mut(id) { o.locked = locked; }
+            if let Some(o) = e.doc.get_mut(id) {
+                o.visible = visible;
+                o.locked = locked;
+            }
         });
         true
     }
 
+    pub fn set_locked(&mut self, id: ObjectId, locked: bool) -> bool {
+        let Some(o) = self.doc.get(id) else {
+            return false;
+        };
+        self.set_layer_visible_and_locked(id, o.visible, locked)
+    }
+
     pub fn set_visible(&mut self, id: ObjectId, visible: bool) -> bool {
-        if self.doc.get(id).is_none_or(|o| o.visible == visible) { return false; }
-        self.record(|e| {
-            if let Some(o) = e.doc.get_mut(id) { o.visible = visible; }
-        });
-        true
+        let Some(o) = self.doc.get(id) else {
+            return false;
+        };
+        self.set_layer_visible_and_locked(id, visible, o.locked)
     }
 
     /// Move an object to a document index (bottom = 0), preserving identity.
     pub fn move_layer(&mut self, id: ObjectId, to: usize) -> bool {
-        let Some(from) = self.doc.index_of(id) else { return false; };
+        let Some(from) = self.doc.index_of(id) else {
+            return false;
+        };
         let to = to.min(self.doc.objects.len().saturating_sub(1));
-        if from == to { return false; }
+        if from == to {
+            return false;
+        }
         self.record(|e| {
             let object = e.doc.objects.remove(from);
             e.doc.objects.insert(to, object);
@@ -1366,7 +1666,9 @@ impl Editor {
             match k {
                 ObjectKind::Text { style, .. } => style.rgb = rgb,
                 ObjectKind::Stamp { rgb: r, .. } => *r = rgb,
-                ObjectKind::Step { rgb: r, text_rgb, .. } => {
+                ObjectKind::Step {
+                    rgb: r, text_rgb, ..
+                } => {
                     *r = rgb;
                     *text_rgb = contrast(rgb);
                 }
@@ -1414,21 +1716,36 @@ impl Editor {
     }
 
     pub fn set_magnify_zoom(&mut self, zoom: f32) {
-        if !(1.5..=4.0).contains(&zoom) { return; }
+        if !(1.5..=4.0).contains(&zoom) {
+            return;
+        }
         self.style.magnify_zoom = zoom;
         self.update_selected(|k| {
-            if let ObjectKind::Magnify { zoom: z, .. } = k { *z = zoom; }
+            if let ObjectKind::Magnify { zoom: z, .. } = k {
+                *z = zoom;
+            }
         });
     }
 
     pub fn set_spotlight(&mut self, dim: Option<f32>, bl: Option<f32>) {
-        if let Some(d) = dim.filter(|d| (0.0..=1.0).contains(d)) { self.style.spot_dim = d; }
-        if let Some(b) = bl.filter(|b| (0.0..=64.0).contains(b)) { self.style.spot_blur = b; }
+        if let Some(d) = dim.filter(|d| (0.0..=1.0).contains(d)) {
+            self.style.spot_dim = d;
+        }
+        if let Some(b) = bl.filter(|b| (0.0..=64.0).contains(b)) {
+            self.style.spot_blur = b;
+        }
         let (d, b) = (self.style.spot_dim, self.style.spot_blur);
         self.update_selected(|k| {
-            if let ObjectKind::Spotlight { dim_opacity, blur, .. } = k {
-                if dim.is_some() { *dim_opacity = d; }
-                if bl.is_some() { *blur = b; }
+            if let ObjectKind::Spotlight {
+                dim_opacity, blur, ..
+            } = k
+            {
+                if dim.is_some() {
+                    *dim_opacity = d;
+                }
+                if bl.is_some() {
+                    *blur = b;
+                }
             }
         });
     }
@@ -1437,21 +1754,27 @@ impl Editor {
         let w = w.clamp(1.0, 128.0);
         self.style.eraser_width = w;
         self.update_selected(|k| {
-            if let ObjectKind::Eraser { width, .. } = k { *width = w; }
+            if let ObjectKind::Eraser { width, .. } = k {
+                *width = w;
+            }
         });
     }
 
     pub fn set_stamp_kind(&mut self, kind: StampKind) {
         self.style.stamp_kind = kind;
         self.update_selected(|k| {
-            if let ObjectKind::Stamp { kind: s, .. } = k { *s = kind; }
+            if let ObjectKind::Stamp { kind: s, .. } = k {
+                *s = kind;
+            }
         });
     }
 
     pub fn set_magnify_shape(&mut self, shape: MagnifyShape) {
         self.style.magnify_shape = shape;
         self.update_selected(|k| {
-            if let ObjectKind::Magnify { shape: s, .. } = k { *s = shape; }
+            if let ObjectKind::Magnify { shape: s, .. } = k {
+                *s = shape;
+            }
         });
     }
     pub fn set_callout_shape(&mut self, shape: CalloutShape) {
@@ -1493,7 +1816,13 @@ impl Editor {
     pub fn set_callout_fill_and_contrast(&mut self, fill: Fill) {
         self.style.fill = fill;
         self.update_selected(|k| {
-            if let ObjectKind::Callout { fill: f, style, stroke, .. } = k {
+            if let ObjectKind::Callout {
+                fill: f,
+                style,
+                stroke,
+                ..
+            } = k
+            {
                 *f = fill;
                 style.rgb = match fill {
                     Fill::Solid { rgb, .. } => contrast(rgb),
@@ -1577,7 +1906,11 @@ mod tests {
     #[test]
     fn handle_resize_se_and_undo() {
         let mut e = drawn_rect();
-        let se = e.selection_handles().into_iter().find(|h| h.id == HandleId::SE).unwrap();
+        let se = e
+            .selection_handles()
+            .into_iter()
+            .find(|h| h.id == HandleId::SE)
+            .unwrap();
         assert_eq!(se.pos, pt(60.0, 40.0));
         drag(&mut e, se.pos, pt(100.0, 90.0));
         assert_eq!(rect_of(&e, 0), RectF::new(10.0, 10.0, 90.0, 80.0));
@@ -1639,7 +1972,10 @@ mod tests {
         e.end_text_edit();
         assert_eq!(e.doc().objects[0].kind.text(), Some("Hi\nther"));
         assert!(e.undo());
-        assert!(e.doc().objects.is_empty(), "whole text session is one undo step");
+        assert!(
+            e.doc().objects.is_empty(),
+            "whole text session is one undo step"
+        );
         assert!(e.redo());
         assert_eq!(e.doc().objects[0].kind.text(), Some("Hi\nther"));
     }
@@ -1728,7 +2064,11 @@ mod tests {
         drag(&mut e, pt(100.0, 100.0), pt(220.0, 150.0));
         e.end_text_edit();
         e.select(Some(e.doc().objects[0].id));
-        let tail = e.selection_handles().into_iter().find(|h| h.id == HandleId::Tail).unwrap();
+        let tail = e
+            .selection_handles()
+            .into_iter()
+            .find(|h| h.id == HandleId::Tail)
+            .unwrap();
         drag(&mut e, tail.pos, pt(10.0, 10.0));
         match &e.doc().objects[0].kind {
             ObjectKind::Callout { body, tail, .. } => {
@@ -1747,7 +2087,11 @@ mod tests {
         e.text_insert("hello wide world of words");
         e.end_text_edit();
         e.select(Some(e.doc().objects[0].id));
-        let east = e.selection_handles().into_iter().find(|h| h.id == HandleId::E).unwrap();
+        let east = e
+            .selection_handles()
+            .into_iter()
+            .find(|h| h.id == HandleId::E)
+            .unwrap();
         drag(&mut e, east.pos, pt(80.0, east.pos.y));
         match &e.doc().objects[0].kind {
             ObjectKind::Text { wrap_w, .. } => assert_eq!(*wrap_w, Some(70.0)),
@@ -1813,6 +2157,97 @@ mod tests {
         assert_eq!(e.doc().objects[0].id, high);
     }
 
+    fn three_rects() -> Editor {
+        let mut e = editor();
+        for (x, y) in [(10.0, 10.0), (50.0, 35.0), (120.0, 80.0)] {
+            e.set_tool(Tool::Rect);
+            drag(&mut e, pt(x, y), pt(x + 20.0, y + 10.0));
+        }
+        let ids = e.doc().objects.iter().map(|o| o.id).collect::<Vec<_>>();
+        e.select_many(ids);
+        e
+    }
+
+    #[test]
+    fn alignment_uses_union_edges_and_one_undo_step() {
+        let mut e = three_rects();
+        assert!(e.align_selected(Alignment::Left));
+        let b = e
+            .doc()
+            .objects
+            .iter()
+            .map(|o| qs_render::bounds(&o.kind))
+            .collect::<Vec<_>>();
+        assert!(b.iter().all(|r| (r.x - b[0].x).abs() < 0.01));
+        assert!(e.undo());
+        assert_eq!(rect_of(&e, 0), RectF::new(10.0, 10.0, 20.0, 10.0));
+        assert!(e.redo());
+    }
+
+    #[test]
+    fn center_and_bottom_alignment_are_correct() {
+        let mut e = three_rects();
+        assert!(e.align_selected(Alignment::HCenter));
+        let bounds = e
+            .doc()
+            .objects
+            .iter()
+            .map(|o| qs_render::bounds(&o.kind))
+            .collect::<Vec<_>>();
+        assert!(
+            bounds
+                .iter()
+                .all(|r| (r.center().x - bounds[0].center().x).abs() < 0.01)
+        );
+        assert!(e.align_selected(Alignment::Bottom));
+        let bounds = e
+            .doc()
+            .objects
+            .iter()
+            .map(|o| qs_render::bounds(&o.kind))
+            .collect::<Vec<_>>();
+        assert!(
+            bounds
+                .iter()
+                .all(|r| (r.bottom() - bounds[0].bottom()).abs() < 0.01)
+        );
+    }
+
+    #[test]
+    fn horizontal_distribution_evenly_spaces_centers_and_undoes() {
+        let mut e = three_rects();
+        assert!(e.distribute_selected(Axis::Horizontal));
+        let mut xs = e
+            .doc()
+            .objects
+            .iter()
+            .map(|o| qs_render::bounds(&o.kind).center().x)
+            .collect::<Vec<_>>();
+        xs.sort_by(f32::total_cmp);
+        assert!(((xs[1] - xs[0]) - (xs[2] - xs[1])).abs() < 0.01);
+        assert!(e.undo());
+        assert_eq!(rect_of(&e, 1), RectF::new(50.0, 35.0, 20.0, 10.0));
+        assert!(e.redo());
+    }
+
+    #[test]
+    fn align_and_distribute_enforce_minimum_counts_and_locked_filter() {
+        let mut e = three_rects();
+        let first = e.doc().objects[0].id;
+        e.select_many([first]);
+        assert!(!e.align_selected(Alignment::Left));
+        assert!(!e.distribute_selected(Axis::Vertical));
+        let ids = e.doc().objects.iter().map(|o| o.id).collect::<Vec<_>>();
+        e.select_many(ids);
+        e.set_locked(first, true);
+        assert!(e.align_selected(Alignment::Right));
+        assert_eq!(
+            rect_of(&e, 0),
+            RectF::new(10.0, 10.0, 20.0, 10.0),
+            "locked objects do not move"
+        );
+    }
+
     #[test]
     fn z_order_duplicate_delete() {
         let mut e = editor();
@@ -1856,11 +2291,20 @@ mod tests {
         let mut e = drawn_rect();
         e.set_color(0x00FF00);
         e.set_stroke_width(6.0);
-        e.set_fill(Fill::Solid { rgb: 0x0000FF, alpha: 0.5 });
+        e.set_fill(Fill::Solid {
+            rgb: 0x0000FF,
+            alpha: 0.5,
+        });
         match &e.doc().objects[0].kind {
             ObjectKind::Rect { stroke, fill, .. } => {
                 assert_eq!((stroke.rgb, stroke.width), (0x00FF00, 6.0));
-                assert_eq!(*fill, Fill::Solid { rgb: 0x0000FF, alpha: 0.5 });
+                assert_eq!(
+                    *fill,
+                    Fill::Solid {
+                        rgb: 0x0000FF,
+                        alpha: 0.5
+                    }
+                );
             }
             k => panic!("{k:?}"),
         }
@@ -1881,13 +2325,22 @@ mod tests {
     fn independent_fill_and_stroke_on_new_objects() {
         let mut e = editor();
         e.set_color(0x112233);
-        e.set_fill(Fill::Solid { rgb: 0xFFFF00, alpha: 1.0 });
+        e.set_fill(Fill::Solid {
+            rgb: 0xFFFF00,
+            alpha: 1.0,
+        });
         e.set_tool(Tool::Ellipse);
         drag(&mut e, pt(10.0, 10.0), pt(80.0, 60.0));
         match &e.doc().objects[0].kind {
             ObjectKind::Ellipse { stroke, fill, .. } => {
                 assert_eq!(stroke.rgb, 0x112233);
-                assert_eq!(*fill, Fill::Solid { rgb: 0xFFFF00, alpha: 1.0 });
+                assert_eq!(
+                    *fill,
+                    Fill::Solid {
+                        rgb: 0xFFFF00,
+                        alpha: 1.0
+                    }
+                );
             }
             k => panic!("{k:?}"),
         }
@@ -1957,7 +2410,10 @@ mod tests {
             text: String::new(),
             style: TextStyle::default(),
         };
-        assert!(hit::hit(&c, pt(50.0, 25.0), 3.0), "callout interior is hittable");
+        assert!(
+            hit::hit(&c, pt(50.0, 25.0), 3.0),
+            "callout interior is hittable"
+        );
         assert!(hit::hit(&c, pt(50.0, 118.0), 3.0), "tail tip");
         assert!(!hit::hit(&c, pt(200.0, 200.0), 3.0));
     }
@@ -1968,18 +2424,42 @@ mod tests {
         e.set_tool(Tool::Arrow);
         drag(&mut e, pt(10.0, 10.0), pt(80.0, 10.0));
         e.set_arrow_head(ArrowHead::Filled);
-        assert!(matches!(e.doc().objects[0].kind, ObjectKind::Arrow { head: ArrowHead::Filled, .. }));
+        assert!(matches!(
+            e.doc().objects[0].kind,
+            ObjectKind::Arrow {
+                head: ArrowHead::Filled,
+                ..
+            }
+        ));
         assert!(e.undo());
-        assert!(matches!(e.doc().objects[0].kind, ObjectKind::Arrow { head: ArrowHead::Open, .. }));
+        assert!(matches!(
+            e.doc().objects[0].kind,
+            ObjectKind::Arrow {
+                head: ArrowHead::Open,
+                ..
+            }
+        ));
 
         e.set_tool(Tool::Callout);
         drag(&mut e, pt(20.0, 40.0), pt(120.0, 90.0));
         e.end_text_edit();
         e.select(Some(e.doc().objects[1].id));
         e.set_callout_shape(CalloutShape::Pill);
-        assert!(matches!(e.doc().objects[1].kind, ObjectKind::Callout { shape: CalloutShape::Pill, .. }));
+        assert!(matches!(
+            e.doc().objects[1].kind,
+            ObjectKind::Callout {
+                shape: CalloutShape::Pill,
+                ..
+            }
+        ));
         assert!(e.undo());
-        assert!(matches!(e.doc().objects[1].kind, ObjectKind::Callout { shape: CalloutShape::RoundRect, .. }));
+        assert!(matches!(
+            e.doc().objects[1].kind,
+            ObjectKind::Callout {
+                shape: CalloutShape::RoundRect,
+                ..
+            }
+        ));
 
         e.set_tool(Tool::Blur);
         drag(&mut e, pt(20.0, 120.0), pt(100.0, 160.0));
@@ -2190,7 +2670,6 @@ mod tests {
         assert_eq!(e.crop_rect(), None);
     }
 
-
     #[test]
     fn region_drag_commits_and_undoes() {
         let mut e = editor();
@@ -2225,7 +2704,11 @@ mod tests {
         assert!(e.revision() != rev);
         e.flip_h();
         assert_eq!(e.doc().orientation, Orientation::Transpose);
-        assert_eq!(e.doc().get(id).unwrap().kind, before, "objects are untouched");
+        assert_eq!(
+            e.doc().get(id).unwrap().kind,
+            before,
+            "objects are untouched"
+        );
         assert!(e.undo());
         assert_eq!(e.doc().orientation, Orientation::Rotate90);
         assert!(e.undo());

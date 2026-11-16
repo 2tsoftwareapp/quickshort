@@ -69,7 +69,12 @@ pub fn hit(kind: &ObjectKind, p: PointF, tol: f32) -> bool {
         Line { a, b, stroke } | Arrow { a, b, stroke, .. } => {
             seg_dist(p, *a, *b) <= stroke.width / 2.0 + tol
         }
-        Rect { r, stroke, fill, radius } => {
+        Rect {
+            r,
+            stroke,
+            fill,
+            radius,
+        } => {
             let poly = shapes::rrect_poly(*r, *radius);
             (filled(fill) && shapes::point_in_poly(p, &poly))
                 || poly_dist(&poly, p, true) <= stroke.width / 2.0 + tol
@@ -80,20 +85,32 @@ pub fn hit(kind: &ObjectKind, p: PointF, tol: f32) -> bool {
                 || poly_dist(&poly, p, true) <= stroke.width / 2.0 + tol
         }
         Text { .. } => bounds(kind).inflate(tol).contains(p),
-        Callout { shape, body, tail, stroke, .. } => {
+        Callout {
+            shape,
+            body,
+            tail,
+            stroke,
+            ..
+        } => {
             let poly = shapes::callout_poly(*shape, *body, *tail);
             shapes::point_in_poly(p, &poly) || poly_dist(&poly, p, true) <= stroke.width / 2.0 + tol
         }
         Step { center, radius, .. } => p.dist(*center) <= radius + tol,
         Blur { r, .. } => r.normalized().inflate(tol).contains(p),
-        Magnify { rect, stroke, .. } => rect.normalized().inflate(stroke.width / 2.0 + tol).contains(p),
+        Magnify { rect, stroke, .. } => rect
+            .normalized()
+            .inflate(stroke.width / 2.0 + tol)
+            .contains(p),
         Spotlight { rect, .. } | Stamp { rect, .. } => rect.normalized().inflate(tol).contains(p),
         Eraser { pts, width, .. } => poly_dist(pts, p, false) <= width / 2.0 + tol,
     }
 }
 
 fn h(id: HandleId, x: f32, y: f32) -> Handle {
-    Handle { id, pos: PointF::new(x, y) }
+    Handle {
+        id,
+        pos: PointF::new(x, y),
+    }
 }
 
 fn box_handles(r: RectF) -> Vec<Handle> {
@@ -124,11 +141,13 @@ pub fn handles(kind: &ObjectKind) -> Vec<Handle> {
             v.push(h(HandleId::Tail, tail.x, tail.y));
             v
         }
-        Line { a, b, .. } | Arrow { a, b, .. } => vec![h(HandleId::Start, a.x, a.y), h(HandleId::End, b.x, b.y)],
-        Step { center, radius, .. } => vec![h(HandleId::Radius, center.x + radius, center.y)],
-        Pen { pts, .. } | Highlighter { pts, .. } => {
-            RectF::bounding(pts.iter().copied()).map(box_handles).unwrap_or_default()
+        Line { a, b, .. } | Arrow { a, b, .. } => {
+            vec![h(HandleId::Start, a.x, a.y), h(HandleId::End, b.x, b.y)]
         }
+        Step { center, radius, .. } => vec![h(HandleId::Radius, center.x + radius, center.y)],
+        Pen { pts, .. } | Highlighter { pts, .. } => RectF::bounding(pts.iter().copied())
+            .map(box_handles)
+            .unwrap_or_default(),
         Text { .. } => match text_block(kind) {
             Some((o, lay)) => vec![
                 h(HandleId::W, o.x, o.y + lay.height / 2.0),
@@ -177,8 +196,12 @@ pub fn resized(orig: &ObjectKind, hd: HandleId, to: PointF) -> ObjectKind {
     use ObjectKind::*;
     let mut k = orig.clone();
     match &mut k {
-        Rect { r, .. } | Ellipse { r, .. } | Blur { r, .. } => *r = min_size(resize_rect(*r, hd, to)),
-        Magnify { rect, .. } | Spotlight { rect, .. } | Stamp { rect, .. } => *rect = min_size(resize_rect(*rect, hd, to)),
+        Rect { r, .. } | Ellipse { r, .. } | Blur { r, .. } => {
+            *r = min_size(resize_rect(*r, hd, to))
+        }
+        Magnify { rect, .. } | Spotlight { rect, .. } | Stamp { rect, .. } => {
+            *rect = min_size(resize_rect(*rect, hd, to))
+        }
         Callout { body, tail, .. } => {
             if hd == HandleId::Tail {
                 *tail = to;
@@ -200,8 +223,16 @@ pub fn resized(orig: &ObjectKind, hd: HandleId, to: PointF) -> ObjectKind {
             let old = RectF::bounding(pts.iter().copied()).unwrap_or_default();
             remap(pts, old, resize_rect(old, hd, to));
         }
-        Text { pos, text: t, style, wrap_w, .. } => {
-            let cur = wrap_w.unwrap_or_else(|| text::layout(t, style, None).width).max(MIN_TEXT_W);
+        Text {
+            pos,
+            text: t,
+            style,
+            wrap_w,
+            ..
+        } => {
+            let cur = wrap_w
+                .unwrap_or_else(|| text::layout(t, style, None).width)
+                .max(MIN_TEXT_W);
             let right = pos.x + cur;
             match hd {
                 HandleId::E => *wrap_w = Some((to.x - pos.x).max(MIN_TEXT_W)),
