@@ -318,6 +318,28 @@ fn draw_object(pm: &mut Pixmap, xf: &Xf, kind: &ObjectKind, step_no: u32) {
             };
             if let Some(path) = path { stroke_path(pm, xf, &path, stroke, LineJoin::Round); }
         }
+        ObjectKind::Spotlight { rect, dim_opacity, blur } => {
+            // Black overlay over the whole canvas with `rect` punched out;
+            // `blur` feathers the hole outward. Premultiplied: c *= 1 - a.
+            let r = rect.normalized();
+            let (x0, y0) = (xf.px(r.x), xf.py(r.y));
+            let (x1, y1) = (xf.px(r.right()), xf.py(r.bottom()));
+            let feather = (blur * xf.s).max(0.0);
+            let dim = dim_opacity.clamp(0.0, 1.0);
+            let w = pm.width() as usize;
+            for (i, px) in pm.data_mut().chunks_exact_mut(4).enumerate() {
+                let (x, y) = ((i % w) as f32 + 0.5, (i / w) as f32 + 0.5);
+                let dx = (x0 - x).max(x - x1).max(0.0);
+                let dy = (y0 - y).max(y - y1).max(0.0);
+                let d = dx.hypot(dy);
+                let hole = if d <= 0.0 { 1.0 } else if feather > 0.0 { (1.0 - d / feather).max(0.0) } else { 0.0 };
+                let a = dim * (1.0 - hole);
+                if a <= 0.0 { continue; }
+                let keep = 1.0 - a;
+                for c in &mut px[..3] { *c = (*c as f32 * keep).round() as u8; }
+                px[3] = (255.0 * a + px[3] as f32 * keep).round().min(255.0) as u8;
+            }
+        }
         ObjectKind::Blur { r, mode, strength } => {
             let (x0, y0) = (xf.px(r.x).round() as i32, xf.py(r.y).round() as i32);
             let (x1, y1) = (xf.px(r.right()).round() as i32, xf.py(r.bottom()).round() as i32);

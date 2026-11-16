@@ -37,6 +37,7 @@ pub enum Tool {
     Step,
     Blur,
     Magnify,
+    Spotlight,
     Crop,
     SelectRegion,
 }
@@ -62,6 +63,8 @@ pub struct Style {
     pub blur_strength: f32,
     pub magnify_zoom: f32,
     pub magnify_shape: MagnifyShape,
+    pub spot_dim: f32,
+    pub spot_blur: f32,
     pub step_radius: f32,
 }
 
@@ -78,6 +81,8 @@ impl Default for Style {
             blur_strength: PIX_BLOCK,
             magnify_zoom: 2.0,
             magnify_shape: MagnifyShape::Ellipse,
+            spot_dim: 0.6,
+            spot_blur: 0.0,
             step_radius: 12.0,
         }
     }
@@ -211,7 +216,7 @@ fn constrain(tool: Tool, a: PointF, b: PointF, shift: bool) -> PointF {
             let len = dx.hypot(dy);
             PointF::new(a.x + len * ang.cos(), a.y + len * ang.sin())
         }
-        Tool::Rect | Tool::Ellipse | Tool::Blur | Tool::Callout | Tool::Magnify => {
+        Tool::Rect | Tool::Ellipse | Tool::Blur | Tool::Callout | Tool::Magnify | Tool::Spotlight => {
             let m = dx.abs().max(dy.abs());
             PointF::new(a.x + m * dx.signum(), a.y + m * dy.signum())
         }
@@ -222,7 +227,7 @@ fn constrain(tool: Tool, a: PointF, b: PointF, shift: bool) -> PointF {
 fn degenerate(k: &ObjectKind) -> bool {
     match k {
         ObjectKind::Arrow { a, b, .. } | ObjectKind::Line { a, b, .. } => a.dist(*b) < 3.0,
-        ObjectKind::Rect { r, .. } | ObjectKind::Ellipse { r, .. } | ObjectKind::Blur { r, .. } | ObjectKind::Magnify { rect: r, .. } => {
+        ObjectKind::Rect { r, .. } | ObjectKind::Ellipse { r, .. } | ObjectKind::Blur { r, .. } | ObjectKind::Magnify { rect: r, .. } | ObjectKind::Spotlight { rect: r, .. } => {
             r.w.abs() < 3.0 || r.h.abs() < 3.0
         }
         _ => false,
@@ -634,6 +639,7 @@ impl Editor {
             Tool::Ellipse => ObjectKind::Ellipse { r: r0, stroke, fill: st.fill },
             Tool::Blur => ObjectKind::Blur { r: r0, mode: st.blur_mode, strength: st.blur_strength },
             Tool::Magnify => ObjectKind::Magnify { rect: r0, zoom: st.magnify_zoom, shape: st.magnify_shape, stroke },
+            Tool::Spotlight => ObjectKind::Spotlight { rect: r0, dim_opacity: st.spot_dim, blur: st.spot_blur },
             Tool::Callout => {
                 let fill = if st.fill.is_none() {
                     Fill::Solid { rgb: 0xFFFFFF, alpha: 1.0 }
@@ -744,7 +750,7 @@ impl Editor {
                         ObjectKind::Rect { r, .. }
                         | ObjectKind::Ellipse { r, .. }
                         | ObjectKind::Blur { r, .. } => *r = RectF::from_points(start, q),
-                        ObjectKind::Magnify { rect, .. } => *rect = RectF::from_points(start, q),
+                        ObjectKind::Magnify { rect, .. } | ObjectKind::Spotlight { rect, .. } => *rect = RectF::from_points(start, q),
                         ObjectKind::Callout { body, tail, .. } => {
                             *body = RectF::from_points(start, q);
                             *tail = default_tail(*body);
@@ -1240,6 +1246,18 @@ impl Editor {
         self.style.magnify_zoom = zoom;
         self.update_selected(|k| {
             if let ObjectKind::Magnify { zoom: z, .. } = k { *z = zoom; }
+        });
+    }
+
+    pub fn set_spotlight(&mut self, dim: Option<f32>, bl: Option<f32>) {
+        if let Some(d) = dim.filter(|d| (0.0..=1.0).contains(d)) { self.style.spot_dim = d; }
+        if let Some(b) = bl.filter(|b| (0.0..=64.0).contains(b)) { self.style.spot_blur = b; }
+        let (d, b) = (self.style.spot_dim, self.style.spot_blur);
+        self.update_selected(|k| {
+            if let ObjectKind::Spotlight { dim_opacity, blur, .. } = k {
+                if dim.is_some() { *dim_opacity = d; }
+                if bl.is_some() { *blur = b; }
+            }
         });
     }
 

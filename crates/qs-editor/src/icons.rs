@@ -108,6 +108,10 @@ pub fn draw_tool_icon(painter: &Painter, c: Pos2, tool: Tool, color: Color32) {
                 .collect();
             painter.add(PathShape::closed_line(pts, st));
         }
+        Tool::Spotlight => {
+            painter.rect_stroke(Rect::from_center_size(c, Vec2::splat(13.0)), 2.0, thin, StrokeKind::Inside);
+            painter.circle_filled(c, 3.0, color);
+        }
         Tool::Magnify => {
             painter.circle_stroke(c, 4.0, st);
             painter.line_segment([p(c, 2.8, 2.8), p(c, 5.8, 5.8)], Stroke::new(2.0, color));

@@ -385,6 +385,7 @@ pub fn render_top_bar(
         (Tool::Step, "Step Counter (S)"),
         (Tool::Blur, "Blur / Pixelate (B)"),
         (Tool::Magnify, "Magnify Lens (I)"),
+        (Tool::Spotlight, "Spotlight (F)"),
         (Tool::Crop, "Crop / Trim (K)"),
     ];
 
@@ -562,6 +563,7 @@ enum ContextKind {
     Step,
     Blur,
     Magnify,
+    Spotlight,
 }
 
 pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
@@ -709,6 +711,17 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
             editor.style.blur_strength,
             editor.style.text.clone(),
         ),
+        Some(ObjectKind::Spotlight { .. }) => (
+            ContextKind::Spotlight,
+            editor.style.rgb,
+            editor.style.width,
+            editor.style.fill,
+            editor.style.callout_shape,
+            editor.style.arrow_head,
+            editor.style.blur_mode,
+            editor.style.blur_strength,
+            editor.style.text.clone(),
+        ),
         None => {
             let kind = match editor.tool() {
                 Tool::Select => ContextKind::Generic,
@@ -720,6 +733,7 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
                 Tool::Step => ContextKind::Step,
                 Tool::Blur => ContextKind::Blur,
                 Tool::Magnify => ContextKind::Magnify,
+                Tool::Spotlight => ContextKind::Spotlight,
                 Tool::Crop => ContextKind::Generic,
                 Tool::SelectRegion => ContextKind::Generic,
             };
@@ -1226,6 +1240,30 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
                 ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, if shape == qs_doc::MagnifyShape::Ellipse { "Circle" } else { "Rect" }, FontId::proportional(11.0), text_primary());
                 if resp.clicked() { editor.set_magnify_shape(shape); mutated = true; }
                 x += 40.0;
+            }
+        }
+        ContextKind::Spotlight => {
+            x = draw_ins_divider(ui.painter(), x + 6.0, cy) + 6.0;
+            for (i, dim) in [0.4_f32, 0.6, 0.8].into_iter().enumerate() {
+                let r = Rect::from_min_size(Pos2::new(x, cy - 11.0), Vec2::new(40.0, 22.0));
+                let resp = ui.interact(r, ui.auto_id_with(("spot_dim", i)), Sense::click())
+                    .on_hover_text(format!("Dim outside: {}%", (dim * 100.0) as u32));
+                let active = (editor.style.spot_dim - dim).abs() < 0.01;
+                paint_pill_button(ui.painter(), r, RADIUS_PILL, active, resp.hovered(), true, false);
+                ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, format!("{}%", (dim * 100.0) as u32), FontId::proportional(11.0), text_primary());
+                if resp.clicked() { editor.set_spotlight(Some(dim), None); mutated = true; }
+                x += 42.0;
+            }
+            x = draw_ins_divider(ui.painter(), x + 4.0, cy) + 4.0;
+            for (i, (blur, label)) in [(0.0_f32, "Sharp"), (8.0, "Soft"), (20.0, "Feather")].into_iter().enumerate() {
+                let r = Rect::from_min_size(Pos2::new(x, cy - 11.0), Vec2::new(52.0, 22.0));
+                let resp = ui.interact(r, ui.auto_id_with(("spot_blur", i)), Sense::click())
+                    .on_hover_text(format!("Edge softness: {blur}px"));
+                let active = (editor.style.spot_blur - blur).abs() < 0.01;
+                paint_pill_button(ui.painter(), r, RADIUS_PILL, active, resp.hovered(), true, false);
+                ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, label, FontId::proportional(11.0), text_primary());
+                if resp.clicked() { editor.set_spotlight(None, Some(blur)); mutated = true; }
+                x += 54.0;
             }
         }
         ContextKind::Step => {

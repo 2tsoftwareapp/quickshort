@@ -214,6 +214,13 @@ pub enum ObjectKind {
         shape: MagnifyShape,
         stroke: Stroke,
     },
+    /// Dims the whole canvas except `rect`. `blur` = feather width, logical px.
+    Spotlight {
+        rect: RectF,
+        dim_opacity: f32,
+        #[serde(default)]
+        blur: f32,
+    },
 }
 
 fn default_radius() -> f32 {
@@ -417,6 +424,15 @@ impl Document {
             if !o.kind.is_finite() {
                 bail!("object {} has non-finite geometry", o.id.0);
             }
+            if let ObjectKind::Spotlight { rect, dim_opacity, blur } = &o.kind {
+                if !(0.0..=1.0).contains(dim_opacity)
+                    || rect.w.abs() < 1.0
+                    || rect.h.abs() < 1.0
+                    || *blur < 0.0
+                {
+                    bail!("object {} has invalid spotlight settings", o.id.0);
+                }
+            }
             if let ObjectKind::Magnify { zoom, rect, stroke, .. } = &o.kind {
                 if !(1.5..=4.0).contains(zoom)
                     || rect.w.abs() < 1.0
@@ -485,6 +501,9 @@ impl ObjectKind {
             Magnify { rect, zoom, stroke, .. } => {
                 rect.is_finite() && zoom.is_finite() && stroke.width.is_finite()
             }
+            Spotlight { rect, dim_opacity, blur } => {
+                rect.is_finite() && dim_opacity.is_finite() && blur.is_finite()
+            }
         }
     }
 
@@ -503,6 +522,7 @@ impl ObjectKind {
             Step { .. } => "Step",
             Blur { .. } => "Blur",
             Magnify { .. } => "Magnify",
+            Spotlight { .. } => "Spotlight",
         }
     }
 
@@ -521,7 +541,7 @@ impl ObjectKind {
                 *b = b.offset(dx, dy);
             }
             Rect { r, .. } | Ellipse { r, .. } | Blur { r, .. } => *r = r.offset(dx, dy),
-            Magnify { rect, .. } => *rect = rect.offset(dx, dy),
+            Magnify { rect, .. } | Spotlight { rect, .. } => *rect = rect.offset(dx, dy),
             Text { pos, .. } => *pos = pos.offset(dx, dy),
             Callout { body, tail, .. } => {
                 *body = body.offset(dx, dy);
