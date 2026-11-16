@@ -108,6 +108,10 @@ pub fn draw_tool_icon(painter: &Painter, c: Pos2, tool: Tool, color: Color32) {
                 .collect();
             painter.add(PathShape::closed_line(pts, st));
         }
+        Tool::Eraser => {
+            painter.line_segment([p(c, -5.0, -1.5), p(c, -1.0, 3.0)], Stroke::new(1.8, color));
+            painter.line_segment([p(c, -1.0, 3.0), p(c, 5.5, -4.0)], Stroke::new(1.8, color));
+        }
         Tool::Stamp => {
             painter.line_segment([p(c, -4.5, 3.0), p(c, -1.5, 6.5)], Stroke::new(1.8, color));
             painter.line_segment([p(c, -1.5, 6.5), p(c, 3.0, -4.5)], Stroke::new(1.8, color));

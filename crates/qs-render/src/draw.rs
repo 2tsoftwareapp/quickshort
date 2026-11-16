@@ -64,6 +64,41 @@ fn draw_stamp(pm: &mut Pixmap, xf: &Xf, rect: &RectF, kind: StampKind, rgb: u32)
     }
 }
 
+/// Clears pixels along a stroke (round caps) to reveal the canvas background.
+/// Works in straight alpha because tiny-skia stores premultiplied pixels.
+fn erase_stroke(pm: &mut Pixmap, xf: &Xf, pts: &[PointF], width: f32, snap: &[u8]) {
+    let pts: Vec<(f32, f32)> = pts.iter().map(|p| (xf.px(p.x), xf.py(p.y))).collect();
+    let radius = width * xf.s / 2.0;
+    if pts.is_empty() || radius <= 0.0 { return; }
+    let (w, h) = (pm.width() as i32, pm.height() as i32);
+    let xs: Vec<f32> = pts.iter().map(|p| p.0).collect();
+    let ys: Vec<f32> = pts.iter().map(|p| p.1).collect();
+    let (x0, x1) = ((xs.iter().fold(f32::INFINITY, |a, &b| a.min(b)) - radius).floor() as i32, (xs.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b)) + radius).ceil() as i32);
+    let (y0, y1) = ((ys.iter().fold(f32::INFINITY, |a, &b| a.min(b)) - radius).floor() as i32, (ys.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b)) + radius).ceil() as i32);
+    let seg = |a: (f32, f32), b: (f32, f32), p: (f32, f32)| -> f32 {
+        let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+        let len2 = dx * dx + dy * dy;
+        let t = if len2 <= 1e-6 { 0.0 } else { (((p.0 - a.0) * dx + (p.1 - a.1) * dy) / len2).clamp(0.0, 1.0) };
+        ((p.0 - a.0 - t * dx).powi(2) + (p.1 - a.1 - t * dy).powi(2)).sqrt()
+    };
+    for y in y0.max(0)..y1.min(h) {
+        for x in x0.max(0)..x1.min(w) {
+            let p = (x as f32 + 0.5, y as f32 + 0.5);
+            let d = pts.windows(2).map(|w| seg(w[0], w[1], p)).fold(f32::INFINITY, f32::min)
+                .min(pts.iter().map(|&q| ((p.0 - q.0).powi(2) + (p.1 - q.1).powi(2)).sqrt()).fold(f32::INFINITY, f32::min));
+            let keep = ((d - radius) / (radius.max(1.0) * 0.5)).clamp(0.0, 1.0);
+            if keep >= 1.0 { continue; }
+            let i = ((y * w + x) * 4) as usize;
+            let px = &mut pm.data_mut()[i..i + 4];
+            // Blend toward the captured snapshot (premultiplied space).
+            let si = i;
+            for c in 0..4 {
+                px[c] = (px[c] as f32 * keep + snap[si + c] as f32 * (1.0 - keep)).round() as u8;
+            }
+        }
+    }
+}
+
 /// Inner padding of callout text, logical px.
 pub const CALLOUT_PAD: f32 = 8.0;
 const MAX_OUT: f32 = 32768.0;
@@ -215,7 +250,7 @@ fn arrow_geometry(a: PointF, b: PointF, w: f32) -> Option<(f32, [PointF; 2])> {
     Some((hl, [wing(1.0), wing(-1.0)]))
 }
 
-fn draw_object(pm: &mut Pixmap, xf: &Xf, kind: &ObjectKind, step_no: u32) {
+fn draw_object(pm: &mut Pixmap, xf: &Xf, kind: &ObjectKind, step_no: u32, snap: &[u8]) {
     match kind {
         ObjectKind::Pen { pts, stroke } | ObjectKind::Highlighter { pts, stroke } => {
             match pts.as_slice() {
@@ -366,6 +401,7 @@ fn draw_object(pm: &mut Pixmap, xf: &Xf, kind: &ObjectKind, step_no: u32) {
             if let Some(path) = path { stroke_path(pm, xf, &path, stroke, LineJoin::Round); }
         }
         ObjectKind::Stamp { rect, kind, rgb } => draw_stamp(pm, xf, rect, *kind, *rgb),
+        ObjectKind::Eraser { pts, width } => erase_stroke(pm, xf, pts, *width, snap),
         ObjectKind::Spotlight { rect, dim_opacity, blur } => {
             // Black overlay over the whole canvas with `rect` punched out;
             // `blur` feathers the hole outward. Premultiplied: c *= 1 - a.
@@ -567,11 +603,14 @@ fn render_content(doc: &Document, base: &RgbaImage) -> RgbaImage {
     if let Some(bp) = to_pixmap(base) {
         pm.draw_pixmap(xf.ox as i32, xf.oy as i32, bp.as_ref(), &PixmapPaint::default(), Transform::identity(), None);
     }
+    // Snapshot the composited canvas (background + base image) so the
+    // eraser reveals exactly what was there before annotations.
+    let bg_snap: Vec<u8> = pm.data().to_vec();
     let mut step_no = doc.step_start;
     for o in &doc.objects {
         let is_step = matches!(o.kind, ObjectKind::Step { .. });
         if o.visible {
-            draw_object(&mut pm, &xf, &o.kind, step_no);
+            draw_object(&mut pm, &xf, &o.kind, step_no, &bg_snap);
         }
         if is_step {
             step_no += 1;

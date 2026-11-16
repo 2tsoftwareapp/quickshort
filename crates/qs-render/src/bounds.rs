@@ -29,6 +29,13 @@ pub fn bounds(kind: &ObjectKind) -> RectF {
         Step { center, radius, .. } => RectF::new(center.x - radius, center.y - radius, radius * 2.0, radius * 2.0),
         Blur { r, .. } => r.normalized(),
         Spotlight { rect, .. } | Stamp { rect, .. } => rect.normalized(),
+        Eraser { pts, width } => {
+            let pad = width / 2.0;
+            if pts.is_empty() { return RectF::new(0.0, 0.0, 0.0, 0.0); }
+            let (mut x0, mut y0, mut x1, mut y1) = (f32::INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY);
+            for p in pts { x0 = x0.min(p.x); y0 = y0.min(p.y); x1 = x1.max(p.x); y1 = y1.max(p.y); }
+            RectF::new(x0 - pad, y0 - pad, x1 - x0 + 2.0 * pad, y1 - y0 + 2.0 * pad)
+        }
         Magnify { rect, stroke, .. } => rect.normalized().inflate(stroke.width / 2.0),
     }
 }

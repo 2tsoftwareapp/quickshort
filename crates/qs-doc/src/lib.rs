@@ -249,6 +249,11 @@ pub enum ObjectKind {
         kind: StampKind,
         rgb: u32,
     },
+    /// Non-destructive eraser: strokes reveal the canvas background.
+    Eraser {
+        pts: Vec<PointF>,
+        width: f32,
+    },
     /// Dims the whole canvas except `rect`. `blur` = feather width, logical px.
     Spotlight {
         rect: RectF,
@@ -459,6 +464,11 @@ impl Document {
             if !o.kind.is_finite() {
                 bail!("object {} has non-finite geometry", o.id.0);
             }
+            if let ObjectKind::Eraser { pts, width } = &o.kind {
+                if *width <= 0.0 || *width > 512.0 || pts.iter().any(|p| !p.is_finite()) {
+                    bail!("object {} has invalid eraser settings", o.id.0);
+                }
+            }
             if let ObjectKind::Stamp { rect, .. } = &o.kind {
                 if rect.w.abs() < 1.0 || rect.h.abs() < 1.0 {
                     bail!("object {} has a degenerate stamp", o.id.0);
@@ -545,6 +555,7 @@ impl ObjectKind {
                 rect.is_finite() && dim_opacity.is_finite() && blur.is_finite()
             }
             Stamp { rect, .. } => rect.is_finite(),
+            Eraser { pts, width } => width.is_finite() && pts.iter().all(|p| p.is_finite()),
         }
     }
 
@@ -565,6 +576,7 @@ impl ObjectKind {
             Magnify { .. } => "Magnify",
             Spotlight { .. } => "Spotlight",
             Stamp { .. } => "Stamp",
+            Eraser { .. } => "Eraser",
         }
     }
 
@@ -572,7 +584,7 @@ impl ObjectKind {
     pub fn translate(&mut self, dx: f32, dy: f32) {
         use ObjectKind::*;
         match self {
-            Pen { pts, .. } | Highlighter { pts, .. } => {
+            Pen { pts, .. } | Highlighter { pts, .. } | Eraser { pts, .. } => {
                 for p in pts {
                     p.x += dx;
                     p.y += dy;

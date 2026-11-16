@@ -39,6 +39,7 @@ pub enum Tool {
     Magnify,
     Spotlight,
     Stamp,
+    Eraser,
     Crop,
     SelectRegion,
 }
@@ -67,6 +68,7 @@ pub struct Style {
     pub spot_dim: f32,
     pub spot_blur: f32,
     pub stamp_kind: StampKind,
+    pub eraser_width: f32,
     pub step_radius: f32,
 }
 
@@ -86,6 +88,7 @@ impl Default for Style {
             spot_dim: 0.6,
             spot_blur: 0.0,
             stamp_kind: StampKind::Approved,
+            eraser_width: 12.0,
             step_radius: 12.0,
         }
     }
@@ -233,6 +236,7 @@ fn degenerate(k: &ObjectKind) -> bool {
         ObjectKind::Rect { r, .. } | ObjectKind::Ellipse { r, .. } | ObjectKind::Blur { r, .. } | ObjectKind::Magnify { rect: r, .. } | ObjectKind::Spotlight { rect: r, .. } | ObjectKind::Stamp { rect: r, .. } => {
             r.w.abs() < 3.0 || r.h.abs() < 3.0
         }
+        ObjectKind::Eraser { pts, .. } => pts.len() < 2 || pts.iter().all(|p| p.dist(pts[0]) < 1.0),
         _ => false,
     }
 }
@@ -643,6 +647,10 @@ impl Editor {
             Tool::Blur => ObjectKind::Blur { r: r0, mode: st.blur_mode, strength: st.blur_strength },
             Tool::Magnify => ObjectKind::Magnify { rect: r0, zoom: st.magnify_zoom, shape: st.magnify_shape, stroke },
             Tool::Spotlight => ObjectKind::Spotlight { rect: r0, dim_opacity: st.spot_dim, blur: st.spot_blur },
+            Tool::Eraser => {
+                let pts = vec![p, p];
+                ObjectKind::Eraser { pts, width: st.eraser_width }
+            }
             Tool::Stamp => ObjectKind::Stamp { rect: r0, kind: st.stamp_kind, rgb: st.rgb },
             Tool::Callout => {
                 let fill = if st.fill.is_none() {
@@ -745,7 +753,7 @@ impl Editor {
                 let q = constrain(self.tool, start, p, shift);
                 if let Some(o) = self.doc.get_mut(id) {
                     match &mut o.kind {
-                        ObjectKind::Pen { pts, .. } | ObjectKind::Highlighter { pts, .. } => {
+                        ObjectKind::Pen { pts, .. } | ObjectKind::Highlighter { pts, .. } | ObjectKind::Eraser { pts, .. } => {
                             if pts.last().is_none_or(|l| l.dist(p) >= 0.5) {
                                 pts.push(p);
                             }
@@ -1263,6 +1271,14 @@ impl Editor {
                 if dim.is_some() { *dim_opacity = d; }
                 if bl.is_some() { *blur = b; }
             }
+        });
+    }
+
+    pub fn set_eraser_width(&mut self, w: f32) {
+        let w = w.clamp(1.0, 128.0);
+        self.style.eraser_width = w;
+        self.update_selected(|k| {
+            if let ObjectKind::Eraser { width, .. } = k { *width = w; }
         });
     }
 

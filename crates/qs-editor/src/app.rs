@@ -710,6 +710,8 @@ impl EditorApp {
                     Some(Tool::Spotlight)
                 } else if i.key_pressed(Key::G) {
                     Some(Tool::Stamp)
+                } else if i.key_pressed(Key::E) {
+                    Some(Tool::Eraser)
                 } else if i.key_pressed(Key::K) {
                     Some(Tool::Crop)
                 } else if i.key_pressed(Key::M) {

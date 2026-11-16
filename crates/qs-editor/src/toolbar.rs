@@ -387,6 +387,7 @@ pub fn render_top_bar(
         (Tool::Magnify, "Magnify Lens (I)"),
         (Tool::Spotlight, "Spotlight (F)"),
         (Tool::Stamp, "Stamp (G)"),
+        (Tool::Eraser, "Eraser (E)"),
         (Tool::Crop, "Crop / Trim (K)"),
     ];
 
@@ -566,6 +567,7 @@ enum ContextKind {
     Magnify,
     Spotlight,
     Stamp,
+    Eraser,
 }
 
 pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
@@ -728,6 +730,11 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
             (ContextKind::Stamp, editor.style.rgb, editor.style.width, editor.style.fill, editor.style.callout_shape,
              editor.style.arrow_head, editor.style.blur_mode, editor.style.blur_strength, editor.style.text.clone())
         }
+        Some(ObjectKind::Eraser { .. }) => (
+            ContextKind::Eraser,
+            editor.style.rgb, editor.style.width, editor.style.fill, editor.style.callout_shape,
+            editor.style.arrow_head, editor.style.blur_mode, editor.style.blur_strength, editor.style.text.clone(),
+        ),
         None => {
             let kind = match editor.tool() {
                 Tool::Select => ContextKind::Generic,
@@ -741,6 +748,7 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
                 Tool::Magnify => ContextKind::Magnify,
                 Tool::Spotlight => ContextKind::Spotlight,
                 Tool::Stamp => ContextKind::Stamp,
+                Tool::Eraser => ContextKind::Eraser,
                 Tool::Crop => ContextKind::Generic,
                 Tool::SelectRegion => ContextKind::Generic,
             };
@@ -1284,6 +1292,19 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
                 ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, kind.label(), FontId::proportional(10.5), text_primary());
                 if resp.clicked() { editor.set_stamp_kind(kind); mutated = true; }
                 x += 60.0;
+            }
+        }
+        ContextKind::Eraser => {
+            x = draw_ins_divider(ui.painter(), x + 6.0, cy) + 6.0;
+            for (i, w) in [4.0_f32, 10.0, 24.0].into_iter().enumerate() {
+                let r = Rect::from_min_size(Pos2::new(x, cy - 11.0), Vec2::new(30.0, 22.0));
+                let resp = ui.interact(r, ui.auto_id_with(("eraser_w", i)), Sense::click())
+                    .on_hover_text(format!("Eraser size: {w}px"));
+                let active = (editor.style.eraser_width - w).abs() < 0.01;
+                paint_pill_button(ui.painter(), r, RADIUS_PILL, active, resp.hovered(), true, false);
+                ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, format!("{w}"), FontId::proportional(11.0), text_primary());
+                if resp.clicked() { editor.set_eraser_width(w); mutated = true; }
+                x += 32.0;
             }
         }
         ContextKind::Step => {
