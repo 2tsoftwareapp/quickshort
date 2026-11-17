@@ -9,7 +9,7 @@
 //! whole preset is a single undo step and new objects keep using it.
 
 use crate::theme;
-use eframe::egui::{self, Color32, RichText, Ui, Vec2};
+use eframe::egui::{self, Color32, Pos2, RichText, Ui, Vec2};
 use qs_doc::{
     Align, ArrowHead, BlurMode, CalloutShape, Fill, MagnifyShape, StampKind, TextStyle, PALETTE,
     PIX_BLOCK,
@@ -454,24 +454,28 @@ pub fn render_bar(ui: &mut Ui, editor: &mut Editor, library: &mut Library) -> bo
 }
 
 fn chip(ui: &mut Ui, quick: &QuickStyle) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(28.0, 24.0), egui::Sense::click());
+    let label_w = (quick.name.chars().count() as f32 * 6.2).clamp(18.0, 96.0);
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(24.0 + label_w, 24.0), egui::Sense::click());
     let hovered = response.hovered();
     let painter = ui.painter();
-    theme::paint_pill_button(
-        painter,
-        rect,
-        7.0,
-        hovered,
-        hovered,
-        true,
-        false,
-    );
-    let dot = egui::Rect::from_center_size(rect.center(), Vec2::splat(12.0));
-    painter.circle_filled(dot.center(), 6.0, swatch(quick));
+    theme::paint_pill_button(painter, rect, 7.0, hovered, hovered, true, false);
+    let dot = Pos2::new(rect.left() + 13.0, rect.center().y);
+    painter.circle_filled(dot, 6.0, swatch(quick));
     painter.circle_stroke(
-        dot.center(),
+        dot,
         6.0,
         egui::Stroke::new(1.0, theme::border_subtle()),
+    );
+    painter.text(
+        Pos2::new(dot.x + 10.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        &quick.name,
+        egui::FontId::proportional(11.0),
+        if hovered {
+            theme::text_primary()
+        } else {
+            theme::text_secondary()
+        },
     );
     response.on_hover_text(&quick.name)
 }

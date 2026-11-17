@@ -1068,7 +1068,7 @@ impl eframe::App for EditorApp {
                     .inner_margin(egui::Margin::same(10)),
             )
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     ui.heading("Layers");
                     ui.label(format!("{}", self.editor.doc().objects.len()));
                     let can_group = self.editor.selection().len() >= 2;
