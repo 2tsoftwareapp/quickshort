@@ -6,6 +6,7 @@ use crate::{
     icons::{self, ActionIcon},
     image_panel::{self, OrientCmd},
     recovery,
+    styles,
     theme::{self, accent_blue, border_subtle, success_green, text_primary},
     toolbar::{self, ZoomCmd},
 };
@@ -53,11 +54,15 @@ pub struct EditorApp {
     saw_drag_press: bool,
     toast: Option<(String, std::time::Instant)>,
     canvas_dialog_open: bool,
+    /// "Flatten all" confirmation is on screen.
+    confirm_flatten: bool,
     canvas_insets: [f32; 4],
     canvas_background: u32,
     canvas_anchor: (usize, usize),
     layer_drag_id: Option<ObjectId>,
     alignment_open: bool,
+    /// Quick Styles: built-in presets + the user's saved ones.
+    styles: styles::Library,
 }
 
 fn anchored_insets(vertical: f32, horizontal: f32, anchor: (usize, usize)) -> [f32; 4] {
@@ -114,11 +119,13 @@ impl EditorApp {
             saw_drag_press: false,
             toast: None,
             canvas_dialog_open: false,
+            confirm_flatten: false,
             canvas_insets: [0.0; 4],
             canvas_background,
             canvas_anchor: (1, 1),
             layer_drag_id: None,
             alignment_open: false,
+            styles: styles::Library::load(),
         };
         app.update_texture(&cc.egui_ctx);
         app
@@ -310,6 +317,39 @@ impl EditorApp {
         match picked {
             Some(path) => self.load_path(&path),
             None => Ok(()),
+        }
+    }
+
+    /// "Flatten all" confirmation: baking annotations cannot be undone.
+    fn flatten_dialog(&mut self, ctx: &egui::Context) {
+        if !self.confirm_flatten {
+            return;
+        }
+        let mut open = self.confirm_flatten;
+        let mut go = false;
+        egui::Window::new("Flatten all annotations")
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.label("Every annotation is baked into the image.");
+                ui.label("The layers and the undo history are removed.");
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Flatten").clicked() {
+                        go = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        self.confirm_flatten = false;
+                    }
+                });
+            });
+        self.confirm_flatten = open;
+        if go {
+            self.confirm_flatten = false;
+            if let Err(e) = self.flatten_all() {
+                self.show_toast(format!("Flatten failed: {e}"));
+            }
         }
     }
 
@@ -588,9 +628,30 @@ impl EditorApp {
     }
 
     pub fn copy_to_clipboard(&mut self) -> anyhow::Result<()> {
-        let flat = qs_render::render(self.editor.doc(), &self.base);
+        let region = self.editor.doc().region;
+        let (flat, what) = match region.and_then(|r| {
+            qs_render::render_region(self.editor.doc(), &self.base, r)
+        }) {
+            Some(cropped) => (cropped, "selection"),
+            None => (qs_render::render(self.editor.doc(), &self.base), "image"),
+        };
         clipboard::copy_image(&flat)?;
-        self.show_toast("Copied image to clipboard");
+        self.show_toast(format!("Copied {what} to clipboard"));
+        Ok(())
+    }
+
+    /// Bake every annotation into the image and start a fresh document over
+    /// the result. Destructive: the annotations and the undo history are gone.
+    pub fn flatten_all(&mut self) -> anyhow::Result<()> {
+        let flat = qs_render::render(self.editor.doc(), &self.base);
+        let old = self.editor.doc().clone();
+        let mut doc = Document::new(flat.width(), flat.height(), old.scale);
+        doc.meta = old.meta.clone();
+        doc.background = old.background;
+        self.apply_document(doc, flat);
+        self.editor.mark_modified();
+        self.touch();
+        self.show_toast("Flattened annotations into the image");
         Ok(())
     }
 
@@ -959,6 +1020,19 @@ impl eframe::App for EditorApp {
         if top_res.mutated || prop_mutated {
             self.touch();
         }
+        let styles_mutated = if !styles::presets_for(&self.editor, &self.styles).is_empty() {
+            egui::Panel::top("quick_style_bar")
+                .frame(egui::Frame::NONE)
+                .show(ui, |ui| {
+                    styles::render_bar(ui, &mut self.editor, &mut self.styles)
+                })
+                .inner
+        } else {
+            false
+        };
+        if styles_mutated {
+            self.touch();
+        }
         if top_res.copy {
             let _ = self.copy_to_clipboard();
         }
@@ -982,6 +1056,7 @@ impl eframe::App for EditorApp {
             self.apply_zoom_cmd(top_res.zoom);
         }
         self.canvas_dialog(&ctx);
+        self.flatten_dialog(&ctx);
 
         let layers_mutated = egui::Panel::left("layers_panel")
             .resizable(true)
@@ -1155,7 +1230,19 @@ impl eframe::App for EditorApp {
             )
             .show(ui, |ui| {
                 egui::ScrollArea::vertical()
-                    .show(ui, |ui| image_panel::render(ui, &mut self.editor))
+                    .show(ui, |ui| {
+                        let changed = image_panel::render(ui, &mut self.editor);
+                        ui.add_space(6.0);
+                        ui.separator();
+                        if ui
+                            .button("Flatten all…")
+                            .on_hover_text("Bake every annotation into the image")
+                            .clicked()
+                        {
+                            self.confirm_flatten = true;
+                        }
+                        changed
+                    })
                     .inner
             })
             .inner;
@@ -1467,11 +1554,13 @@ mod tests {
             saw_drag_press: false,
             toast: None,
             canvas_dialog_open: false,
+            confirm_flatten: false,
             canvas_insets: [0.0; 4],
             canvas_background: 0,
             canvas_anchor: (1, 1),
             layer_drag_id: None,
             alignment_open: false,
+            styles: styles::Library::default(),
         };
         app.editor.preview_effects(qs_doc::Effects {
             border: Some(qs_doc::BorderEffect::default()),

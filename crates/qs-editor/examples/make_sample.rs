@@ -11,7 +11,7 @@ fn main() {
         stroke: Stroke::new(0x0A84FF, 2.5),
         fill: Fill::Solid { rgb: 0xFFFFFF, alpha: 1.0 },
         text: "Snagit Style Quickshort\nBe Vietnam Pro hiển thị cực nét!".to_string(),
-        style: TextStyle { px: 15.0, bold: false, rgb: 0x1C1C1E, align: Align::Left },
+        style: TextStyle { px: 15.0, bold: false, rgb: 0x1C1C1E, align: Align::Left, ..Default::default() },
     });
     doc.push(ObjectKind::Arrow {
         a: PointF::new(140.0, 220.0),

@@ -185,15 +185,50 @@ fn blend(pm: &mut Pixmap, x: i32, y: i32, rgb: u32, a: f32) {
 }
 
 /// Draw a laid-out text block with its top-left at `pos` (logical).
+///
+/// Italic is a synthetic shear around the baseline, underline / strike are
+/// rule rectangles, and `outline` is drawn as a dilated copy of the glyph
+/// coverage underneath the fill colour.
 fn draw_text(pm: &mut Pixmap, xf: &Xf, pos: PointF, text: &str, style: &TextStyle, lay: &TextLayout) {
     if text.is_empty() {
         return;
     }
     let big = style.px * xf.s;
-    text::with_font(style.px, style.bold, |f| {
+    let shear = if style.italic { text::ITALIC_SHEAR } else { 0.0 };
+    let rule_w = (style.px * 0.07).max(1.0) * xf.s;
+    let outline = style
+        .outline
+        .filter(|o| o.width > 0.0)
+        .map(|o| (o.rgb, (o.width * xf.s).round().max(1.0)));
+    text::with_font(style.px, style.bold, style.family, |f| {
         let sc = f.as_scaled(style.px);
         for (li, l) in lay.lines.iter().enumerate() {
             let base = li as f32 * lay.line_h + lay.ascent;
+            let base_px = xf.py(pos.y + base);
+            // Underline / strikethrough rules first: glyphs sit on top.
+            if (style.underline || style.strike) && l.width > 0.5 {
+                let x0 = xf.px(pos.x + l.x);
+                let w = (l.width * xf.s).max(1.0);
+                let mut rule = |cy: f32| {
+                    let Some(rect) = tiny_skia::Rect::from_xywh(x0, cy, w, rule_w) else {
+                        return;
+                    };
+                    let path = PathBuilder::from_rect(rect);
+                    pm.fill_path(
+                        &path,
+                        &paint(style.rgb, 1.0),
+                        FillRule::Winding,
+                        Transform::identity(),
+                        None,
+                    );
+                };
+                if style.underline {
+                    rule(base_px + sc.descent().abs() * 0.45);
+                }
+                if style.strike {
+                    rule(base_px - sc.ascent() * 0.32);
+                }
+            }
             let mut pen = l.x;
             let mut prev = None;
             for c in text[l.start..l.end].chars() {
@@ -202,18 +237,40 @@ fn draw_text(pm: &mut Pixmap, xf: &Xf, pos: PointF, text: &str, style: &TextStyl
                     pen += sc.kern(p, id);
                 }
                 if !c.is_whitespace() {
-                    let at = point(xf.px(pos.x + pen), xf.py(pos.y + base));
+                    let at = point(xf.px(pos.x + pen), base_px);
                     if let Some(og) = f.outline_glyph(id.with_scale_and_position(big, at)) {
                         let bb = og.px_bounds();
+                        let mut samples: Vec<(i32, i32, f32)> = Vec::new();
                         og.draw(|gx, gy, cov| {
-                            blend(
-                                pm,
-                                bb.min.x as i32 + gx as i32,
-                                bb.min.y as i32 + gy as i32,
-                                style.rgb,
-                                cov,
-                            );
+                            let y = bb.min.y as i32 + gy as i32;
+                            let mut x = bb.min.x as f32 + gx as f32;
+                            if shear > 0.0 {
+                                x += shear * (base_px - y as f32);
+                            }
+                            samples.push((x.round() as i32, y, cov));
                         });
+                        if let Some((rgb, spread)) = outline {
+                            let d = spread.round() as i32;
+                            let k = ((spread * 0.72).round() as i32).max(1);
+                            let ring = [
+                                (d, 0),
+                                (-d, 0),
+                                (0, d),
+                                (0, -d),
+                                (k, k),
+                                (-k, k),
+                                (k, -k),
+                                (-k, -k),
+                            ];
+                            for &(x, y, cov) in &samples {
+                                for (ox, oy) in ring {
+                                    blend(pm, x + ox, y + oy, rgb, cov);
+                                }
+                            }
+                        }
+                        for &(x, y, cov) in &samples {
+                            blend(pm, x, y, style.rgb, cov);
+                        }
                     }
                 }
                 pen += sc.h_advance(id);
@@ -587,6 +644,26 @@ pub fn render(doc: &Document, base: &RgbaImage) -> RgbaImage {
     crate::effects::apply(doc, orient(&render_content(doc, base), doc.orientation))
 }
 
+/// Render only `region` (document coordinates, clipped to `view`) with the
+/// same pipeline as [`render`]: orientation, effects and annotations are
+/// recomputed for the crop, so the exported pixels match the full render.
+/// `None` when the region does not overlap the view.
+pub fn render_region(doc: &Document, base: &RgbaImage, region: RectF) -> Option<RgbaImage> {
+    let r = region.normalized();
+    let v = doc.view.normalized();
+    let x = r.x.max(v.x);
+    let y = r.y.max(v.y);
+    let right = r.right().min(v.right());
+    let bottom = r.bottom().min(v.bottom());
+    if right - x < 0.5 || bottom - y < 0.5 {
+        return None;
+    }
+    let mut cropped = doc.clone();
+    cropped.view = RectF::new(x, y, right - x, bottom - y);
+    cropped.region = None;
+    Some(render(&cropped, base))
+}
+
 /// `view` with every annotation, before orientation and effects.
 fn render_content(doc: &Document, base: &RgbaImage) -> RgbaImage {
     let (w, h) = content_size(doc);
@@ -684,6 +761,36 @@ mod tests {
         let base = RgbaImage::from_fn(30, 20, |x, y| image::Rgba([x as u8 * 7, y as u8 * 9, 5, 255]));
         let d = Document::new(30, 20, 1.0);
         assert_eq!(render(&d, &base).as_raw(), base.as_raw());
+    }
+
+    #[test]
+    fn render_region_crops_to_the_selection_and_clips_to_the_view() {
+        let base = RgbaImage::from_fn(100, 80, |x, _| image::Rgba([x as u8, 0, 0, 255]));
+        let mut d = Document::new(100, 80, 1.0);
+        d.push(ObjectKind::Rect {
+            r: RectF::new(20.0, 20.0, 20.0, 20.0),
+            stroke: Stroke::new(0x00FF00, 4.0),
+            fill: Fill::Solid { rgb: 0x0000FF, alpha: 1.0 },
+            radius: 0.0,
+        });
+        let out = render_region(&d, &base, RectF::new(10.0, 10.0, 40.0, 40.0)).unwrap();
+        assert_eq!((out.width(), out.height()), (40, 40));
+        assert_eq!(px(&out, 20, 20), [0, 0, 255], "object moved with the crop");
+        assert_eq!(px(&out, 5, 5), [15, 0, 0], "base pixel at x=15 of the doc");
+        assert_eq!(px(&out, 39, 39), [49, 0, 0], "bottom-right maps to x=49");
+
+        // clipped to the view: half of the rect request overlaps
+        let clipped = render_region(&d, &base, RectF::new(90.0, 70.0, 40.0, 40.0)).unwrap();
+        assert_eq!((clipped.width(), clipped.height()), (10, 10));
+
+        assert!(
+            render_region(&d, &base, RectF::new(400.0, 400.0, 10.0, 10.0)).is_none(),
+            "a region outside the view copies nothing"
+        );
+        assert!(
+            render_region(&d, &base, RectF::new(10.0, 10.0, 0.2, 0.2)).is_none(),
+            "degenerate regions are rejected"
+        );
     }
 
     #[test]
@@ -855,6 +962,103 @@ mod tests {
             }
         }
         n
+    }
+
+    /// Mean x of non-background pixels inside `r` (0 when empty).
+    fn centroid_x(img: &RgbaImage, r: RectF, bg: [u8; 3]) -> f32 {
+        let (mut sum, mut n) = (0.0f32, 0usize);
+        for y in r.y.max(0.0) as u32..(r.bottom() as u32).min(img.height()) {
+            for x in r.x.max(0.0) as u32..(r.right() as u32).min(img.width()) {
+                if px(img, x, y) != bg {
+                    sum += x as f32;
+                    n += 1;
+                }
+            }
+        }
+        if n == 0 {
+            0.0
+        } else {
+            sum / n as f32
+        }
+    }
+
+    #[test]
+    fn underline_and_strike_add_a_rule_under_and_across_the_text() {
+        let base = gray(240, 120);
+        let text = |style: TextStyle| {
+            let mut d = Document::new(240, 120, 1.0);
+            d.push(ObjectKind::Text {
+                pos: PointF::new(20.0, 20.0),
+                text: "Hamburg\nHamburg".into(),
+                style,
+                wrap_w: None,
+                fill: Fill::None,
+            });
+            render(&d, &base)
+        };
+        let plain_style = TextStyle { px: 24.0, rgb: 0xFF0000, ..Default::default() };
+        let plain = text(plain_style);
+        let lay = text::layout("Hamburg\nHamburg", &plain_style, None);
+        // Below the first line's glyphs but above the second line.
+        let band = RectF::new(
+            20.0,
+            20.0 + lay.ascent + 2.0,
+            lay.width,
+            (lay.line_h - lay.ascent - 4.0).max(2.0),
+        );
+        let plain_band = ink(&plain, band, [200; 3]);
+
+        let underlined = text(TextStyle { underline: true, ..plain_style });
+        let lined = ink(&underlined, band, [200; 3]);
+        assert!(
+            lined > plain_band + 40,
+            "underline adds a rule: {plain_band} -> {lined}"
+        );
+
+        let struck = text(TextStyle { strike: true, ..plain_style });
+        let mid = RectF::new(20.0, 20.0 + lay.ascent * 0.4, lay.width, lay.ascent * 0.35);
+        assert!(ink(&struck, mid, [200; 3]) > ink(&plain, mid, [200; 3]) + 20);
+    }
+
+    #[test]
+    fn outline_rings_the_glyphs_and_italic_shears_them() {
+        let base = gray(240, 120);
+        let draw = |style: TextStyle| {
+            let mut d = Document::new(240, 120, 1.0);
+            d.push(ObjectKind::Text {
+                pos: PointF::new(20.0, 20.0),
+                text: "IIIII".into(),
+                style,
+                wrap_w: None,
+                fill: Fill::None,
+            });
+            render(&d, &base)
+        };
+        let plain_style = TextStyle { px: 40.0, rgb: 0xFFFFFF, ..Default::default() };
+        let plain = draw(plain_style);
+        let laid = text::layout("IIIII", &plain_style, None);
+        let block = RectF::new(18.0, 18.0, laid.width + 8.0, laid.height + 6.0);
+        let plain_ink = ink(&plain, block, [200; 3]);
+
+        let outlined = draw(TextStyle {
+            outline: Some(qs_doc::TextOutline { width: 3.0, rgb: 0x000000 }),
+            ..plain_style
+        });
+        let outline_ink = ink(&outlined, block, [200; 3]);
+        assert!(
+            outline_ink > plain_ink + 20,
+            "outline adds pixels around the glyphs: {plain_ink} -> {outline_ink}"
+        );
+
+        // Italic: the top of the stroke leans right of its baseline end.
+        let slanted = draw(TextStyle { italic: true, ..plain_style });
+        let top = centroid_x(&slanted, RectF::new(0.0, 18.0, 240.0, laid.ascent * 0.4), [200; 3]);
+        let bot = centroid_x(
+            &slanted,
+            RectF::new(0.0, 18.0 + laid.ascent * 0.6, 240.0, laid.ascent * 0.4),
+            [200; 3],
+        );
+        assert!(top > bot + 2.0, "italic leans right: {top} vs {bot}");
     }
 
     #[test]

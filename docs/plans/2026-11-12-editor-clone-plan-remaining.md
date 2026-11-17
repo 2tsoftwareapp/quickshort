@@ -12,7 +12,11 @@
   - **P3.1 – P3.3:** ĐÃ HOÀN THÀNH (border/shadow, watermark/torn edge, brightness/contrast/saturation).
   - **P4.1 – P4.4:** ĐÃ HOÀN THÀNH (magnify, spotlight, stamp library, non-destructive eraser).
   - **P5.1 – P5.5:** ĐÃ HOÀN THÀNH (multi-select + marquee, layers panel, align/distribute, group/ungroup, per-object opacity + DOC_VERSION v3).
-  - **Còn lại:** P6 (Quick Styles), P7 (Typography), P8 (Clipboard & region export, Flatten All).
+  - **P6:** ĐÃ HOÀN THÀNH (Quick Styles: 8 preset/tool, `~/.config/quickshort/styles.json`, thanh chip dưới toolbar, lưu/xoá preset).
+  - **P7:** ĐÃ HOÀN THÀNH (italic shear, underline, strikethrough, outline, font family Sans/Serif/Mono nhúng kèm DejaVu, `TextStyle` mở rộng nhưng vẫn load được file cũ).
+  - **P8:** ĐÃ HOÀN THÀNH (Ctrl+C copy vùng chọn qua `render_region`, Flatten All có hộp thoại xác nhận).
+  - **Còn lại:** ngoài phạm vi kế hoạch (Library/tray, share target, print, Page Curl/Reflection/Color Replacement).
+  - **Ghi chú kiểm chứng:** `cargo check --workspace --all-targets` và `cargo test --workspace` đều xanh (2026-11-17).
 
 ---
 

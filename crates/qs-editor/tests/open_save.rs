@@ -23,7 +23,7 @@ fn test_roundtrip_qsdoc_in_editor_pipeline() {
         stroke: Stroke::new(0x0A84FF, 2.0),
         fill: Fill::Solid { rgb: 0xFFFFFF, alpha: 1.0 },
         text: "Xin chào tiếng Việt!\nBe Vietnam Pro font".to_string(),
-        style: TextStyle { px: 14.0, bold: false, rgb: 0x000000, align: qs_doc::Align::Left },
+        style: TextStyle { px: 14.0, bold: false, rgb: 0x000000, align: qs_doc::Align::Left, ..Default::default() },
     });
     doc.push(ObjectKind::Step {
         center: PointF::new(350.0, 50.0),

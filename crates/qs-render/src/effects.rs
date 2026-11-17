@@ -107,7 +107,7 @@ fn stamp(img: &mut RgbaImage, wm: &qs_doc::WatermarkEffect, scale: f32) {
     };
     let (sr, sg, sb) = ((wm.color >> 16) as u8, (wm.color >> 8) as u8, wm.color as u8);
     let strength = wm.opacity * (wm.color >> 24) as f32 / 255.0;
-    crate::text::with_font(px, false, |f| {
+    crate::text::with_font(px, false, qs_doc::FontFamily::Sans, |f| {
         let sc = f.as_scaled(px);
         for l in &lay.lines {
             let mut pen = l.x;

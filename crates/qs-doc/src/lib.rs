@@ -88,6 +88,48 @@ pub enum Align {
     Right,
 }
 
+/// Typeface class. Each maps to a bundled family so exports do not depend on
+/// the host's installed fonts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum FontFamily {
+    /// Be Vietnam Pro — the UI face.
+    #[default]
+    Sans,
+    /// DejaVu Serif.
+    Serif,
+    /// DejaVu Sans Mono.
+    Mono,
+}
+
+impl FontFamily {
+    pub const ALL: [FontFamily; 3] = [FontFamily::Sans, FontFamily::Serif, FontFamily::Mono];
+    pub fn label(self) -> &'static str {
+        match self {
+            FontFamily::Sans => "Sans",
+            FontFamily::Serif => "Serif",
+            FontFamily::Mono => "Mono",
+        }
+    }
+}
+
+/// Optional contrasting stroke around glyphs, for text over busy images.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TextOutline {
+    pub width: f32,
+    /// 0xRRGGBB
+    pub rgb: u32,
+}
+
+impl Default for TextOutline {
+    fn default() -> Self {
+        Self {
+            width: 2.0,
+            rgb: 0x000000,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TextStyle {
     pub px: f32,
@@ -95,6 +137,16 @@ pub struct TextStyle {
     pub rgb: u32,
     #[serde(default)]
     pub align: Align,
+    #[serde(default)]
+    pub family: FontFamily,
+    #[serde(default)]
+    pub italic: bool,
+    #[serde(default)]
+    pub underline: bool,
+    #[serde(default)]
+    pub strike: bool,
+    #[serde(default)]
+    pub outline: Option<TextOutline>,
 }
 
 impl Default for TextStyle {
@@ -104,6 +156,11 @@ impl Default for TextStyle {
             bold: false,
             rgb: PALETTE[0],
             align: Align::Left,
+            family: FontFamily::Sans,
+            italic: false,
+            underline: false,
+            strike: false,
+            outline: None,
         }
     }
 }

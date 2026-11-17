@@ -13,9 +13,9 @@ pub mod trim;
 pub use hit::{Handle, HandleId};
 
 use qs_doc::{
-    Align, ArrowHead, BlurMode, CalloutShape, Document, Fill, MARKER_ALPHA, MagnifyShape, Object,
-    ObjectId, ObjectKind, Orientation, PALETTE, PIX_BLOCK, PointF, RectF, SIZES, StampKind, Stroke,
-    TextStyle, GroupId,
+    Align, ArrowHead, BlurMode, CalloutShape, Document, Fill, FontFamily, MARKER_ALPHA,
+    MagnifyShape, Object, ObjectId, ObjectKind, Orientation, PALETTE, PIX_BLOCK, PointF, RectF,
+    SIZES, StampKind, Stroke, TextOutline, TextStyle, GroupId,
 };
 use qs_render::{CALLOUT_PAD, bounds, text, text_block};
 
@@ -318,6 +318,74 @@ fn text_style_mut(k: &mut ObjectKind) -> Option<&mut TextStyle> {
     match k {
         ObjectKind::Text { style, .. } | ObjectKind::Callout { style, .. } => Some(style),
         _ => None,
+    }
+}
+
+/// Colour a selection swatch should show for `k`.
+fn selection_rgb(k: &ObjectKind) -> Option<u32> {
+    use ObjectKind::*;
+    match k {
+        Pen { stroke, .. }
+        | Highlighter { stroke, .. }
+        | Line { stroke, .. }
+        | Arrow { stroke, .. }
+        | Rect { stroke, .. }
+        | Ellipse { stroke, .. }
+        | Callout { stroke, .. }
+        | Magnify { stroke, .. } => Some(stroke.rgb),
+        Text { style, .. } => Some(style.rgb),
+        Step { rgb, .. } | Stamp { rgb, .. } => Some(*rgb),
+        _ => None,
+    }
+}
+
+/// Overwrite every style knob `k` exposes with the values in `st`, leaving
+/// geometry alone (Quick Styles / "paste style").
+fn apply_style_to_kind(k: &mut ObjectKind, st: &Style) {
+    use ObjectKind::*;
+    let is_marker = matches!(k, Highlighter { .. });
+    if let Some(s) = stroke_mut(k) {
+        s.rgb = st.rgb;
+        s.width = if is_marker {
+            st.width * MARKER_K
+        } else {
+            st.width
+        };
+    }
+    if let Some(f) = fill_mut(k) {
+        *f = st.fill;
+    }
+    if let Some(t) = text_style_mut(k) {
+        *t = st.text.clone();
+        t.rgb = st.rgb;
+    }
+    match k {
+        Arrow { head, .. } => *head = st.arrow_head,
+        Callout { shape, .. } => *shape = st.callout_shape,
+        Step { rgb, text_rgb, .. } => {
+            *rgb = st.rgb;
+            *text_rgb = contrast(st.rgb);
+        }
+        Blur { mode, strength, .. } => {
+            *mode = st.blur_mode;
+            *strength = st.blur_strength;
+        }
+        Magnify { zoom, shape, .. } => {
+            *zoom = st.magnify_zoom;
+            *shape = st.magnify_shape;
+        }
+        Spotlight {
+            dim_opacity, blur, ..
+        } => {
+            *dim_opacity = st.spot_dim;
+            *blur = st.spot_blur;
+        }
+        Stamp { kind, rgb, .. } => {
+            *kind = st.stamp_kind;
+            *rgb = st.rgb;
+        }
+        Eraser { width, .. } => *width = st.eraser_width,
+        _ => {}
     }
 }
 
@@ -1819,6 +1887,92 @@ impl Editor {
 
     // ---- style (palette) -------------------------------------------------------------
 
+    /// Apply a whole [`Style`] to the tool defaults and to every selected
+    /// unlocked object as one undo step (Quick Styles).
+    pub fn apply_style(&mut self, style: Style) -> bool {
+        self.finish_effects();
+        self.end_text_edit();
+        let defaults_changed = self.style != style;
+        self.style = style.clone();
+        let ids = self.selected_unlocked_ids();
+        if ids.is_empty() {
+            return defaults_changed;
+        }
+        let mut touched = false;
+        self.record(|e| {
+            for id in &ids {
+                if let Some(o) = e.doc.get_mut(*id) {
+                    apply_style_to_kind(&mut o.kind, &style);
+                    touched = true;
+                }
+            }
+        });
+        for id in ids {
+            self.fit_callout(id);
+        }
+        defaults_changed || touched
+    }
+
+    /// Style of the primary selection, or the tool defaults when nothing is
+    /// selected — the starting point for "save as preset".
+    pub fn current_style(&self) -> Style {
+        let mut st = self.style.clone();
+        if let Some(o) = self.selected_object() {
+            st.rgb = selection_rgb(&o.kind).unwrap_or(st.rgb);
+            match &o.kind {
+                ObjectKind::Pen { stroke, .. }
+                | ObjectKind::Line { stroke, .. }
+                | ObjectKind::Arrow { stroke, .. }
+                | ObjectKind::Rect { stroke, .. }
+                | ObjectKind::Ellipse { stroke, .. }
+                | ObjectKind::Callout { stroke, .. }
+                | ObjectKind::Magnify { stroke, .. } => st.width = stroke.width,
+                ObjectKind::Highlighter { stroke, .. } => st.width = stroke.width / MARKER_K,
+                ObjectKind::Eraser { width, .. } => st.eraser_width = *width,
+                _ => {}
+            }
+            match &o.kind {
+                ObjectKind::Rect { fill, .. } | ObjectKind::Ellipse { fill, .. } => {
+                    st.fill = *fill
+                }
+                ObjectKind::Text {
+                    fill, style: t, ..
+                } => {
+                    st.fill = *fill;
+                    st.text = t.clone();
+                }
+                ObjectKind::Callout {
+                    fill,
+                    style: t,
+                    shape,
+                    ..
+                } => {
+                    st.fill = *fill;
+                    st.text = t.clone();
+                    st.callout_shape = *shape;
+                }
+                ObjectKind::Arrow { head, .. } => st.arrow_head = *head,
+                ObjectKind::Blur { mode, strength, .. } => {
+                    st.blur_mode = *mode;
+                    st.blur_strength = *strength;
+                }
+                ObjectKind::Magnify { zoom, shape, .. } => {
+                    st.magnify_zoom = *zoom;
+                    st.magnify_shape = *shape;
+                }
+                ObjectKind::Spotlight {
+                    dim_opacity, blur, ..
+                } => {
+                    st.spot_dim = *dim_opacity;
+                    st.spot_blur = *blur;
+                }
+                ObjectKind::Stamp { kind, .. } => st.stamp_kind = *kind,
+                _ => {}
+            }
+        }
+        st
+    }
+
     /// Opacity of the primary selection (1.0 when nothing is selected).
     pub fn selected_opacity(&self) -> f32 {
         self.selected_object().map(|o| o.opacity).unwrap_or(1.0)
@@ -1939,6 +2093,54 @@ impl Editor {
     }
     pub fn set_text_align(&mut self, a: Align) {
         self.set_text_style(|s| s.align = a);
+    }
+
+    pub fn set_text_italic(&mut self, italic: bool) {
+        self.set_text_style(|s| s.italic = italic);
+    }
+
+    pub fn set_text_underline(&mut self, underline: bool) {
+        self.set_text_style(|s| s.underline = underline);
+    }
+
+    pub fn set_text_strike(&mut self, strike: bool) {
+        self.set_text_style(|s| s.strike = strike);
+    }
+
+    pub fn set_text_family(&mut self, family: FontFamily) {
+        self.set_text_style(|s| s.family = family);
+    }
+
+    /// Turn the outline on with `outline`, or off with `None`.
+    pub fn set_text_outline(&mut self, outline: Option<TextOutline>) {
+        self.set_text_style(|s| s.outline = outline);
+    }
+
+    /// Live text-style drag (sliders): one undo step per gesture — call
+    /// [`Editor::finish_text_style`] on release.
+    pub fn preview_text_style(&mut self, style: TextStyle) -> bool {
+        self.begin_change();
+        let mut changed = self.style.text != style;
+        self.style.text = style;
+        let ids = self.selected_unlocked_ids();
+        for id in &ids {
+            if let Some(o) = self.doc.get_mut(*id) {
+                if let Some(t) = text_style_mut(&mut o.kind) {
+                    if *t != style {
+                        *t = style;
+                        changed = true;
+                    }
+                }
+            }
+        }
+        if changed {
+            self.rev = self.rev.wrapping_add(1);
+        }
+        changed
+    }
+
+    pub fn finish_text_style(&mut self) {
+        self.end_change();
     }
 
     pub fn set_magnify_zoom(&mut self, zoom: f32) {
@@ -3047,6 +3249,82 @@ mod tests {
         let src = e.doc().group_of(ids[0]).unwrap();
         let dup = e.doc().group_of(copy).unwrap();
         assert_ne!(src, dup, "copies never join the original group");
+    }
+
+    #[test]
+    fn typography_setters_update_the_selection_and_the_tool_defaults() {
+        let mut e = editor();
+        e.set_tool(Tool::Text);
+        e.pointer_down(pt(20.0, 20.0));
+        e.pointer_up(pt(20.0, 20.0));
+        e.text_insert("Tiếng Việt");
+        e.end_text_edit();
+        let id = e.doc().objects[0].id;
+        e.select(Some(id));
+
+        e.set_text_italic(true);
+        e.set_text_underline(true);
+        e.set_text_strike(true);
+        e.set_text_family(FontFamily::Mono);
+        e.set_text_outline(Some(TextOutline {
+            width: 3.0,
+            rgb: 0x000000,
+        }));
+
+        match &e.doc().get(id).unwrap().kind {
+            ObjectKind::Text { style, .. } => {
+                assert!(style.italic && style.underline && style.strike);
+                assert_eq!(style.family, FontFamily::Mono);
+                assert_eq!(style.outline, Some(TextOutline { width: 3.0, rgb: 0 }));
+            }
+            k => panic!("{k:?}"),
+        }
+        assert!(e.style.text.italic, "new text inherits the style");
+        assert_eq!(e.style.text.family, FontFamily::Mono);
+        assert_eq!(e.current_style().text.outline.unwrap().width, 3.0);
+
+        for _ in 0..5 {
+            assert!(e.undo());
+        }
+        match &e.doc().get(id).unwrap().kind {
+            ObjectKind::Text { style, .. } => {
+                assert!(!style.italic && !style.underline && !style.strike);
+                assert_eq!(style.family, FontFamily::Sans);
+                assert_eq!(style.outline, None);
+            }
+            k => panic!("{k:?}"),
+        }
+        assert!(e.doc().objects.len() == 1, "undo keeps the text object");
+    }
+
+    #[test]
+    fn text_style_drag_is_one_undo_step() {
+        let mut e = editor();
+        e.set_tool(Tool::Text);
+        e.pointer_down(pt(20.0, 20.0));
+        e.pointer_up(pt(20.0, 20.0));
+        e.text_insert("Outline");
+        e.end_text_edit();
+        let id = e.doc().objects[0].id;
+        e.select(Some(id));
+
+        let base = e.current_style().text;
+        for w in [1.0, 2.0, 4.0, 6.0] {
+            let mut st = base;
+            st.outline = Some(TextOutline { width: w, rgb: 0xFF0000 });
+            assert!(e.preview_text_style(st));
+        }
+        e.finish_text_style();
+        match &e.doc().get(id).unwrap().kind {
+            ObjectKind::Text { style, .. } => assert_eq!(style.outline.unwrap().width, 6.0),
+            k => panic!("{k:?}"),
+        }
+        assert!(e.undo());
+        match &e.doc().get(id).unwrap().kind {
+            ObjectKind::Text { style, .. } => assert_eq!(style.outline, None),
+            k => panic!("{k:?}"),
+        }
+        assert!(e.redo());
     }
 
     #[test]

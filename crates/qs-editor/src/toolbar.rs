@@ -5,7 +5,7 @@ use crate::{
     theme::*,
 };
 use eframe::egui::{
-    self, Color32, FontFamily, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2,
+    self, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2,
 };
 use qs_doc::{
     Align, ArrowHead, BlurMode, CalloutShape, Fill, ObjectKind, PALETTE, SIZES, TEXT_SIZES,
@@ -1433,49 +1433,78 @@ fn draw_text_controls(
         x += tw + 6.0;
     }
 
-    // Bold toggle
-    let bold_r = Rect::from_min_size(Pos2::new(x, cy - 13.0), Vec2::splat(26.0));
-    if bold_r.right() <= max_x {
-        let bold_id = ui.auto_id_with("ins_bold");
-        let resp = ui
-            .interact(bold_r, bold_id, Sense::click())
-            .on_hover_text("Toggle Bold");
-        if eff_text.bold {
-            paint_pill_button(
-                ui.painter(),
-                bold_r,
-                RADIUS_PILL,
-                true,
-                resp.hovered(),
-                true,
-                false,
-            );
-        } else {
-            paint_secondary_button(
-                ui.painter(),
-                bold_r,
-                RADIUS_PILL,
-                resp.hovered(),
-                true,
-                false,
-            );
-        }
-        ui.painter().text(
-            bold_r.center(),
-            egui::Align2::CENTER_CENTER,
-            "B",
-            FontId::new(13.0, FontFamily::Name("Bold".into())),
-            if eff_text.bold || resp.hovered() {
-                text_primary()
-            } else {
-                text_secondary()
-            },
-        );
-        if resp.clicked() {
-            editor.set_text_bold(!eff_text.bold);
+    // Bold / Italic / Underline / Strike / Outline toggles
+    let outline_on = eff_text.outline.is_some();
+    for (key, label, active, tip) in [
+        ("ins_bold", "B", eff_text.bold, "Bold"),
+        ("ins_italic", "I", eff_text.italic, "Italic"),
+        ("ins_under", "U", eff_text.underline, "Underline"),
+        ("ins_strike", "S", eff_text.strike, "Strikethrough"),
+        ("ins_outline", "O", outline_on, "Text outline"),
+    ] {
+        if text_toggle(ui, key, label, tip, active, &mut x, cy, max_x) {
+            match key {
+                "ins_bold" => editor.set_text_bold(!eff_text.bold),
+                "ins_italic" => editor.set_text_italic(!eff_text.italic),
+                "ins_under" => editor.set_text_underline(!eff_text.underline),
+                "ins_strike" => editor.set_text_strike(!eff_text.strike),
+                _ => {
+                    if outline_on {
+                        editor.set_text_outline(None);
+                    } else {
+                        editor.set_text_outline(Some(qs_doc::TextOutline {
+                            width: (eff_text.px * 0.14).clamp(1.0, 6.0),
+                            rgb: qs_edit::contrast(eff_text.rgb),
+                        }));
+                    }
+                }
+            }
             *mutated = true;
         }
-        x += 26.0;
+    }
+
+    // Font family capsule
+    x = draw_ins_divider(ui.painter(), x + 6.0, cy) + 6.0;
+    let fw = 40.0;
+    let ftw = 6.0 + fw * 3.0;
+    if x + ftw <= max_x {
+        let tr = Rect::from_min_size(Pos2::new(x, cy - 13.0), Vec2::new(ftw, 26.0));
+        paint_segmented_track(ui.painter(), tr, RADIUS_TRACK);
+        for (i, family) in qs_doc::FontFamily::ALL.iter().enumerate() {
+            let sr = Rect::from_min_size(
+                Pos2::new(tr.left() + 3.0 + i as f32 * fw, tr.top() + 3.0),
+                Vec2::new(fw, 20.0),
+            );
+            let active = eff_text.family == *family;
+            let resp = ui
+                .interact(sr, ui.auto_id_with(("ins_font", i)), Sense::click())
+                .on_hover_text(format!("{} typeface", family.label()));
+            paint_pill_button(
+                ui.painter(),
+                sr,
+                RADIUS_PILL,
+                active,
+                resp.hovered(),
+                true,
+                false,
+            );
+            ui.painter().text(
+                sr.center(),
+                egui::Align2::CENTER_CENTER,
+                family.label(),
+                FontId::proportional(10.0),
+                if active || resp.hovered() {
+                    text_primary()
+                } else {
+                    text_secondary()
+                },
+            );
+            if resp.clicked() {
+                editor.set_text_family(*family);
+                *mutated = true;
+            }
+        }
+        x += ftw;
     }
 
     // Align capsule
@@ -1516,4 +1545,50 @@ fn draw_text_controls(
     }
 
     x
+}
+
+/// One small square text-format toggle (B / I / U / S / O). Advances `x`.
+fn text_toggle(
+    ui: &mut Ui,
+    key: &str,
+    label: &str,
+    tip: &str,
+    active: bool,
+    x: &mut f32,
+    cy: f32,
+    max_x: f32,
+) -> bool {
+    let r = Rect::from_min_size(Pos2::new(*x, cy - 13.0), Vec2::splat(26.0));
+    if r.right() > max_x {
+        return false;
+    }
+    let resp = ui
+        .interact(r, ui.auto_id_with(key), Sense::click())
+        .on_hover_text(tip);
+    if active {
+        paint_pill_button(
+            ui.painter(),
+            r,
+            RADIUS_PILL,
+            true,
+            resp.hovered(),
+            true,
+            false,
+        );
+    } else {
+        paint_secondary_button(ui.painter(), r, RADIUS_PILL, resp.hovered(), true, false);
+    }
+    ui.painter().text(
+        r.center(),
+        egui::Align2::CENTER_CENTER,
+        label,
+        FontId::new(12.5, egui::FontFamily::Name("Bold".into())),
+        if active || resp.hovered() {
+            text_primary()
+        } else {
+            text_secondary()
+        },
+    );
+    *x += 26.0;
+    resp.clicked()
 }

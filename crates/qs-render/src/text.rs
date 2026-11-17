@@ -6,24 +6,52 @@
 //! so no shaping engine is needed for the Latin/Vietnamese scripts we target.
 
 use ab_glyph::{Font, FontVec, GlyphId, ScaleFont};
-use qs_doc::{Align, TextStyle};
+use qs_doc::{Align, FontFamily, TextStyle};
 use std::sync::OnceLock;
 
 pub static REGULAR_BYTES: &[u8] = include_bytes!("../fonts/BeVietnamPro-Regular.ttf");
 pub static BOLD_BYTES: &[u8] = include_bytes!("../fonts/BeVietnamPro-Bold.ttf");
+pub static SERIF_BYTES: &[u8] = include_bytes!("../fonts/DejaVuSerif.ttf");
+pub static SERIF_BOLD_BYTES: &[u8] = include_bytes!("../fonts/DejaVuSerif-Bold.ttf");
+pub static MONO_BYTES: &[u8] = include_bytes!("../fonts/DejaVuSansMono.ttf");
+pub static MONO_BOLD_BYTES: &[u8] = include_bytes!("../fonts/DejaVuSansMono-Bold.ttf");
+
+/// Horizontal slant of the synthetic italic, as dx per dy.
+pub const ITALIC_SHEAR: f32 = 0.21;
 
 /// Line advance as a multiple of the font's ascent-descent height.
 pub const LINE_SPACING: f32 = 1.2;
 
-/// Run `f` with the shared Be Vietnam Pro face for `bold`. The size is
-/// applied by callers through `as_scaled(px)`.
-pub fn with_font<T>(_px: f32, bold: bool, f: impl FnOnce(&FontVec) -> T) -> T {
-    static REG: OnceLock<FontVec> = OnceLock::new();
-    static BOLD: OnceLock<FontVec> = OnceLock::new();
-    let font = if bold {
-        BOLD.get_or_init(|| FontVec::try_from_vec(BOLD_BYTES.to_vec()).expect("bundled BeVietnamPro-Bold.ttf must parse"))
-    } else {
-        REG.get_or_init(|| FontVec::try_from_vec(REGULAR_BYTES.to_vec()).expect("bundled BeVietnamPro-Regular.ttf must parse"))
+/// Run `f` with the bundled face for `family` / `bold`. The size is applied by
+/// callers through `as_scaled(px)`.
+pub fn with_font<T>(
+    _px: f32,
+    bold: bool,
+    family: FontFamily,
+    f: impl FnOnce(&FontVec) -> T,
+) -> T {
+    type Slot = OnceLock<FontVec>;
+    static SANS_REG: Slot = OnceLock::new();
+    static SANS_BOLD: Slot = OnceLock::new();
+    static SERIF_REG: Slot = OnceLock::new();
+    static SERIF_BOLD: Slot = OnceLock::new();
+    static MONO_REG: Slot = OnceLock::new();
+    static MONO_BOLD: Slot = OnceLock::new();
+
+    fn load(slot: &'static OnceLock<FontVec>, bytes: &'static [u8], name: &str) -> &'static FontVec {
+        slot.get_or_init(|| {
+            FontVec::try_from_vec(bytes.to_vec())
+                .unwrap_or_else(|e| panic!("bundled {name} must parse: {e}"))
+        })
+    }
+
+    let font = match (family, bold) {
+        (FontFamily::Sans, false) => load(&SANS_REG, REGULAR_BYTES, "BeVietnamPro-Regular.ttf"),
+        (FontFamily::Sans, true) => load(&SANS_BOLD, BOLD_BYTES, "BeVietnamPro-Bold.ttf"),
+        (FontFamily::Serif, false) => load(&SERIF_REG, SERIF_BYTES, "DejaVuSerif.ttf"),
+        (FontFamily::Serif, true) => load(&SERIF_BOLD, SERIF_BOLD_BYTES, "DejaVuSerif-Bold.ttf"),
+        (FontFamily::Mono, false) => load(&MONO_REG, MONO_BYTES, "DejaVuSansMono.ttf"),
+        (FontFamily::Mono, true) => load(&MONO_BOLD, MONO_BOLD_BYTES, "DejaVuSansMono-Bold.ttf"),
     };
     f(font)
 }
@@ -114,7 +142,7 @@ impl Measurer<'_> {
 
 /// Lay out `text` with `style`; wrap at `wrap_w` logical px when given.
 pub fn layout(text: &str, style: &TextStyle, wrap_w: Option<f32>) -> TextLayout {
-    with_font(style.px, style.bold, |f| {
+    with_font(style.px, style.bold, style.family, |f| {
         let m = Measurer {
             s: f.as_scaled(style.px),
         };
@@ -217,7 +245,6 @@ pub fn measure(text: &str, px: f32, bold: bool) -> (f32, f32) {
     );
     (l.width, l.height)
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -297,5 +324,49 @@ mod tests {
     #[test]
     fn bold_is_wider() {
         assert!(measure("Quick", 28.0, true).0 > measure("Quick", 28.0, false).0);
+    }
+
+    #[test]
+    fn italics_keep_the_same_advances() {
+        let upright = layout("Quick brown", &st(22.0), None);
+        let mut s = st(22.0);
+        s.italic = true;
+        let slanted = layout("Quick brown", &s, None);
+        assert_eq!(slanted.width, upright.width, "shear happens at draw time");
+        assert_eq!(slanted.height, upright.height);
+    }
+
+    #[test]
+    fn families_use_different_metrics_and_mono_is_uniform() {
+        let mut sans = st(20.0);
+        sans.family = FontFamily::Sans;
+        let mut serif = st(20.0);
+        serif.family = FontFamily::Serif;
+        let mut mono = st(20.0);
+        mono.family = FontFamily::Mono;
+
+        let w_sans = layout("Hamburgefonstiv", &sans, None).width;
+        let w_serif = layout("Hamburgefonstiv", &serif, None).width;
+        let w_mono = layout("Hamburgefonstiv", &mono, None).width;
+        assert!((w_sans - w_serif).abs() > 0.5, "sans and serif differ");
+        assert!((w_mono - w_sans).abs() > 0.5, "mono differs from sans");
+
+        let narrow = layout("iiii", &mono, None).width;
+        let wide = layout("MMMM", &mono, None).width;
+        assert!(
+            (narrow - wide).abs() < 0.5,
+            "mono advances are uniform: {narrow} vs {wide}"
+        );
+    }
+
+    #[test]
+    fn vietnamese_diacritics_layout_in_every_family() {
+        for family in FontFamily::ALL {
+            let mut s = st(24.0);
+            s.family = family;
+            let l = layout("Tiếng Việt: ắ ặ ề ỗ ỹ", &s, None);
+            assert_eq!(l.lines.len(), 1);
+            assert!(l.width > 40.0, "{} metrics look empty", family.label());
+        }
     }
 }

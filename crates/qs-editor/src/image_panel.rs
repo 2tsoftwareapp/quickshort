@@ -31,6 +31,7 @@ fn section(ui: &mut egui::Ui, title: &str) {
 /// Draw the panel contents; returns true when the document changed.
 pub fn render(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
     let mut changed = object_ui(ui, editor);
+    changed |= text_ui(ui, editor);
     let mut cmd = None;
     section(ui, "Rotate & flip");
     ui.horizontal_wrapped(|ui| {
@@ -95,6 +96,64 @@ fn object_ui(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
     }
     if !ui.input(|i| i.pointer.any_down()) {
         editor.finish_opacity();
+    }
+    changed
+}
+
+/// Typography for the selected text / callout: outline width and colour.
+fn text_ui(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
+    let style = match editor.selected_object().map(|o| &o.kind) {
+        Some(qs_doc::ObjectKind::Text { style, .. })
+        | Some(qs_doc::ObjectKind::Callout { style, .. }) => *style,
+        _ => return false,
+    };
+    section(ui, "Text");
+    let mut changed = false;
+    let mut current = style;
+    let mut on = current.outline.is_some();
+    if ui.checkbox(&mut on, "Outline").changed() {
+        current.outline = on.then(|| qs_doc::TextOutline {
+            width: (style.px * 0.14).clamp(1.0, 6.0),
+            rgb: qs_edit::contrast(style.rgb),
+        });
+        editor.set_text_outline(current.outline);
+        changed = true;
+    }
+    if let Some(mut outline) = current.outline {
+        let mut dirty = false;
+        if ui
+            .add(egui::Slider::new(&mut outline.width, 0.5..=12.0).text("Outline width"))
+            .changed()
+        {
+            dirty = true;
+        }
+        let mut rgb = outline.rgb;
+        let mut swatch = egui::Color32::from_rgb(
+            (rgb >> 16) as u8,
+            (rgb >> 8) as u8,
+            rgb as u8,
+        );
+        if ui
+            .horizontal(|ui| {
+                ui.label("Outline colour");
+                ui.color_edit_button_srgba(&mut swatch).changed()
+            })
+            .inner
+        {
+            let [r, g, b, _] = swatch.to_srgba_unmultiplied();
+            rgb = ((r as u32) << 16) | ((g as u32) << 8) | b as u32;
+            dirty = true;
+        }
+        if dirty {
+            current.outline = Some(qs_doc::TextOutline {
+                width: outline.width,
+                rgb,
+            });
+            changed |= editor.preview_text_style(current);
+        }
+        if !ui.input(|i| i.pointer.any_down()) {
+            editor.finish_text_style();
+        }
     }
     changed
 }
