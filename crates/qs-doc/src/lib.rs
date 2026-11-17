@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 
 /// Current on-disk document version. Bump + add a migration in
 /// [`Document::migrate`] when the schema changes incompatibly.
-pub const DOC_VERSION: u32 = 3;
+pub const DOC_VERSION: u32 = 4;
 
 /// Overlay palette (kept identical to `qs-overlay`).
 pub const PALETTE: [u32; 8] = [
@@ -619,6 +619,8 @@ impl Document {
         // v2 -> v3 adds `Object::group`, `Object::opacity` and
         // `Document::next_group`, all `#[serde(default)]`, so old files load
         // as ungrouped / fully opaque.
+        // v3 -> v4 adds `TextStyle::{family, italic, underline, strike,
+        // outline}`, also defaulted: older text stays Sans, upright and plain.
         self.version = DOC_VERSION;
         if self.next_group == 0 {
             self.next_group = 1;

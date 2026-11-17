@@ -1686,30 +1686,7 @@ impl Editor {
         true
     }
 
-    pub fn reorder(&mut self, z: ZOrder) -> bool {
-        let Some(id) = self.selected() else {
-            return false;
-        };
-        let Some(i) = self.doc.index_of(id) else {
-            return false;
-        };
-        let n = self.doc.objects.len();
-        let j = match z {
-            ZOrder::Front => n - 1,
-            ZOrder::Back => 0,
-            ZOrder::Forward => (i + 1).min(n - 1),
-            ZOrder::Backward => i.saturating_sub(1),
-        };
-        if i == j {
-            return false;
-        }
-        self.record(|e| {
-            let o = e.doc.objects.remove(i);
-            e.doc.objects.insert(j, o);
-        });
-        true
-    }
-
+    /// Z-order command for the primary selection; groups move as one block.
     pub fn nudge(&mut self, dx: f32, dy: f32) -> bool {
         self.update_selected(|k| k.translate(dx, dy))
     }
@@ -1744,20 +1721,67 @@ impl Editor {
         self.set_layer_visible_and_locked(id, visible, o.locked)
     }
 
-    /// Move an object to a document index (bottom = 0), preserving identity.
+    /// Move an object — or its whole group, kept contiguous and in order — so
+    /// that it starts at document index `to` (bottom = 0) after the move.
     pub fn move_layer(&mut self, id: ObjectId, to: usize) -> bool {
         let Some(from) = self.doc.index_of(id) else {
             return false;
         };
-        let to = to.min(self.doc.objects.len().saturating_sub(1));
-        if from == to {
+        let block = self.group_span(id);
+        let order: Vec<ObjectId> = self.doc.objects.iter().map(|o| o.id).collect();
+        let to = to.min(order.len().saturating_sub(block.len()));
+        if block.len() <= 1 {
+            if from == to {
+                return false;
+            }
+            self.record(|e| {
+                let object = e.doc.objects.remove(from);
+                e.doc.objects.insert(to, object);
+            });
+            return true;
+        }
+        let first = order
+            .iter()
+            .position(|i| block.contains(i))
+            .unwrap_or(from);
+        if first == to {
+            return false;
+        }
+        let members: Vec<ObjectId> = block.clone();
+        let mut rest: Vec<ObjectId> = order.iter().copied().filter(|i| !block.contains(i)).collect();
+        let to = to.min(rest.len());
+        rest.splice(to..to, members);
+        if rest == order {
             return false;
         }
         self.record(|e| {
-            let object = e.doc.objects.remove(from);
-            e.doc.objects.insert(to, object);
+            let mut by_id: std::collections::HashMap<ObjectId, Object> =
+                e.doc.objects.drain(..).map(|o| (o.id, o)).collect();
+            e.doc.objects = rest.iter().filter_map(|id| by_id.remove(id)).collect();
         });
         true
+    }
+
+    /// Z-order command for the primary selection; groups move as one block.
+    pub fn reorder(&mut self, z: ZOrder) -> bool {
+        let Some(id) = self.selected() else {
+            return false;
+        };
+        let block = self.group_span(id);
+        let (Some(first), Some(last)) = (
+            block.first().and_then(|i| self.doc.index_of(*i)),
+            block.last().and_then(|i| self.doc.index_of(*i)),
+        ) else {
+            return false;
+        };
+        let max_start = self.doc.objects.len() - block.len();
+        let to = match z {
+            ZOrder::Front => max_start,
+            ZOrder::Back => 0,
+            ZOrder::Forward => (last + 1).min(max_start),
+            ZOrder::Backward => first.saturating_sub(1),
+        };
+        self.move_layer(id, to)
     }
 
     /// Resize the output canvas and update its background as one undoable edit.
@@ -3161,6 +3185,42 @@ mod tests {
         e.rotate_cw();
         e.flip_v();
         assert_eq!(e.doc(), &start);
+    }
+
+    #[test]
+    fn moving_a_group_layer_keeps_the_group_contiguous() {
+        let mut e = three_rects();
+        let ids = e.doc().objects.iter().map(|o| o.id).collect::<Vec<_>>();
+        e.select_many([ids[0], ids[1]]);
+        assert!(e.group_selected());
+        e.select(None);
+
+        // Bring the group to the front: both members end up above the third.
+        e.select(Some(ids[0]));
+        assert!(e.reorder(ZOrder::Front));
+        let order = e.doc().objects.iter().map(|o| o.id).collect::<Vec<_>>();
+        assert_eq!(order, vec![ids[2], ids[0], ids[1]]);
+        assert!(e.undo());
+        assert_eq!(
+            e.doc().objects.iter().map(|o| o.id).collect::<Vec<_>>(),
+            ids
+        );
+
+        // Free object to the bottom, then the group back under it: the group
+        // moves as a block and stays adjacent.
+        e.select(Some(ids[2]));
+        assert!(e.move_layer(ids[2], 0));
+        assert_eq!(
+            e.doc().objects.iter().map(|o| o.id).collect::<Vec<_>>(),
+            vec![ids[2], ids[0], ids[1]]
+        );
+        e.select(Some(ids[1]));
+        assert!(e.move_layer(ids[1], 0));
+        assert_eq!(
+            e.doc().objects.iter().map(|o| o.id).collect::<Vec<_>>(),
+            vec![ids[0], ids[1], ids[2]]
+        );
+        assert!(!e.move_layer(ids[1], 0), "already there");
     }
 
     #[test]
