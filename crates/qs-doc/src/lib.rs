@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 
 /// Current on-disk document version. Bump + add a migration in
 /// [`Document::migrate`] when the schema changes incompatibly.
-pub const DOC_VERSION: u32 = 2;
+pub const DOC_VERSION: u32 = 3;
 
 /// Overlay palette (kept identical to `qs-overlay`).
 pub const PALETTE: [u32; 8] = [
@@ -38,6 +38,12 @@ pub const PIX_BLOCK: f32 = 8.0;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ObjectId(pub u64);
+
+/// Identifies a logical group. Objects sharing a group id select, move and
+/// align as one unit; groups do not nest.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct GroupId(pub u64);
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Stroke {
@@ -274,11 +280,21 @@ pub struct Object {
     pub visible: bool,
     #[serde(default)]
     pub locked: bool,
+    /// Group membership; `None` = free object.
+    #[serde(default)]
+    pub group: Option<GroupId>,
+    /// Paint opacity in 0..=1, applied when the object is composited.
+    #[serde(default = "one_f32")]
+    pub opacity: f32,
     pub kind: ObjectKind,
 }
 
 fn yes() -> bool {
     true
+}
+
+fn one_f32() -> f32 {
+    1.0
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -325,6 +341,9 @@ pub struct Document {
     /// z-order: last = top
     pub objects: Vec<Object>,
     pub next_id: u64,
+    /// Next free group id (groups are never reused within a document).
+    #[serde(default = "one_u64")]
+    pub next_group: u64,
     #[serde(default = "one")]
     pub step_start: u32,
     #[serde(default)]
@@ -341,6 +360,9 @@ fn white() -> u32 {
     0xFFFF_FFFF
 }
 fn one() -> u32 {
+    1
+}
+fn one_u64() -> u64 {
     1
 }
 
@@ -362,6 +384,7 @@ impl Document {
             background: white(),
             objects: Vec::new(),
             next_id: 1,
+            next_group: 1,
             step_start: 1,
             meta: Meta::default(),
             orientation: Orientation::Normal,
@@ -406,9 +429,32 @@ impl Document {
             id,
             visible: true,
             locked: false,
+            group: None,
+            opacity: 1.0,
             kind,
         });
         id
+    }
+
+    /// Reserve a fresh group id.
+    pub fn alloc_group(&mut self) -> GroupId {
+        let id = GroupId(self.next_group);
+        self.next_group += 1;
+        id
+    }
+
+    /// Ids of every object in `group`, bottom to top.
+    pub fn group_members(&self, group: GroupId) -> Vec<ObjectId> {
+        self.objects
+            .iter()
+            .filter(|o| o.group == Some(group))
+            .map(|o| o.id)
+            .collect()
+    }
+
+    /// Group of `id`, when that object is grouped.
+    pub fn group_of(&self, id: ObjectId) -> Option<GroupId> {
+        self.get(id)?.group
     }
 
     pub fn index_of(&self, id: ObjectId) -> Option<usize> {
@@ -461,6 +507,14 @@ impl Document {
             if o.id.0 >= self.next_id {
                 bail!("object id {} >= next_id {}", o.id.0, self.next_id);
             }
+            if let Some(g) = o.group {
+                if g.0 == 0 || g.0 >= self.next_group {
+                    bail!("object {} references unknown group {}", o.id.0, g.0);
+                }
+            }
+            if !(o.opacity.is_finite() && (0.0..=1.0).contains(&o.opacity)) {
+                bail!("object {} has invalid opacity {}", o.id.0, o.opacity);
+            }
             if !o.kind.is_finite() {
                 bail!("object {} has non-finite geometry", o.id.0);
             }
@@ -505,7 +559,13 @@ impl Document {
             );
         }
         // v1 is the first version — nothing to migrate yet.
+        // v2 -> v3 adds `Object::group`, `Object::opacity` and
+        // `Document::next_group`, all `#[serde(default)]`, so old files load
+        // as ungrouped / fully opaque.
         self.version = DOC_VERSION;
+        if self.next_group == 0 {
+            self.next_group = 1;
+        }
         Ok(self)
     }
 
@@ -753,6 +813,9 @@ mod tests {
         assert!(d.objects[0].visible);
         assert_eq!(d.step_start, 1);
         assert_eq!(d.orientation, Orientation::Normal);
+        assert_eq!(d.objects[0].group, None, "v1 objects are ungrouped");
+        assert_eq!(d.objects[0].opacity, 1.0, "v1 objects are opaque");
+        assert_eq!(d.next_group, 1);
         match &d.objects[0].kind {
             ObjectKind::Rect { fill, radius, .. } => {
                 assert!(fill.is_none());
@@ -760,6 +823,38 @@ mod tests {
             }
             k => panic!("{k:?}"),
         }
+    }
+
+    #[test]
+    fn groups_and_opacity_round_trip_and_validate() {
+        let mut d = Document::new(100, 100, 1.0);
+        let rect = |x: f32| ObjectKind::Rect {
+            r: RectF::new(x, 0.0, 10.0, 10.0),
+            stroke: Stroke::new(0, 1.0),
+            fill: Fill::None,
+            radius: 0.0,
+        };
+        let a = d.push(rect(0.0));
+        let b = d.push(rect(20.0));
+        let g = d.alloc_group();
+        d.get_mut(a).unwrap().group = Some(g);
+        d.get_mut(b).unwrap().group = Some(g);
+        d.get_mut(a).unwrap().opacity = 0.4;
+        assert_eq!(d.group_members(g), vec![a, b]);
+
+        let back = Document::from_json(&d.to_json().unwrap()).unwrap();
+        assert_eq!(back.group_of(a), Some(g));
+        assert_eq!(back.group_members(g), vec![a, b]);
+        assert_eq!(back.next_group, g.0 + 1);
+        assert!((back.get(a).unwrap().opacity - 0.4).abs() < f32::EPSILON);
+
+        let mut dangling = back.clone();
+        dangling.objects[0].group = Some(GroupId(99));
+        assert!(dangling.validate().is_err(), "unknown group rejected");
+
+        let mut bad_opacity = back.clone();
+        bad_opacity.objects[0].opacity = 1.5;
+        assert!(bad_opacity.validate().is_err(), "opacity out of range");
     }
 
     #[test]

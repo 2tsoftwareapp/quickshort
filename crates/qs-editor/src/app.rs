@@ -624,6 +624,8 @@ impl EditorApp {
         let mut nudge = None;
         let mut orient = None;
         let mut zoom_cmd = ZoomCmd::None;
+        let mut group = false;
+        let mut ungroup = false;
 
         ctx.input_mut(|i| {
             if self.editor.edit().is_some() {
@@ -697,6 +699,16 @@ impl EditorApp {
 
             if i.consume_key(Modifiers::COMMAND, Key::D) || i.consume_key(Modifiers::CTRL, Key::D) {
                 dup = true;
+            }
+
+            if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::G)
+                || i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::G)
+            {
+                ungroup = true;
+            } else if i.consume_key(Modifiers::COMMAND, Key::G)
+                || i.consume_key(Modifiers::CTRL, Key::G)
+            {
+                group = true;
             }
 
             if i.consume_key(Modifiers::NONE, Key::Escape) {
@@ -796,6 +808,12 @@ impl EditorApp {
             self.touch();
         }
         if dup && self.editor.duplicate_selected().is_some() {
+            self.touch();
+        }
+        if group && self.editor.group_selected() {
+            self.touch();
+        }
+        if ungroup && self.editor.ungroup_selected() {
             self.touch();
         }
         if esc {
@@ -978,6 +996,26 @@ impl eframe::App for EditorApp {
                 ui.horizontal(|ui| {
                     ui.heading("Layers");
                     ui.label(format!("{}", self.editor.doc().objects.len()));
+                    let can_group = self.editor.selection().len() >= 2;
+                    if ui
+                        .add_enabled(can_group, egui::Button::new("Group").small())
+                        .on_hover_text("Group selection (Ctrl+G)")
+                        .clicked()
+                        && self.editor.group_selected()
+                    {
+                        self.touch();
+                    }
+                    if ui
+                        .add_enabled(
+                            self.editor.selection_grouped(),
+                            egui::Button::new("Ungroup").small(),
+                        )
+                        .on_hover_text("Ungroup (Ctrl+Shift+G)")
+                        .clicked()
+                        && self.editor.ungroup_selected()
+                    {
+                        self.touch();
+                    }
                     if self.editor.selection().len() >= 2 {
                         self.alignment_open =
                             ui.small_button("Align").clicked() || self.alignment_open;
@@ -999,12 +1037,13 @@ impl eframe::App for EditorApp {
                             o.kind.label(),
                             o.visible,
                             o.locked,
+                            o.group.is_some(),
                             o.id == self.editor.selected().unwrap_or(ObjectId(0)),
                         )
                     })
                     .collect();
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    for (index, id, label, visible, locked, selected) in rows {
+                    for (index, id, label, visible, locked, grouped, selected) in rows {
                         let response = ui
                             .horizontal(|ui| {
                                 let eye = if visible { "◉" } else { "○" };
@@ -1030,7 +1069,11 @@ impl eframe::App for EditorApp {
                                 {
                                     changed |= self.editor.set_locked(id, !locked);
                                 }
-                                let text = format!("{label}  #{}", id.0);
+                                let text = if grouped {
+                                    format!("▦ {label}  #{}", id.0)
+                                } else {
+                                    format!("{label}  #{}", id.0)
+                                };
                                 if ui
                                     .selectable_label(selected, text)
                                     .on_hover_text(format!("Drag to reorder · index {}", index + 1))

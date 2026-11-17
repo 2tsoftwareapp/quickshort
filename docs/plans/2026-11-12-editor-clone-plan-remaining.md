@@ -8,6 +8,11 @@
   - **P0 (An toàn dữ liệu):** ĐÃ HOÀN THÀNH (Close warning dialog, Save As, Open, 20s debounce autosave + crash recovery, dirty bullet indicator, Ctrl+S redirect).
   - **P1.1 (Crop tool):** ĐÃ HOÀN THÀNH (Tool::Crop, dragging preview, commit to set_view, undo/redo 1 step, UI overlay, hotkey K).
   - **P2 (Region Selection):** ĐÃ HOÀN THÀNH (Tool::SelectRegion, Document.region, DOC_VERSION bump v1->v2, Snap.region undo/redo, dashed overlay, hotkey M).
+  - **P1.2 – P1.4:** ĐÃ HOÀN THÀNH (canvas resize/colour/anchors, auto trim, rotate & flip).
+  - **P3.1 – P3.3:** ĐÃ HOÀN THÀNH (border/shadow, watermark/torn edge, brightness/contrast/saturation).
+  - **P4.1 – P4.4:** ĐÃ HOÀN THÀNH (magnify, spotlight, stamp library, non-destructive eraser).
+  - **P5.1 – P5.5:** ĐÃ HOÀN THÀNH (multi-select + marquee, layers panel, align/distribute, group/ungroup, per-object opacity + DOC_VERSION v3).
+  - **Còn lại:** P6 (Quick Styles), P7 (Typography), P8 (Clipboard & region export, Flatten All).
 
 ---
 

@@ -15,7 +15,7 @@ pub use hit::{Handle, HandleId};
 use qs_doc::{
     Align, ArrowHead, BlurMode, CalloutShape, Document, Fill, MARKER_ALPHA, MagnifyShape, Object,
     ObjectId, ObjectKind, Orientation, PALETTE, PIX_BLOCK, PointF, RectF, SIZES, StampKind, Stroke,
-    TextStyle,
+    TextStyle, GroupId,
 };
 use qs_render::{CALLOUT_PAD, bounds, text, text_block};
 
@@ -586,12 +586,13 @@ impl Editor {
         }
     }
 
+    /// Select exactly `id` — or its whole group when it belongs to one.
     pub fn select(&mut self, id: Option<ObjectId>) {
         self.end_text_edit();
-        self.selection = id
-            .filter(|i| self.doc.get(*i).is_some())
-            .into_iter()
-            .collect();
+        self.selection = match id {
+            Some(i) if self.doc.get(i).is_some() => self.group_span(i),
+            _ => Vec::new(),
+        };
     }
 
     /// Replace the selection with `ids` (invalid ids dropped, primary last).
@@ -603,14 +604,20 @@ impl Editor {
             .collect();
     }
 
-    /// Toggle `id` in the selection (Shift+click). Returns the new membership.
+    /// Toggle `id` in the selection (Shift+click). A grouped object toggles
+    /// its whole group. Returns the new membership.
     pub fn toggle_select(&mut self, id: ObjectId) -> bool {
         self.end_text_edit();
-        if let Some(pos) = self.selection.iter().position(|i| *i == id) {
-            self.selection.remove(pos);
+        let span = self.group_span(id);
+        if span.iter().all(|m| self.selection.contains(m)) {
+            self.selection.retain(|i| !span.contains(i));
             false
         } else if self.doc.get(id).is_some() {
-            self.selection.push(id);
+            for member in span {
+                if !self.selection.contains(&member) {
+                    self.selection.push(member);
+                }
+            }
             true
         } else {
             false
@@ -756,8 +763,9 @@ impl Editor {
                 return;
             }
             Some(id) => {
-                if !self.selection.contains(&id) {
-                    self.selection = vec![id];
+                let span = self.group_span(id);
+                if !span.iter().all(|m| self.selection.contains(m)) {
+                    self.selection = span;
                 }
             }
             None => {
@@ -1011,7 +1019,7 @@ impl Editor {
                 if let Some(r) = self.marquee_rect.take() {
                     let r = r.normalized();
                     if r.w >= 3.0 && r.h >= 3.0 {
-                        let hits: Vec<ObjectId> = self
+                        let mut hits: Vec<ObjectId> = self
                             .doc
                             .objects
                             .iter()
@@ -1025,6 +1033,7 @@ impl Editor {
                             })
                             .map(|o| o.id)
                             .collect();
+                        hits = self.expand_groups(&hits);
                         if additive {
                             for id in hits {
                                 if !self.selection.contains(&id) {
@@ -1301,6 +1310,143 @@ impl Editor {
             .collect()
     }
 
+    /// Every id that selects, moves and aligns together with `id`: the whole
+    /// group for a grouped object, otherwise just `id`. Document z-order.
+    pub fn group_span(&self, id: ObjectId) -> Vec<ObjectId> {
+        match self.doc.group_of(id) {
+            Some(g) => self.doc.group_members(g),
+            None => vec![id],
+        }
+    }
+
+    /// Group of the primary selection, for the layers panel / toolbar state.
+    pub fn selected_group(&self) -> Option<GroupId> {
+        self.selected().and_then(|id| self.doc.group_of(id))
+    }
+
+    /// True when any selected object belongs to a group.
+    pub fn selection_grouped(&self) -> bool {
+        self.selection
+            .iter()
+            .any(|id| self.doc.group_of(*id).is_some())
+    }
+
+    /// Selected ids expanded to whole groups (deduped, z-order), plus the
+    /// locked state of each group's members untouched.
+    fn expand_groups(&self, ids: &[ObjectId]) -> Vec<ObjectId> {
+        let mut out: Vec<ObjectId> = Vec::new();
+        for id in ids {
+            for member in self.group_span(*id) {
+                if !out.contains(&member) {
+                    out.push(member);
+                }
+            }
+        }
+        out.sort_by_key(|id| self.doc.index_of(*id).unwrap_or(usize::MAX));
+        out
+    }
+
+    /// Selection collapsed into transform units: free objects stay alone,
+    /// grouped objects share one unit with the union of their bounds.
+    fn selection_units(&self) -> Vec<(Vec<ObjectId>, RectF)> {
+        let mut units: Vec<(Vec<ObjectId>, RectF)> = Vec::new();
+        let mut seen_group: Vec<GroupId> = Vec::new();
+        for id in self.selected_unlocked_ids() {
+            let Some(obj) = self.doc.get(id) else {
+                continue;
+            };
+            let b = qs_render::bounds(&obj.kind);
+            match obj.group {
+                None => units.push((vec![id], b)),
+                Some(g) => {
+                    if seen_group.contains(&g) {
+                        continue;
+                    }
+                    seen_group.push(g);
+                    let members = self
+                        .selection
+                        .iter()
+                        .copied()
+                        .filter(|m| self.doc.group_of(*m) == Some(g))
+                        .filter(|m| self.doc.get(*m).is_some_and(|o| !o.locked))
+                        .collect::<Vec<_>>();
+                    let union = members
+                        .iter()
+                        .filter_map(|m| self.doc.get(*m).map(|o| qs_render::bounds(&o.kind)))
+                        .reduce(|a, b| a.union(&b));
+                    if let Some(union) = union {
+                        units.push((members, union));
+                    }
+                }
+            }
+        }
+        units
+    }
+
+    /// Group the selection (merging any groups it touches) as one undo step.
+    /// Returns false when fewer than two unlocked objects would be grouped.
+    pub fn group_selected(&mut self) -> bool {
+        self.end_text_edit();
+        let ids = self.selected_unlocked_ids();
+        if ids.len() < 2 {
+            return false;
+        }
+        let members = self.expand_groups(&ids);
+        if members.len() < 2 {
+            return false;
+        }
+        let groups: Vec<GroupId> = {
+            let mut g = Vec::new();
+            for id in &members {
+                if let Some(gid) = self.doc.group_of(*id) {
+                    if !g.contains(&gid) {
+                        g.push(gid);
+                    }
+                }
+            }
+            g
+        };
+        let already_one_group = groups.len() == 1
+            && members.iter().all(|id| self.doc.group_of(*id) == Some(groups[0]));
+        if already_one_group && self.selection.len() == members.len() {
+            return false;
+        }
+        self.record(|e| {
+            let gid = e.doc.alloc_group();
+            for id in &members {
+                if let Some(o) = e.doc.get_mut(*id) {
+                    o.group = Some(gid);
+                }
+            }
+        });
+        self.selection = members;
+        true
+    }
+
+    /// Break every group touched by the selection; objects stay put.
+    pub fn ungroup_selected(&mut self) -> bool {
+        self.end_text_edit();
+        let mut groups: Vec<GroupId> = Vec::new();
+        for id in &self.selection {
+            if let Some(g) = self.doc.group_of(*id) {
+                if !groups.contains(&g) {
+                    groups.push(g);
+                }
+            }
+        }
+        if groups.is_empty() {
+            return false;
+        }
+        self.record(|e| {
+            for o in e.doc.objects.iter_mut() {
+                if o.group.is_some_and(|g| groups.contains(&g)) {
+                    o.group = None;
+                }
+            }
+        });
+        true
+    }
+
     /// Delete every selected unlocked object in one undo step.
     pub fn delete_selected(&mut self) -> bool {
         self.end_text_edit();
@@ -1318,20 +1464,39 @@ impl Editor {
     }
 
     /// Duplicate every selected object (+12px), selecting the copies.
+    /// Copies of grouped objects get a fresh group of their own.
     /// Returns the primary (last) new id.
     pub fn duplicate_selected(&mut self) -> Option<ObjectId> {
         self.end_text_edit();
-        let ids: Vec<ObjectId> = self.selection.clone();
+        let ids = self.expand_groups(&self.selection);
         if ids.is_empty() {
             return None;
         }
         let mut news = Vec::new();
+        let mut grouped: Vec<ObjectId> = Vec::new();
         self.record(|e| {
             for id in &ids {
-                if let Some(src) = e.doc.get(*id).map(|o| o.kind.clone()) {
-                    let mut k = src;
-                    k.translate(12.0, 12.0);
-                    news.push(e.doc.push(k));
+                let Some(src) = e.doc.get(*id) else {
+                    continue;
+                };
+                let (was_grouped, opacity) = (src.group.is_some(), src.opacity);
+                let mut k = src.kind.clone();
+                k.translate(12.0, 12.0);
+                let new_id = e.doc.push(k);
+                if let Some(o) = e.doc.get_mut(new_id) {
+                    o.opacity = opacity;
+                }
+                if was_grouped {
+                    grouped.push(new_id);
+                }
+                news.push(new_id);
+            }
+            if grouped.len() > 1 {
+                let gid = e.doc.alloc_group();
+                for new_id in &grouped {
+                    if let Some(o) = e.doc.get_mut(*new_id) {
+                        o.group = Some(gid);
+                    }
                 }
             }
         });
@@ -1340,22 +1505,21 @@ impl Editor {
         last
     }
 
-    /// Align selected unlocked objects by their bounds. The reference bounds
-    /// are the union of the current selection.
+    /// Align selected objects (groups align as one unit) by their bounds. The
+    /// reference bounds are the union of the current selection.
     pub fn align_selected(&mut self, alignment: Alignment) -> bool {
-        let ids = self.selected_unlocked_ids();
-        if ids.len() < 2 {
+        let units = self.selection_units();
+        if units.len() < 2 {
             return false;
         }
-        let bounds = ids
+        let union = units
             .iter()
-            .filter_map(|id| self.doc.get(*id).map(|o| qs_render::bounds(&o.kind)))
-            .collect::<Vec<_>>();
-        let union = bounds.iter().copied().reduce(|a, b| a.union(&b)).unwrap();
-        let offsets = ids
+            .map(|(_, b)| *b)
+            .reduce(|a, b| a.union(&b))
+            .unwrap();
+        let offsets = units
             .iter()
-            .zip(bounds.iter())
-            .map(|(id, b)| {
+            .map(|(ids, b)| {
                 let (dx, dy) = match alignment {
                     Alignment::Left => (union.x - b.x, 0.0),
                     Alignment::HCenter => (union.center().x - b.center().x, 0.0),
@@ -1364,7 +1528,7 @@ impl Editor {
                     Alignment::VCenter => (0.0, union.center().y - b.center().y),
                     Alignment::Bottom => (0.0, union.bottom() - b.bottom()),
                 };
-                (*id, dx, dy)
+                (ids.clone(), dx, dy)
             })
             .collect::<Vec<_>>();
         if offsets
@@ -1374,29 +1538,25 @@ impl Editor {
             return false;
         }
         self.record(|e| {
-            for (id, dx, dy) in offsets {
-                if let Some(o) = e.doc.get_mut(id) {
-                    o.kind.translate(dx, dy);
+            for (ids, dx, dy) in offsets {
+                for id in ids {
+                    if let Some(o) = e.doc.get_mut(id) {
+                        o.kind.translate(dx, dy);
+                    }
                 }
             }
         });
         true
     }
 
-    /// Evenly distribute selected object centers between the outermost
-    /// centers along the requested axis. Requires three unlocked objects.
+    /// Evenly distribute selected objects (groups count as one unit) between
+    /// the outermost centers along the requested axis. Requires three units.
     pub fn distribute_selected(&mut self, axis: Axis) -> bool {
-        let ids = self.selected_unlocked_ids();
-        if ids.len() < 3 {
+        let units = self.selection_units();
+        if units.len() < 3 {
             return false;
         }
-        let mut items = ids
-            .iter()
-            .filter_map(|id| self.doc.get(*id).map(|o| (*id, qs_render::bounds(&o.kind))))
-            .collect::<Vec<_>>();
-        if items.len() < 3 {
-            return false;
-        }
+        let mut items = units;
         items.sort_by(|a, b| {
             let av = if axis == Axis::Horizontal {
                 a.1.center().x
@@ -1426,7 +1586,7 @@ impl Editor {
         let offsets = items
             .iter()
             .enumerate()
-            .map(|(i, (id, b))| {
+            .map(|(i, (ids, b))| {
                 let current = if axis == Axis::Horizontal {
                     b.center().x
                 } else {
@@ -1434,7 +1594,7 @@ impl Editor {
                 };
                 let delta = start + step * i as f32 - current;
                 (
-                    *id,
+                    ids.clone(),
                     if axis == Axis::Horizontal { delta } else { 0.0 },
                     if axis == Axis::Vertical { delta } else { 0.0 },
                 )
@@ -1447,9 +1607,11 @@ impl Editor {
             return false;
         }
         self.record(|e| {
-            for (id, dx, dy) in offsets {
-                if let Some(o) = e.doc.get_mut(id) {
-                    o.kind.translate(dx, dy);
+            for (ids, dx, dy) in offsets {
+                for id in ids {
+                    if let Some(o) = e.doc.get_mut(id) {
+                        o.kind.translate(dx, dy);
+                    }
                 }
             }
         });
@@ -1656,6 +1818,70 @@ impl Editor {
     }
 
     // ---- style (palette) -------------------------------------------------------------
+
+    /// Opacity of the primary selection (1.0 when nothing is selected).
+    pub fn selected_opacity(&self) -> f32 {
+        self.selected_object().map(|o| o.opacity).unwrap_or(1.0)
+    }
+
+    fn apply_opacity(&mut self, opacity: f32) -> bool {
+        let v = opacity.clamp(0.0, 1.0);
+        let ids = self.selected_unlocked_ids();
+        let changed = ids.iter().any(|id| {
+            self.doc
+                .get(*id)
+                .is_some_and(|o| (o.opacity - v).abs() > f32::EPSILON)
+        });
+        if !changed {
+            return false;
+        }
+        for id in ids {
+            if let Some(o) = self.doc.get_mut(id) {
+                o.opacity = v;
+            }
+        }
+        true
+    }
+
+    /// Set the paint opacity (0..=1) of every selected unlocked object as one
+    /// undo step.
+    pub fn set_opacity(&mut self, opacity: f32) -> bool {
+        let v = opacity.clamp(0.0, 1.0);
+        let ids = self.selected_unlocked_ids();
+        if ids.is_empty()
+            || ids.iter().all(|id| {
+                self.doc
+                    .get(*id)
+                    .is_some_and(|o| (o.opacity - v).abs() <= f32::EPSILON)
+            })
+        {
+            return false;
+        }
+        self.record(|e| {
+            for id in &ids {
+                if let Some(o) = e.doc.get_mut(*id) {
+                    o.opacity = v;
+                }
+            }
+        });
+        true
+    }
+
+    /// Live opacity drag frame; call [`Editor::finish_opacity`] on release so
+    /// the whole gesture is a single undo step.
+    pub fn preview_opacity(&mut self, opacity: f32) -> bool {
+        self.begin_change();
+        if self.apply_opacity(opacity) {
+            self.rev = self.rev.wrapping_add(1);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn finish_opacity(&mut self) {
+        self.end_change();
+    }
 
     pub fn set_color(&mut self, rgb: u32) {
         self.style.rgb = rgb;
@@ -2733,5 +2959,125 @@ mod tests {
         e.rotate_cw();
         e.flip_v();
         assert_eq!(e.doc(), &start);
+    }
+
+    #[test]
+    fn grouping_selects_whole_group_and_undoes_as_one_step() {
+        let mut e = three_rects();
+        assert!(e.group_selected());
+        let group = e.selected_group().expect("selection is grouped");
+        assert_eq!(e.doc().group_members(group).len(), 3);
+        assert_eq!(e.selection().len(), 3);
+
+        // clicking any member selects the whole group
+        let member = e.doc().objects[1].id;
+        e.select(None);
+        e.select(Some(member));
+        assert_eq!(e.selection().len(), 3, "group members select together");
+
+        // dragging one member moves all of them, in one undo step
+        let before: Vec<RectF> = (0..3).map(|i| rect_of(&e, i)).collect();
+        drag(&mut e, pt(12.0, 12.0), pt(22.0, 20.0));
+        for (i, b) in before.iter().enumerate() {
+            assert_eq!(rect_of(&e, i), RectF::new(b.x + 10.0, b.y + 8.0, b.w, b.h));
+        }
+        assert!(e.undo());
+        for (i, b) in before.iter().enumerate() {
+            assert_eq!(rect_of(&e, i), *b, "one undo step restores the group");
+        }
+        assert!(e.selection_grouped(), "undo keeps the group and its selection");
+
+        // ungroup breaks the group, also one step
+        assert!(e.ungroup_selected());
+        assert!(!e.selection_grouped());
+        assert!(!e.ungroup_selected(), "nothing left to ungroup");
+        assert!(e.undo());
+        assert!(e.selection_grouped());
+    }
+
+    #[test]
+    fn grouping_needs_two_objects_and_merges_existing_groups() {
+        let mut e = three_rects();
+        let ids = e.doc().objects.iter().map(|o| o.id).collect::<Vec<_>>();
+        e.select_many([ids[0]]);
+        assert!(!e.group_selected(), "a single object is not a group");
+
+        e.select_many([ids[0], ids[1]]);
+        assert!(e.group_selected());
+        let g1 = e.selected_group().unwrap();
+        e.select_many([ids[1], ids[2]]);
+        assert!(e.group_selected(), "grouping one object plus a group works");
+        let g2 = e.selected_group().unwrap();
+        assert_ne!(g1, g2, "merging allocates a new group id");
+        assert_eq!(e.doc().group_members(g2).len(), 3);
+        assert_eq!(e.doc().group_members(g1), Vec::new());
+        assert_eq!(e.selection().len(), 3);
+    }
+
+    #[test]
+    fn groups_align_as_a_unit_and_keep_their_internal_layout() {
+        let mut e = three_rects();
+        let ids = e.doc().objects.iter().map(|o| o.id).collect::<Vec<_>>();
+        e.select_many([ids[0], ids[1]]);
+        assert!(e.group_selected());
+        e.select_many([ids[0], ids[1], ids[2]]);
+        let before = (rect_of(&e, 0), rect_of(&e, 1), rect_of(&e, 2));
+        assert!(e.align_selected(Alignment::Left));
+        let (a, b, c) = (rect_of(&e, 0), rect_of(&e, 1), rect_of(&e, 2));
+        assert_eq!(a.x, c.x, "group snaps to the union's left edge");
+        assert_eq!(b.x - a.x, before.1.x - before.0.x, "gap inside the group stays");
+        assert_eq!(b.y - a.y, before.1.y - before.0.y);
+        assert!(e.undo());
+        assert_eq!(rect_of(&e, 0), before.0);
+    }
+
+    #[test]
+    fn marquee_selects_whole_groups_and_duplicates_get_a_fresh_group() {
+        let mut e = three_rects();
+        let ids = e.doc().objects.iter().map(|o| o.id).collect::<Vec<_>>();
+        e.select_many([ids[0], ids[1]]);
+        assert!(e.group_selected());
+        e.select(None);
+        drag(&mut e, pt(5.0, 5.0), pt(200.0, 110.0));
+        assert_eq!(e.selection().len(), 3, "marquee expands touched groups");
+
+        e.select_many([ids[0]]);
+        let copy = e.duplicate_selected().unwrap();
+        assert_eq!(e.selection().len(), 2, "copies of a group stay together");
+        let src = e.doc().group_of(ids[0]).unwrap();
+        let dup = e.doc().group_of(copy).unwrap();
+        assert_ne!(src, dup, "copies never join the original group");
+    }
+
+    #[test]
+    fn opacity_applies_to_the_selection_clamps_and_undoes() {
+        let mut e = three_rects();
+        assert!((e.selected_opacity() - 1.0).abs() < f32::EPSILON);
+        assert!(e.set_opacity(0.4));
+        for o in e.doc().objects.iter() {
+            assert!((o.opacity - 0.4).abs() < f32::EPSILON);
+        }
+        assert!(!e.set_opacity(0.4), "no change, no undo entry");
+        assert!(e.set_opacity(2.0), "clamped to 1.0 is still a change");
+        assert!((e.doc().objects[0].opacity - 1.0).abs() < f32::EPSILON);
+        assert!(e.undo());
+        assert!((e.doc().objects[0].opacity - 0.4).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn opacity_drag_is_a_single_undo_step() {
+        let mut e = three_rects();
+        for v in [0.9, 0.7, 0.5, 0.3] {
+            assert!(e.preview_opacity(v));
+        }
+        e.finish_opacity();
+        assert!((e.doc().objects[0].opacity - 0.3).abs() < f32::EPSILON);
+        assert!(e.undo());
+        assert!((e.doc().objects[0].opacity - 1.0).abs() < f32::EPSILON);
+        assert!(e.redo());
+        assert!(
+            (e.doc().objects[0].opacity - 0.3).abs() < f32::EPSILON,
+            "the whole drag was one entry"
+        );
     }
 }

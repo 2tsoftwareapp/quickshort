@@ -8,3 +8,6 @@ dist/
 demo/out/
 .wrangler/
 .DS_Store
+
+# agent runtime scratch
+.zwork/

@@ -30,6 +30,7 @@ fn section(ui: &mut egui::Ui, title: &str) {
 
 /// Draw the panel contents; returns true when the document changed.
 pub fn render(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
+    let mut changed = object_ui(ui, editor);
     let mut cmd = None;
     section(ui, "Rotate & flip");
     ui.horizontal_wrapped(|ui| {
@@ -46,9 +47,56 @@ pub fn render(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
     });
     if let Some(c) = cmd {
         apply_orient(editor, c);
-        return true;
+        changed = true;
     }
-    effects_ui(ui, editor)
+    effects_ui(ui, editor) || changed
+}
+
+/// Selection-level object controls: grouping and opacity.
+fn object_ui(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
+    if editor.selection().is_empty() {
+        return false;
+    }
+    section(ui, "Object");
+    let mut changed = false;
+
+    let count = editor.selection().len();
+    ui.label(
+        RichText::new(if count == 1 {
+            "1 object selected".to_owned()
+        } else {
+            format!("{count} objects selected")
+        })
+        .color(theme::text_tertiary()),
+    );
+    ui.horizontal_wrapped(|ui| {
+        if ui
+            .add_enabled(count >= 2, egui::Button::new("Group"))
+            .on_hover_text("Ctrl+G")
+            .clicked()
+        {
+            changed |= editor.group_selected();
+        }
+        if ui
+            .add_enabled(editor.selection_grouped(), egui::Button::new("Ungroup"))
+            .on_hover_text("Ctrl+Shift+G")
+            .clicked()
+        {
+            changed |= editor.ungroup_selected();
+        }
+    });
+
+    let mut pct = (editor.selected_opacity() * 100.0).round();
+    let resp = ui
+        .add(egui::Slider::new(&mut pct, 0.0..=100.0).suffix("%").text("Opacity"))
+        .on_hover_text("Fades the selected objects; the image below shows through");
+    if resp.changed() && editor.preview_opacity(pct / 100.0) {
+        changed = true;
+    }
+    if !ui.input(|i| i.pointer.any_down()) {
+        editor.finish_opacity();
+    }
+    changed
 }
 
 fn color(ui: &mut egui::Ui, label: &str, value: &mut u32) {

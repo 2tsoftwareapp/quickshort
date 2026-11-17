@@ -610,13 +610,57 @@ fn render_content(doc: &Document, base: &RgbaImage) -> RgbaImage {
     for o in &doc.objects {
         let is_step = matches!(o.kind, ObjectKind::Step { .. });
         if o.visible {
-            draw_object(&mut pm, &xf, &o.kind, step_no, &bg_snap);
+            draw_with_opacity(&mut pm, &xf, &o.kind, o.opacity, step_no, &bg_snap);
         }
         if is_step {
             step_no += 1;
         }
     }
     to_image(&pm)
+}
+
+/// Kinds that only add paint. Everything else (blur, magnify, eraser) reads
+/// the canvas underneath and must draw directly, so opacity is ignored for
+/// them.
+fn is_paint_only(kind: &ObjectKind) -> bool {
+    !matches!(
+        kind,
+        ObjectKind::Blur { .. } | ObjectKind::Magnify { .. } | ObjectKind::Eraser { .. }
+    )
+}
+
+/// `draw_object`, optionally through a transparent layer composited with
+/// `opacity` so strokes and fills fade together instead of overlapping.
+fn draw_with_opacity(
+    pm: &mut Pixmap,
+    xf: &Xf,
+    kind: &ObjectKind,
+    opacity: f32,
+    step_no: u32,
+    snap: &[u8],
+) {
+    if opacity >= 1.0 || !is_paint_only(kind) {
+        draw_object(pm, xf, kind, step_no, snap);
+        return;
+    }
+    if opacity <= 0.0 {
+        return;
+    }
+    let Some(mut layer) = Pixmap::new(pm.width(), pm.height()) else {
+        return;
+    };
+    draw_object(&mut layer, xf, kind, step_no, snap);
+    pm.draw_pixmap(
+        0,
+        0,
+        layer.as_ref(),
+        &PixmapPaint {
+            opacity,
+            ..PixmapPaint::default()
+        },
+        Transform::identity(),
+        None,
+    );
 }
 
 #[cfg(test)]
@@ -640,6 +684,68 @@ mod tests {
         let base = RgbaImage::from_fn(30, 20, |x, y| image::Rgba([x as u8 * 7, y as u8 * 9, 5, 255]));
         let d = Document::new(30, 20, 1.0);
         assert_eq!(render(&d, &base).as_raw(), base.as_raw());
+    }
+
+    #[test]
+    fn object_opacity_fades_fill_and_stroke_together() {
+        let base = gray(100, 80);
+        let mut d = Document::new(100, 80, 1.0);
+        let r = RectF::new(20.0, 20.0, 40.0, 30.0);
+        let id = d.push(ObjectKind::Rect {
+            r,
+            stroke: red(),
+            fill: Fill::Solid { rgb: 0x0000FF, alpha: 1.0 },
+            radius: 1.5,
+        });
+        d.get_mut(id).unwrap().opacity = 0.5;
+        let o = render(&d, &base);
+        let mid = px(&o, 40, 35);
+        // 50% blue over grey 200
+        for (got, want) in mid.iter().zip([100u16, 100, 227]) {
+            assert!(
+                (*got as i16 - want as i16).abs() <= 2,
+                "fill blended at 50%: {mid:?}"
+            );
+        }
+        let edge = px(&o, 20, 35);
+        for (got, want) in edge.iter().zip([227u16, 100, 100]) {
+            assert!(
+                (*got as i16 - want as i16).abs() <= 2,
+                "stroke blended at 50%: {edge:?}"
+            );
+        }
+
+        d.get_mut(id).unwrap().opacity = 0.0;
+        assert_eq!(px(&render(&d, &base), 40, 35), [200, 200, 200], "0 = hidden");
+
+        d.get_mut(id).unwrap().opacity = 1.0;
+        assert_eq!(px(&render(&d, &base), 40, 35), [0, 0, 255]);
+    }
+
+    #[test]
+    fn opacity_is_ignored_by_canvas_reading_tools() {
+        let base = gray(60, 60);
+        let mut d = Document::new(60, 60, 1.0);
+        d.push(ObjectKind::Rect {
+            r: RectF::new(10.0, 20.0, 40.0, 20.0),
+            stroke: red(),
+            fill: Fill::Solid { rgb: 0x0000FF, alpha: 1.0 },
+            radius: 0.0,
+        });
+        let id = d.push(ObjectKind::Eraser {
+            pts: vec![PointF::new(10.0, 30.0), PointF::new(50.0, 30.0)],
+            width: 12.0,
+        });
+        let painted = render(&d, &base);
+        assert_eq!(px(&painted, 30, 30), [200, 200, 200], "eraser on top");
+        d.get_mut(id).unwrap().opacity = 0.2;
+        let erased = render(&d, &base);
+        assert_eq!(
+            px(&erased, 30, 30),
+            [200, 200, 200],
+            "eraser always reveals what is below it, whatever its opacity"
+        );
+        assert_eq!(erased.as_raw(), painted.as_raw(), "pixels are untouched");
     }
 
     #[test]
