@@ -61,6 +61,7 @@ const UNHIDE_MS: f64 = 200.0; // slide-back
 
 /// Corner shelf panel — wide enough for a pinned fan, short enough not
 /// to read as a fullscreen overlay (Linux/macOS compact chrome).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(super) fn shelf_logical_size() -> (f64, f64) {
     let w = MARGIN * 2.0 + TW + (MAX_VIS_PINNED as f64 - 1.0) * FAN;
     let h = MARGIN * 2.0 + TH + FAN + 48.0; // chip + clear pill
@@ -73,6 +74,7 @@ pub(super) fn shelf_logical_size() -> (f64, f64) {
 #[derive(Clone, Copy, PartialEq)]
 pub enum ShotKind {
     Saved,
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     Copied,
     Ocr,
     Shared,
@@ -311,6 +313,7 @@ impl Stack {
     }
 
     /// Lightbox or in-chrome menu — layer-shell needs exclusive keyboard.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     pub(super) fn modal_open(&self) -> bool {
         self.lightbox.is_some() || self.menu.is_some()
     }

@@ -20,6 +20,7 @@ const MIGRATED: &[&str] = &[
     "qs-editor/src/theme.rs",
     "qs-editor/src/app.rs",
     "qs-editor/src/canvas.rs",
+    "qs-editor/src/filmstrip.rs",
     "qs-editor/src/icons.rs",
     "qs-editor/src/toolbar.rs",
     "qs-editor/src/image_panel.rs",
@@ -39,6 +40,17 @@ fn has_hex(line: &str) -> bool {
     })
 }
 
+fn has_rgb_call(line: &str) -> bool {
+    const PAT: &str = "Color32::from_rgb(";
+    line.match_indices(PAT).any(|(idx, _)| {
+        line[idx + PAT.len()..]
+            .trim_start()
+            .as_bytes()
+            .first()
+            .is_some_and(|b| b.is_ascii_digit())
+    })
+}
+
 #[test]
 fn no_hex_colour_literals_in_migrated_files() {
     let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
@@ -47,7 +59,10 @@ fn no_hex_colour_literals_in_migrated_files() {
         let src = fs::read_to_string(crates.join(f)).unwrap();
         let body = src.split("#[cfg(test)]").next().unwrap();
         for (n, l) in body.lines().enumerate() {
-            if has_hex(l) && !l.contains(ALLOW) && !l.trim_start().starts_with("//") {
+            if (has_hex(l) || has_rgb_call(l))
+                && !l.contains(ALLOW)
+                && !l.trim_start().starts_with("//")
+            {
                 bad.push(format!("{f}:{}: {}", n + 1, l.trim()));
             }
         }

@@ -23,34 +23,52 @@ pub fn apply_orient(editor: &mut Editor, cmd: OrientCmd) {
 }
 
 fn section(ui: &mut egui::Ui, title: &str) {
-    ui.add_space(6.0);
-    ui.label(RichText::new(title).strong().color(theme::text_secondary()));
-    ui.add_space(2.0);
+    theme::section_header(ui, title);
 }
 
 /// Draw the panel contents; returns true when the document changed.
 pub fn render(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
-    let mut changed = object_ui(ui, editor);
-    changed |= text_ui(ui, editor);
-    let mut cmd = None;
-    section(ui, "Rotate & flip");
-    ui.horizontal_wrapped(|ui| {
-        for (c, label, tip) in [
-            (OrientCmd::RotateCcw, "Rotate left", "Rotate 90° counter-clockwise (Ctrl+Shift+R)"),
-            (OrientCmd::RotateCw, "Rotate right", "Rotate 90° clockwise (Ctrl+R)"),
-            (OrientCmd::FlipH, "Flip H", "Mirror left-right"),
-            (OrientCmd::FlipV, "Flip V", "Mirror top-bottom"),
-        ] {
-            if ui.button(label).on_hover_text(tip).clicked() {
-                cmd = Some(c);
+    let mut changed = false;
+    if !editor.selection().is_empty() {
+        theme::inspector_card(ui, |ui| {
+            changed |= object_ui(ui, editor);
+        });
+        ui.add_space(8.0);
+    }
+    if matches!(
+        editor.selected_object().map(|o| &o.kind),
+        Some(qs_doc::ObjectKind::Text { .. } | qs_doc::ObjectKind::Callout { .. })
+    ) {
+        theme::inspector_card(ui, |ui| {
+            changed |= text_ui(ui, editor);
+        });
+        ui.add_space(8.0);
+    }
+    theme::inspector_card(ui, |ui| {
+        let mut cmd = None;
+        section(ui, "Rotate & flip");
+        ui.horizontal_wrapped(|ui| {
+            for (c, label, tip) in [
+                (OrientCmd::RotateCcw, "Rotate left", "Rotate 90° counter-clockwise (Ctrl+Shift+R)"),
+                (OrientCmd::RotateCw, "Rotate right", "Rotate 90° clockwise (Ctrl+R)"),
+                (OrientCmd::FlipH, "Flip H", "Mirror left-right"),
+                (OrientCmd::FlipV, "Flip V", "Mirror top-bottom"),
+            ] {
+                if ui.button(label).on_hover_text(tip).clicked() {
+                    cmd = Some(c);
+                }
             }
+        });
+        if let Some(c) = cmd {
+            apply_orient(editor, c);
+            changed = true;
         }
     });
-    if let Some(c) = cmd {
-        apply_orient(editor, c);
-        changed = true;
-    }
-    effects_ui(ui, editor) || changed
+    ui.add_space(8.0);
+    theme::inspector_card(ui, |ui| {
+        changed |= effects_ui(ui, editor);
+    });
+    changed
 }
 
 /// Selection-level object controls: grouping and opacity.

@@ -172,11 +172,25 @@ pub fn render_top_bar(
     }
 
     // Canvas controls live beside history, away from the centered tool capsule.
+    let compact_canvas = bar_rect.width() < 880.0;
+    let canvas_w = if compact_canvas { 30.0 } else { 72.0 };
     let canvas_rect = Rect::from_min_size(
         Pos2::new(hist_rect.right() + 8.0, cy - hist_h * 0.5),
-        Vec2::new(72.0, hist_h),
+        Vec2::new(canvas_w, hist_h),
     );
-    if chrome_button(
+    if compact_canvas {
+        if icon_segment(
+            ui,
+            "tb_canvas",
+            canvas_rect,
+            ActionIcon::Canvas,
+            false,
+            true,
+            "Canvas… (Resize & background)",
+        ) {
+            res.canvas = true;
+        }
+    } else if chrome_button(
         ui,
         "tb_canvas",
         canvas_rect,
@@ -187,33 +201,15 @@ pub fn render_top_bar(
     ) {
         res.canvas = true;
     }
-
-    // Only show filename if window is very wide (> 1120px) so center tool capsule remains dead-center
-    if bar_rect.width() > 1260.0 {
-        if let Some(p) = doc_path {
-            if let Some(name) = p.file_name().and_then(|s| s.to_str()) {
-                let mut disp = name.to_string();
-                if disp.len() > 24 {
-                    disp.truncate(21);
-                    disp.push_str("...");
-                }
-                ui.painter().text(
-                    Pos2::new(hist_rect.right() + 14.0, cy),
-                    egui::Align2::LEFT_CENTER,
-                    &disp,
-                    FontId::proportional(11.5),
-                    text_tertiary(),
-                );
-            }
-        }
-    }
+    let left_end = canvas_rect.right();
 
     // --- Right Zone: Zoom Pill + Save / Export / Copy ---
-    let compact_actions = bar_rect.width() < 1060.0;
+    let compact_actions = bar_rect.width() < 1080.0;
+    let show_zoom_pill = bar_rect.width() >= 760.0;
     let zoom_w = 94.0;
     let save_w = if compact_actions { 30.0 } else { 64.0 };
     let export_w = if compact_actions { 30.0 } else { 72.0 };
-    let copy_w = 68.0;
+    let copy_w = if compact_actions { 54.0 } else { 68.0 };
     let btn_h = 30.0;
     let right_gap = 6.0;
 
@@ -235,75 +231,80 @@ pub fn render_top_bar(
         Pos2::new(x_cursor - save_w, cy - btn_h * 0.5),
         Vec2::new(save_w, btn_h),
     );
-    x_cursor = save_rect.left() - 10.0;
+    x_cursor = save_rect.left() - if show_zoom_pill { 10.0 } else { 0.0 };
 
-    let zoom_rect = Rect::from_min_size(
-        Pos2::new(x_cursor - zoom_w, cy - btn_h * 0.5),
-        Vec2::new(zoom_w, btn_h),
-    );
+    let right_start = if show_zoom_pill {
+        let zoom_rect = Rect::from_min_size(
+            Pos2::new(x_cursor - zoom_w, cy - btn_h * 0.5),
+            Vec2::new(zoom_w, btn_h),
+        );
 
-    // Zoom pill: [-] [100%] [+]
-    paint_segmented_track(ui.painter(), zoom_rect, RADIUS_TRACK);
-    let z_btn_w = 23.0;
-    let z_out_rect = Rect::from_min_size(
-        Pos2::new(zoom_rect.left() + 3.0, zoom_rect.top() + 3.0),
-        Vec2::new(z_btn_w, btn_h - 6.0),
-    );
-    let z_in_rect = Rect::from_min_size(
-        Pos2::new(zoom_rect.right() - 3.0 - z_btn_w, zoom_rect.top() + 3.0),
-        Vec2::new(z_btn_w, btn_h - 6.0),
-    );
-    let z_mid_rect = Rect::from_min_max(
-        Pos2::new(z_out_rect.right(), zoom_rect.top() + 3.0),
-        Pos2::new(z_in_rect.left(), zoom_rect.bottom() - 3.0),
-    );
+        // Zoom pill: [-] [100%] [+]
+        paint_segmented_track(ui.painter(), zoom_rect, RADIUS_TRACK);
+        let z_btn_w = 23.0;
+        let z_out_rect = Rect::from_min_size(
+            Pos2::new(zoom_rect.left() + 3.0, zoom_rect.top() + 3.0),
+            Vec2::new(z_btn_w, btn_h - 6.0),
+        );
+        let z_in_rect = Rect::from_min_size(
+            Pos2::new(zoom_rect.right() - 3.0 - z_btn_w, zoom_rect.top() + 3.0),
+            Vec2::new(z_btn_w, btn_h - 6.0),
+        );
+        let z_mid_rect = Rect::from_min_max(
+            Pos2::new(z_out_rect.right(), zoom_rect.top() + 3.0),
+            Pos2::new(z_in_rect.left(), zoom_rect.bottom() - 3.0),
+        );
 
-    if icon_segment(
-        ui,
-        "tb_zout",
-        z_out_rect,
-        ActionIcon::ZoomOut,
-        false,
-        true,
-        "Zoom Out",
-    ) {
-        res.zoom = ZoomCmd::Out;
-    }
+        if icon_segment(
+            ui,
+            "tb_zout",
+            z_out_rect,
+            ActionIcon::ZoomOut,
+            false,
+            true,
+            "Zoom Out",
+        ) {
+            res.zoom = ZoomCmd::Out;
+        }
 
-    let zoom_pct = format!("{:.0}%", zoom * 100.0);
-    let z_mid_id = ui.auto_id_with("tb_zfit");
-    let z_mid_resp = ui
-        .interact(z_mid_rect, z_mid_id, Sense::click())
-        .on_hover_text("Fit Document to Window");
-    if z_mid_resp.hovered() {
-        ui.painter().rect_filled(z_mid_rect, 4.0, bg_pill_hover());
-    }
-    ui.painter().text(
-        z_mid_rect.center(),
-        egui::Align2::CENTER_CENTER,
-        &zoom_pct,
-        FontId::proportional(11.5),
+        let zoom_pct = format!("{:.0}%", zoom * 100.0);
+        let z_mid_id = ui.auto_id_with("tb_zfit");
+        let z_mid_resp = ui
+            .interact(z_mid_rect, z_mid_id, Sense::click())
+            .on_hover_text("Fit Document to Window");
         if z_mid_resp.hovered() {
-            text_primary()
-        } else {
-            text_secondary()
-        },
-    );
-    if z_mid_resp.clicked() {
-        res.zoom = ZoomCmd::Fit;
-    }
+            ui.painter().rect_filled(z_mid_rect, 4.0, bg_pill_hover());
+        }
+        ui.painter().text(
+            z_mid_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            &zoom_pct,
+            FontId::proportional(11.5),
+            if z_mid_resp.hovered() {
+                text_primary()
+            } else {
+                text_secondary()
+            },
+        );
+        if z_mid_resp.clicked() {
+            res.zoom = ZoomCmd::Fit;
+        }
 
-    if icon_segment(
-        ui,
-        "tb_zin",
-        z_in_rect,
-        ActionIcon::ZoomIn,
-        false,
-        true,
-        "Zoom In",
-    ) {
-        res.zoom = ZoomCmd::In;
-    }
+        if icon_segment(
+            ui,
+            "tb_zin",
+            z_in_rect,
+            ActionIcon::ZoomIn,
+            false,
+            true,
+            "Zoom In",
+        ) {
+            res.zoom = ZoomCmd::In;
+        }
+        zoom_rect.left()
+    } else {
+        save_rect.left()
+    };
 
     // Secondary action buttons (Save / Export) + Primary CTA (Copy)
     if compact_actions {
@@ -366,7 +367,7 @@ pub fn render_top_bar(
         res.copy = true;
     }
 
-    // --- Center Zone: Tool Segmented Capsule ---
+    // --- Center Zone: Responsive Tool Segmented Capsule ---
     let tools_group1 = [
         (Tool::Select, "Select (V)"),
         (Tool::SelectRegion, "Select Region (M)"),
@@ -394,13 +395,73 @@ pub fn render_top_bar(
     let tool_w = 29.0;
     let tool_h = 26.0;
     let div_w = 9.0;
-    let n_tools = (tools_group1.len() + tools_group2.len() + tools_group3.len()) as f32;
-    let track_w = 6.0 + n_tools * tool_w + 2.0 * div_w;
+    let full_n = (tools_group1.len() + tools_group2.len() + tools_group3.len()) as f32;
+    let full_w = 6.0 + full_n * tool_w + 2.0 * div_w;
+    let avail_mid = (right_start - left_end - 20.0).max(200.0);
+    let compact_tools = avail_mid < full_w;
+
+    let primary_compact: [(Tool, &str); 11] = [
+        (Tool::Select, "Select (V)"),
+        (Tool::SelectRegion, "Select Region (M)"),
+        (Tool::Pen, "Pen (P)"),
+        (Tool::Highlighter, "Highlighter (H)"),
+        (Tool::Arrow, "Arrow (A)"),
+        (Tool::Rect, "Rectangle (R)"),
+        (Tool::Text, "Text (T)"),
+        (Tool::Callout, "Callout Bubble (C)"),
+        (Tool::Step, "Step Counter (S)"),
+        (Tool::Blur, "Blur / Pixelate (B)"),
+        (Tool::Crop, "Crop / Trim (K)"),
+    ];
+    let overflow_tools: [(Tool, &str); 6] = [
+        (Tool::Line, "Line (L)"),
+        (Tool::Ellipse, "Ellipse (O)"),
+        (Tool::Magnify, "Magnify Lens (I)"),
+        (Tool::Spotlight, "Spotlight (F)"),
+        (Tool::Stamp, "Stamp (G)"),
+        (Tool::Eraser, "Eraser (E)"),
+    ];
+
+    let more_w = 34.0;
+    let track_w = if compact_tools {
+        6.0 + (primary_compact.len() as f32) * 28.0 + more_w + 4.0
+    } else {
+        full_w
+    };
     let track_h = 32.0;
 
-    let center_x = bar_rect.center().x;
+    let ideal_center = bar_rect.center().x;
+    let min_center = left_end + 10.0 + track_w * 0.5;
+    let max_center = right_start - 10.0 - track_w * 0.5;
+    let center_x = if min_center <= max_center {
+        ideal_center.clamp(min_center, max_center)
+    } else {
+        (left_end + right_start) * 0.5
+    };
     let track_rect = Rect::from_center_size(Pos2::new(center_x, cy), Vec2::new(track_w, track_h));
     paint_segmented_track(ui.painter(), track_rect, RADIUS_TRACK);
+
+    // Draw filename only in the verified free gap between Canvas and the tool capsule
+    let name_gap = track_rect.left() - (left_end + 12.0);
+    if name_gap >= 96.0 {
+        if let Some(p) = doc_path {
+            if let Some(name) = p.file_name().and_then(|s| s.to_str()) {
+                let max_chars = ((name_gap - 12.0) / 6.5).floor().max(8.0) as usize;
+                let mut disp = name.to_string();
+                if disp.len() > max_chars {
+                    disp.truncate(max_chars.saturating_sub(3));
+                    disp.push_str("...");
+                }
+                ui.painter().text(
+                    Pos2::new(left_end + 12.0, cy),
+                    egui::Align2::LEFT_CENTER,
+                    &disp,
+                    FontId::proportional(11.5),
+                    text_tertiary(),
+                );
+            }
+        }
+    }
 
     let cur_tool = editor.tool();
     let mut tx = track_rect.left() + 3.0;
@@ -408,7 +469,63 @@ pub fn render_top_bar(
 
     let mut clicked_tool = None;
 
-    {
+    if compact_tools {
+        for &(t, tip) in &primary_compact {
+            let r = Rect::from_min_size(Pos2::new(tx, ty), Vec2::new(28.0, tool_h));
+            let active = cur_tool == t;
+            let id = ui.auto_id_with(("tb_tool", t));
+            let resp = ui.interact(r, id, Sense::click()).on_hover_text(tip);
+            paint_tool_segment(ui.painter(), r, active, resp.hovered());
+            let icon_col = if active {
+                Color32::WHITE
+            } else if resp.hovered() {
+                text_primary()
+            } else {
+                text_secondary()
+            };
+            icons::draw_tool_icon(ui.painter(), r.center(), t, icon_col);
+            if resp.clicked() {
+                clicked_tool = Some(t);
+            }
+            tx += 28.0;
+        }
+        let more_rect = Rect::from_min_size(Pos2::new(tx + 2.0, ty), Vec2::new(more_w, tool_h));
+        let overflow_active = overflow_tools.iter().any(|&(t, _)| t == cur_tool);
+        let more_id = ui.scope_id().with("tb_more_tools");
+        let more_resp = ui
+            .interact(more_rect, more_id, Sense::click())
+            .on_hover_text("More tools (Line, Ellipse, Magnify, Spotlight, Stamp, Eraser)");
+        paint_tool_segment(ui.painter(), more_rect, overflow_active, more_resp.hovered());
+        let more_col = if overflow_active {
+            Color32::WHITE
+        } else if more_resp.hovered() {
+            text_primary()
+        } else {
+            text_secondary()
+        };
+        ui.painter().text(
+            more_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            "•••",
+            FontId::proportional(12.0),
+            more_col,
+        );
+        let popup_id = ui.scope_id().with("tb_more_popup");
+        if more_resp.clicked() {
+            egui::Popup::toggle_id(ui.ctx(), popup_id);
+        }
+        egui::Popup::from_toggle_button_response(&more_resp)
+            .id(popup_id)
+            .show(|ui| {
+                ui.set_min_width(150.0);
+                for &(t, tip) in &overflow_tools {
+                    let selected = cur_tool == t;
+                    if ui.selectable_label(selected, tip).clicked() {
+                        clicked_tool = Some(t);
+                    }
+                }
+            });
+    } else {
         let mut check_group = |ui: &mut Ui, group: &[(Tool, &str)], x: &mut f32| {
             for &(t, tip) in group {
                 let r = Rect::from_min_size(Pos2::new(*x, ty), Vec2::new(tool_w, tool_h));

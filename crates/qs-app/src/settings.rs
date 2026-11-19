@@ -130,6 +130,7 @@ enum Hit {
     /// OCR page: index into qs_ocr::LANGS
     Lang(usize),
     /// OCR page: install the missing packs (linux)
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     OcrInstall,
     ViewAll,
     /// check for updates, or install when `update_ver` is set
@@ -211,6 +212,7 @@ pub struct Settings {
 #[derive(Clone)]
 enum InstallState {
     Running,
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     Ok(String),
     Failed(String),
 }
@@ -1063,7 +1065,9 @@ struct View<'a> {
     logo: Option<&'a image::RgbaImage>,
     ocr_langs: &'a [String],
     /// a pack install is running — the Install button locks + pulses
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     installing: bool,
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     install_msg: Option<&'a str>,
     /// outcome of the last manual clean-up
     clean_msg: Option<&'a str>,

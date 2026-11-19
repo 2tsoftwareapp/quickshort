@@ -86,6 +86,12 @@ pub struct Palette {
     /// selected segment / pill
     pub pill_top: u32,
     pub pill_bottom: u32,
+    /// active tool segment gradient in editor toolbar
+    pub tool_active_top: u32,
+    pub tool_active_bot: u32,
+    /// inspector card & bottom status bar surfaces
+    pub card_bg: u32,
+    pub status_bg: u32,
     /// secondary button, rest and hover
     pub btn_top: u32,
     pub btn_bottom: u32,
@@ -146,6 +152,10 @@ pub const DARK: Palette = Palette {
     track: 0x18181C,
     pill_top: 0x4C4C52,
     pill_bottom: 0x3C3C42,
+    tool_active_top: 0x224C80,
+    tool_active_bot: 0x163660,
+    card_bg: 0x26262C,
+    status_bg: 0x19191D,
     btn_top: 0x343439,
     btn_bottom: 0x2A2A2E,
     btn_hot_top: 0x404046,
@@ -199,6 +209,10 @@ pub const LIGHT: Palette = Palette {
     track: 0xDCDCE3,
     pill_top: 0xFFFFFF,
     pill_bottom: 0xF1F1F5,
+    tool_active_top: 0x2092FF,
+    tool_active_bot: 0x0070E0,
+    card_bg: 0xFFFFFF,
+    status_bg: 0xEAEAEF,
     btn_top: 0xFFFFFF,
     btn_bottom: 0xF0F0F4,
     btn_hot_top: 0xF6F6F9,

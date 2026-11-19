@@ -43,6 +43,8 @@ pub fn bg_toolbar_top() -> Color32 { c(qs_theme::pal().bar_top) }
 pub fn bg_toolbar_bot() -> Color32 { c(qs_theme::pal().bar_bottom) }
 pub fn bg_inspector_top() -> Color32 { c(qs_theme::pal().panel_top) }
 pub fn bg_inspector_bot() -> Color32 { c(qs_theme::pal().panel_bottom) }
+pub fn bg_card() -> Color32 { c(qs_theme::pal().card_bg) }
+pub fn bg_status() -> Color32 { c(qs_theme::pal().status_bg) }
 pub fn bg_pill_track() -> Color32 { c(qs_theme::pal().track) }
 pub fn bg_pill_hover() -> Color32 { c_a(qs_theme::pal().wash, 28) }
 pub fn bg_pill_active_top() -> Color32 { c(qs_theme::pal().pill_top) }
@@ -79,17 +81,15 @@ pub fn text_disabled() -> Color32 { c_a(qs_theme::pal().fg_faint, 110) }
 
 /// Ink for glyphs drawn on the success colour (check mark in its disc).
 pub fn on_success() -> Color32 {
-    if qs_theme::pal().dark { Color32::from_rgb(16, 20, 24) } else { Color32::WHITE }
+    if qs_theme::pal().dark { c(qs_theme::pal().hairline) } else { Color32::WHITE }
 }
 
-/// Selected tool segment: a deep accent tint in dark mode, the full accent
-/// gradient in light mode. The icon on it is white in both.
+/// Selected tool segment: reads theme-specific active tool gradient tokens.
 pub fn tool_active_gradient() -> (Color32, Color32) {
-    if qs_theme::pal().dark {
-        (Color32::from_rgb(34, 76, 128), Color32::from_rgb(22, 54, 96))
-    } else {
-        (accent_blue_top(), accent_blue_bot())
-    }
+    (
+        c(qs_theme::pal().tool_active_top),
+        c(qs_theme::pal().tool_active_bot),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -424,4 +424,41 @@ fn lerp_color(a: Color32, b: Color32, t: f32) -> Color32 {
         (a.b() as f32 + (b.b() as f32 - a.b() as f32) * t).round() as u8,
         (a.a() as f32 + (b.a() as f32 - a.a() as f32) * t).round() as u8,
     )
+}
+
+// ---------------------------------------------------------------------------
+// Studio Inspector Cards & Modal Chrome
+// ---------------------------------------------------------------------------
+
+/// Rounded card container for sidebar inspector sections.
+pub fn inspector_card(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
+    egui::Frame::NONE
+        .fill(bg_card())
+        .stroke(Stroke::new(1.0, border_subtle()))
+        .corner_radius(RADIUS_TRACK)
+        .inner_margin(egui::Margin::symmetric(10, 8))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            add_contents(ui);
+        });
+}
+
+/// Consistent uppercase-tracked section header inside inspector cards.
+pub fn section_header(ui: &mut egui::Ui, title: &str) {
+    ui.label(
+        egui::RichText::new(title.to_uppercase())
+            .size(10.5)
+            .strong()
+            .color(text_tertiary()),
+    );
+    ui.add_space(4.0);
+}
+
+/// Consistent modal window frame for editor dialogs.
+pub fn modal_frame() -> egui::Frame {
+    egui::Frame::window(&egui::Style::default())
+        .fill(bg_toolbar_bot())
+        .stroke(Stroke::new(1.0, border_hot()))
+        .corner_radius(RADIUS_WINDOW)
+        .inner_margin(egui::Margin::same(16))
 }

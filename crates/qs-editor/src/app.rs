@@ -2,7 +2,9 @@
 
 use crate::{
     canvas::{self, CanvasView},
-    clipboard, fonts,
+    clipboard,
+    filmstrip::Filmstrip,
+    fonts,
     icons::{self, ActionIcon},
     image_panel::{self, OrientCmd},
     recovery,
@@ -24,6 +26,15 @@ enum CloseDecision {
     Save,
     Discard,
     Cancel,
+}
+
+struct SavedDocSession {
+    editor: Editor,
+    base: RgbaImage,
+    doc_path: Option<PathBuf>,
+    view: CanvasView,
+    unsaved: bool,
+    saved_rev: u64,
 }
 
 pub struct EditorApp {
@@ -58,6 +69,12 @@ pub struct EditorApp {
     confirm_flatten: bool,
     canvas_insets: [f32; 4],
     canvas_background: u32,
+    show_layers: bool,
+    show_inspector: bool,
+    show_filmstrip: bool,
+    last_cursor_doc: Option<qs_doc::PointF>,
+    filmstrip: Filmstrip,
+    session_cache: std::collections::HashMap<PathBuf, SavedDocSession>,
     canvas_anchor: (usize, usize),
     layer_drag_id: Option<ObjectId>,
     alignment_open: bool,
@@ -100,6 +117,7 @@ impl EditorApp {
             .clamp(0.2, 1.0);
         view.zoom = initial_zoom;
 
+        let filmstrip = Filmstrip::new(doc_path.as_deref());
         let mut app = Self {
             editor: Editor::new(doc),
             base,
@@ -123,6 +141,12 @@ impl EditorApp {
             canvas_insets: [0.0; 4],
             canvas_background,
             canvas_anchor: (1, 1),
+            show_layers: true,
+            show_inspector: true,
+            show_filmstrip: true,
+            last_cursor_doc: None,
+            filmstrip,
+            session_cache: std::collections::HashMap::new(),
             layer_drag_id: None,
             alignment_open: false,
             styles: styles::Library::load(),
@@ -177,6 +201,7 @@ impl EditorApp {
         };
         let mut choice = None;
         egui::Window::new("Recover unsaved changes")
+            .frame(theme::modal_frame())
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
@@ -227,6 +252,51 @@ impl EditorApp {
         let name = self.display_name().to_string();
         self.show_toast(format!("Opened {name}"));
         Ok(())
+    }
+
+    /// Switch to another capture/document, preserving the current one in the
+    /// session cache (zoom, pan, unsaved state, and undo/redo history).
+    pub fn switch_to_path(&mut self, path: &Path) -> anyhow::Result<()> {
+        if self.doc_path.as_deref() == Some(path) {
+            return Ok(());
+        }
+        if let Some(cur_path) = self.doc_path.clone() {
+            let blank_doc = Document::new(1, 1, 1.0);
+            let old_editor = std::mem::replace(&mut self.editor, Editor::new(blank_doc));
+            let old_base = std::mem::replace(
+                &mut self.base,
+                RgbaImage::new(1, 1),
+            );
+            let old_view = std::mem::take(&mut self.view);
+            self.session_cache.insert(
+                cur_path.clone(),
+                SavedDocSession {
+                    editor: old_editor,
+                    base: old_base,
+                    doc_path: Some(cur_path),
+                    view: old_view,
+                    unsaved: self.unsaved,
+                    saved_rev: self.saved_rev,
+                },
+            );
+        }
+
+        if let Some(cached) = self.session_cache.remove(path) {
+            self.editor = cached.editor;
+            self.base = cached.base;
+            self.doc_path = cached.doc_path;
+            self.view = cached.view;
+            self.unsaved = cached.unsaved;
+            self.saved_rev = cached.saved_rev;
+            self.needs_render = true;
+            self.needs_initial_fit = false;
+            self.pending_recovery = None;
+            let name = self.display_name().to_string();
+            self.show_toast(format!("Switched to {name}"));
+            return Ok(());
+        }
+
+        self.load_path(path)
     }
 
     /// File name to show in titles, dialogs and toasts.
@@ -328,6 +398,7 @@ impl EditorApp {
         let mut open = self.confirm_flatten;
         let mut go = false;
         egui::Window::new("Flatten all annotations")
+            .frame(theme::modal_frame())
             .collapsible(false)
             .resizable(false)
             .open(&mut open)
@@ -364,6 +435,7 @@ impl EditorApp {
         let mut fit_to_objects = false;
         let mut trim = false;
         egui::Window::new("Canvas")
+            .frame(theme::modal_frame())
             .collapsible(false)
             .resizable(false)
             .open(&mut open)
@@ -567,6 +639,7 @@ impl EditorApp {
 
         let mut decision = None;
         egui::Window::new("Unsaved changes")
+            .frame(theme::modal_frame())
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
@@ -995,6 +1068,7 @@ impl eframe::App for EditorApp {
 
         self.recovery_guard(&ctx);
         self.close_guard(&ctx);
+        self.filmstrip.poll(&ctx);
         self.handle_text_events(&ctx);
         self.handle_shortcuts(&ctx);
 
@@ -1058,7 +1132,263 @@ impl eframe::App for EditorApp {
         self.canvas_dialog(&ctx);
         self.flatten_dialog(&ctx);
 
-        let layers_mutated = egui::Panel::left("layers_panel")
+        // Bottom Studio Status Bar (must be added before CentralPanel)
+        egui::Panel::bottom("status_bar")
+            .exact_size(26.0)
+            .frame(
+                egui::Frame::NONE
+                    .fill(theme::bg_status())
+                    .stroke(egui::Stroke::new(1.0, theme::border_dark_hairline()))
+                    .inner_margin(egui::Margin::symmetric(10, 3)),
+            )
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    if ui
+                        .selectable_label(self.show_layers, "Layers")
+                        .on_hover_text("Toggle Layers panel")
+                        .clicked()
+                    {
+                        self.show_layers = !self.show_layers;
+                    }
+                    if ui
+                        .selectable_label(self.show_inspector, "Inspector")
+                        .on_hover_text("Toggle Properties & Effects panel")
+                        .clicked()
+                    {
+                        self.show_inspector = !self.show_inspector;
+                    }
+                    if ui
+                        .selectable_label(self.show_filmstrip, "Tray")
+                        .on_hover_text("Toggle Recent Captures filmstrip")
+                        .clicked()
+                    {
+                        self.show_filmstrip = !self.show_filmstrip;
+                    }
+                    ui.separator();
+
+                    let view_r = self.view.display_rect();
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{} × {} px",
+                            view_r.w.round() as i32,
+                            view_r.h.round() as i32
+                        ))
+                        .size(11.0)
+                        .color(theme::text_secondary()),
+                    );
+
+                    if let Some(p) = self.last_cursor_doc {
+                        ui.separator();
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "X: {}  Y: {}",
+                                p.x.round() as i32,
+                                p.y.round() as i32
+                            ))
+                            .size(11.0)
+                            .color(theme::text_tertiary()),
+                        );
+                    }
+
+                    if let Some(b) = self.editor.selection_bounds() {
+                        ui.separator();
+                        let count = self.editor.selection().len();
+                        let label = if count > 1 {
+                            format!(
+                                "Sel ({count}): {}×{}",
+                                b.w.round() as i32,
+                                b.h.round() as i32
+                            )
+                        } else {
+                            format!("Sel: {}×{}", b.w.round() as i32, b.h.round() as i32)
+                        };
+                        ui.label(
+                            egui::RichText::new(label)
+                                .size(11.0)
+                                .color(theme::accent_blue_soft()),
+                        );
+                    }
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        for (label, target_zoom) in [("200%", 2.0f32), ("100%", 1.0), ("50%", 0.5)]
+                        {
+                            let active = (self.view.zoom - target_zoom).abs() < 0.01;
+                            if ui
+                                .selectable_label(active, egui::RichText::new(label).size(11.0))
+                                .clicked()
+                            {
+                                if let Some(rect) = self.last_canvas_rect {
+                                    self.view.zoom_at(
+                                        target_zoom / self.view.zoom.max(0.01),
+                                        rect.center(),
+                                        rect,
+                                    );
+                                }
+                            }
+                        }
+                        if ui
+                            .selectable_label(false, egui::RichText::new("Fit").size(11.0))
+                            .on_hover_text("Fit to window")
+                            .clicked()
+                        {
+                            self.apply_zoom_cmd(ZoomCmd::Fit);
+                        }
+                    });
+                });
+            });
+
+        // Collapsible Recent Captures Filmstrip (sits cleanly above Status Bar)
+        if self.show_filmstrip {
+            let mut switch_target: Option<PathBuf> = None;
+            let mut refresh_tray = false;
+            egui::Panel::bottom("filmstrip_panel")
+                .exact_size(94.0)
+                .frame(
+                    egui::Frame::NONE
+                        .fill(theme::bg_inspector_bot())
+                        .stroke(egui::Stroke::new(1.0, theme::border_dark_hairline()))
+                        .inner_margin(egui::Margin::symmetric(10, 6)),
+                )
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.vertical(|ui| {
+                            ui.set_width(58.0);
+                            ui.label(
+                                egui::RichText::new("RECENT")
+                                    .size(10.0)
+                                    .strong()
+                                    .color(theme::text_tertiary()),
+                            );
+                            ui.add_space(4.0);
+                            if ui
+                                .small_button("Refresh")
+                                .on_hover_text("Rescan recent captures")
+                                .clicked()
+                            {
+                                refresh_tray = true;
+                            }
+                        });
+                        ui.separator();
+                        if self.filmstrip.items.is_empty() {
+                            ui.centered_and_justified(|ui| {
+                                let msg = if self.filmstrip.scanning {
+                                    "Scanning recent captures…"
+                                } else {
+                                    "No recent captures found in ~/Pictures/quickshort"
+                                };
+                                ui.label(
+                                    egui::RichText::new(msg)
+                                        .size(11.5)
+                                        .color(theme::text_tertiary()),
+                                );
+                            });
+                        } else {
+                            egui::ScrollArea::horizontal()
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing.x = 8.0;
+                                        for item in &self.filmstrip.items {
+                                            let is_active =
+                                                self.doc_path.as_deref() == Some(item.path.as_path());
+                                            let is_dirty = is_active && self.unsaved
+                                                || self
+                                                    .session_cache
+                                                    .get(&item.path)
+                                                    .is_some_and(|s| s.unsaved);
+                                            let (rect, resp) = ui.allocate_exact_size(
+                                                Vec2::new(108.0, 78.0),
+                                                egui::Sense::click(),
+                                            );
+                                            let bg = if is_active {
+                                                theme::bg_pill_active_bot()
+                                            } else if resp.hovered() {
+                                                theme::bg_btn_secondary_hover_bot()
+                                            } else {
+                                                theme::bg_card()
+                                            };
+                                            let border = if is_active {
+                                                Stroke::new(1.5, theme::accent_blue())
+                                            } else if resp.hovered() {
+                                                Stroke::new(1.0, theme::border_hot())
+                                            } else {
+                                                Stroke::new(1.0, theme::border_subtle())
+                                            };
+                                            ui.painter().rect(
+                                                rect,
+                                                theme::RADIUS_PILL,
+                                                bg,
+                                                border,
+                                                StrokeKind::Inside,
+                                            );
+                                            if let Some(tex) = &item.texture {
+                                                let avail = rect.shrink2(Vec2::new(6.0, 14.0));
+                                                let img_rect = Rect::from_min_max(
+                                                    Pos2::new(avail.left(), rect.top() + 5.0),
+                                                    Pos2::new(avail.right(), rect.bottom() - 18.0),
+                                                );
+                                                let tsz = tex.size_vec2();
+                                                let s = (img_rect.width() / tsz.x.max(1.0))
+                                                    .min(img_rect.height() / tsz.y.max(1.0));
+                                                let fit = Rect::from_center_size(
+                                                    img_rect.center(),
+                                                    tsz * s,
+                                                );
+                                                ui.painter().image(
+                                                    tex.id(),
+                                                    fit,
+                                                    Rect::from_min_max(
+                                                        Pos2::ZERO,
+                                                        Pos2::new(1.0, 1.0),
+                                                    ),
+                                                    Color32::WHITE,
+                                                );
+                                            }
+                                            let mut name = item.label.clone();
+                                            if name.len() > 14 {
+                                                name.truncate(11);
+                                                name.push_str("…");
+                                            }
+                                            ui.painter().text(
+                                                Pos2::new(rect.center().x, rect.bottom() - 9.0),
+                                                egui::Align2::CENTER_CENTER,
+                                                &name,
+                                                FontId::proportional(10.0),
+                                                if is_active {
+                                                    theme::text_primary()
+                                                } else {
+                                                    theme::text_secondary()
+                                                },
+                                            );
+                                            if is_dirty {
+                                                ui.painter().circle_filled(
+                                                    Pos2::new(rect.right() - 7.0, rect.top() + 7.0),
+                                                    3.5,
+                                                    theme::amber_orange(),
+                                                );
+                                            }
+                                            if resp.on_hover_text(&item.label).clicked() {
+                                                switch_target = Some(item.path.clone());
+                                            }
+                                        }
+                                    });
+                                });
+                        }
+                    });
+                });
+            if refresh_tray {
+                self.filmstrip.refresh(self.doc_path.as_deref());
+            }
+            if let Some(target) = switch_target {
+                if let Err(e) = self.switch_to_path(&target) {
+                    self.show_toast(format!("Failed to open: {e}"));
+                }
+            }
+        }
+
+        let layers_mutated = if self.show_layers {
+            egui::Panel::left("layers_panel")
             .resizable(true)
             .default_size(208.0)
             .size_range(176.0..=300.0)
@@ -1175,13 +1505,17 @@ impl eframe::App for EditorApp {
                 });
                 changed
             })
-            .inner;
+            .inner
+        } else {
+            false
+        };
         if layers_mutated {
             self.touch();
         }
         if self.alignment_open {
             let mut open = self.alignment_open;
             egui::Window::new("Align & Distribute")
+                .frame(theme::modal_frame())
                 .open(&mut open)
                 .collapsible(false)
                 .resizable(false)
@@ -1220,32 +1554,35 @@ impl eframe::App for EditorApp {
             self.alignment_open = open;
         }
 
-        let panel_mutated = egui::Panel::right("image_panel")
-            .resizable(false)
-            .exact_size(236.0)
-            .frame(
-                egui::Frame::NONE
-                    .fill(theme::bg_inspector_bot())
-                    .inner_margin(egui::Margin::same(12)),
-            )
-            .show(ui, |ui| {
-                egui::ScrollArea::vertical()
-                    .show(ui, |ui| {
-                        let changed = image_panel::render(ui, &mut self.editor);
-                        ui.add_space(6.0);
-                        ui.separator();
-                        if ui
-                            .button("Flatten all…")
-                            .on_hover_text("Bake every annotation into the image")
-                            .clicked()
-                        {
-                            self.confirm_flatten = true;
-                        }
-                        changed
-                    })
-                    .inner
-            })
-            .inner;
+        let panel_mutated = if self.show_inspector {
+            egui::Panel::right("image_panel")
+                .resizable(false)
+                .exact_size(244.0)
+                .frame(
+                    egui::Frame::NONE
+                        .fill(theme::bg_inspector_bot())
+                        .inner_margin(egui::Margin::same(10)),
+                )
+                .show(ui, |ui| {
+                    egui::ScrollArea::vertical()
+                        .show(ui, |ui| {
+                            let changed = image_panel::render(ui, &mut self.editor);
+                            ui.add_space(8.0);
+                            if ui
+                                .button("Flatten all…")
+                                .on_hover_text("Bake every annotation into the image")
+                                .clicked()
+                            {
+                                self.confirm_flatten = true;
+                            }
+                            changed
+                        })
+                        .inner
+                })
+                .inner
+        } else {
+            false
+        };
         if panel_mutated {
             self.touch();
         }
@@ -1257,6 +1594,10 @@ impl eframe::App for EditorApp {
                     ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
                 self.last_canvas_rect = Some(screen_rect);
                 self.view.sync(self.editor.doc());
+                self.last_cursor_doc = ui
+                    .input(|i| i.pointer.latest_pos())
+                    .filter(|p| screen_rect.contains(*p))
+                    .map(|p| self.view.screen_to_doc(p, screen_rect));
 
                 if self.needs_initial_fit
                     && screen_rect.width() > 32.0
@@ -1552,6 +1893,12 @@ mod tests {
             needs_initial_fit: true,
             last_canvas_rect: None,
             saw_drag_press: false,
+            show_layers: true,
+            show_inspector: true,
+            show_filmstrip: true,
+            last_cursor_doc: None,
+            filmstrip: Filmstrip::new(None),
+            session_cache: std::collections::HashMap::new(),
             toast: None,
             canvas_dialog_open: false,
             confirm_flatten: false,
