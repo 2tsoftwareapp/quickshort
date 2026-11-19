@@ -113,6 +113,8 @@ pub struct EditorApp {
     canvas_anchor: (usize, usize),
     layer_drag_id: Option<ObjectId>,
     alignment_open: bool,
+    settings_open: bool,
+    prefs: crate::prefs::AppPrefs,
     /// Quick Styles: built-in presets + the user's saved ones.
     styles: styles::Library,
 }
@@ -194,6 +196,8 @@ impl EditorApp {
             session_cache: std::collections::HashMap::new(),
             layer_drag_id: None,
             alignment_open: false,
+            settings_open: false,
+            prefs: crate::prefs::AppPrefs::load(),
             styles: styles::Library::load(),
         };
         app.update_texture(&cc.egui_ctx);
@@ -925,6 +929,138 @@ impl EditorApp {
         }
     }
 
+    fn settings_dialog(&mut self, ctx: &egui::Context) {
+        if !self.settings_open {
+            return;
+        }
+        let mut open = self.settings_open;
+        let mut close_clicked = false;
+        let mut dirty = false;
+        egui::Window::new("Settings")
+            .frame(theme::modal_frame())
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_width(360.0)
+            .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.set_min_width(340.0);
+                crate::components::card(ui, |ui| {
+                    crate::components::section_header(ui, "Appearance");
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new("Theme")
+                                .size(qs_theme::font::BODY as f32 - 0.5)
+                                .color(theme::text_primary()),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            for (key, label) in qs_theme::THEMES.iter().rev() {
+                                let active = self.prefs.theme == *key;
+                                if crate::components::status_pill(ui, label, active, "") {
+                                    self.prefs.theme = (*key).into();
+                                    dirty = true;
+                                }
+                            }
+                        });
+                    });
+                    ui.add_space(qs_theme::space::SM as f32);
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new("Accent")
+                                .size(qs_theme::font::BODY as f32 - 0.5)
+                                .color(theme::text_primary()),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            for (name, rgb) in qs_theme::ACCENTS.iter().rev() {
+                                let (rect, resp) =
+                                    ui.allocate_exact_size(Vec2::splat(22.0), egui::Sense::click());
+                                let selected = self.prefs.accent == *name;
+                                theme::paint_color_swatch(
+                                    ui.painter(),
+                                    rect.center(),
+                                    7.0,
+                                    toolbar::rgb_to_color32(*rgb),
+                                    selected,
+                                    resp.hovered(),
+                                );
+                                if resp.on_hover_text(*name).clicked() {
+                                    self.prefs.accent = (*name).into();
+                                    dirty = true;
+                                }
+                            }
+                        });
+                    });
+                });
+
+                ui.add_space(qs_theme::space::MD as f32);
+                crate::components::card(ui, |ui| {
+                    crate::components::section_header(ui, "Capture Workflow");
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new("After capture")
+                                .size(qs_theme::font::BODY as f32 - 0.5)
+                                .color(theme::text_primary()),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let cur_label = crate::prefs::AFTER_CAPTURE_OPTIONS
+                                .iter()
+                                .find(|(k, _)| *k == self.prefs.after_capture)
+                                .map(|(_, l)| *l)
+                                .unwrap_or("Show Shelf");
+                            egui::ComboBox::from_id_salt("prefs_after_capture")
+                                .width(152.0)
+                                .selected_text(cur_label)
+                                .show_ui(ui, |ui| {
+                                    for (key, label) in crate::prefs::AFTER_CAPTURE_OPTIONS {
+                                        if ui
+                                            .selectable_value(
+                                                &mut self.prefs.after_capture,
+                                                (*key).to_owned(),
+                                                *label,
+                                            )
+                                            .changed()
+                                        {
+                                            dirty = true;
+                                        }
+                                    }
+                                });
+                        });
+                    });
+                    ui.add_space(qs_theme::space::XS as f32);
+                    if crate::components::switch_row(
+                        ui,
+                        &mut self.prefs.copy_after_save,
+                        "Copy captures after saving",
+                    ) {
+                        dirty = true;
+                    }
+                });
+
+                ui.add_space(qs_theme::space::MD as f32);
+                if crate::components::button(
+                    ui,
+                    "Done",
+                    crate::components::ButtonVariant::Primary,
+                    "",
+                )
+                .clicked()
+                {
+                    close_clicked = true;
+                }
+            });
+
+        if close_clicked {
+            open = false;
+        }
+        if dirty {
+            self.prefs.apply_live();
+            self.prefs.save();
+            theme::sync_egui_visuals(ctx);
+            self.show_toast("Preferences saved");
+        }
+        self.settings_open = open;
+    }
+
     fn combine_dialog(&mut self, ctx: &egui::Context) {
         if !self.combine_dialog_open {
             return;
@@ -1418,6 +1554,7 @@ impl eframe::App for EditorApp {
         self.flatten_dialog(&ctx);
         self.export_dialog(&ctx);
         self.combine_dialog(&ctx);
+        self.settings_dialog(&ctx);
 
         // Bottom Studio Status Bar (32px = 4px + 24px hit target + 4px, single top hairline)
         let status_resp = egui::Panel::bottom("status_bar")
@@ -1503,6 +1640,17 @@ impl eframe::App for EditorApp {
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if crate::components::status_pill(
+                            ui,
+                            "Settings",
+                            self.settings_open,
+                            "Appearance & capture preferences (config.toml)",
+                        ) {
+                            if !self.settings_open {
+                                self.prefs = crate::prefs::AppPrefs::load();
+                            }
+                            self.settings_open = !self.settings_open;
+                        }
                         let is_dark = qs_theme::pal().dark;
                         let theme_lbl = if is_dark { "Dark" } else { "Light" };
                         if crate::components::status_pill(
@@ -1511,7 +1659,10 @@ impl eframe::App for EditorApp {
                             false,
                             "Switch Light / Dark Glass theme",
                         ) {
-                            qs_theme::set_theme(if is_dark { "light" } else { "dark" });
+                            let next = if is_dark { "light" } else { "dark" };
+                            self.prefs.theme = next.into();
+                            self.prefs.apply_live();
+                            self.prefs.save();
                             theme::sync_egui_visuals(&ctx);
                         }
                         ui.separator();
@@ -2320,6 +2471,8 @@ mod tests {
             canvas_anchor: (1, 1),
             layer_drag_id: None,
             alignment_open: false,
+            settings_open: false,
+            prefs: crate::prefs::AppPrefs::default(),
             styles: styles::Library::default(),
         };
         app.editor.preview_effects(qs_doc::Effects {

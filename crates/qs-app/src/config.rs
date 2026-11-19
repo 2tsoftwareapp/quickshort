@@ -277,22 +277,11 @@ pub const POPUP_POS: &[(&str, &str)] = &[
     ("bottom-center", "Bottom center"),
 ];
 
-/// Accent presets offered by the Appearance page — (name, rgb).
-pub const ACCENTS: &[(&str, u32)] = &[
-    ("blue", 0x0A84FF),
-    ("purple", 0xBF5AF2),
-    ("pink", 0xFF375F),
-    ("orange", 0xFF9F0A),
-    ("green", 0x30D158),
-    ("gray", 0x98989D),
-];
+/// Accent presets offered by the Appearance page — (name, rgb), shared from `qs-theme`.
+pub const ACCENTS: &[(&str, u32)] = qs_theme::ACCENTS;
 
 pub fn accent_rgb(name: &str) -> u32 {
-    ACCENTS
-        .iter()
-        .find(|(n, _)| *n == name)
-        .map(|(_, rgb)| *rgb)
-        .unwrap_or(ACCENTS[0].1)
+    qs_theme::accent_by_name(name)
 }
 
 /// Accent variant that can carry white text or glyphs — the raw presets

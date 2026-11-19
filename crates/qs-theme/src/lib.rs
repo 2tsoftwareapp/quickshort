@@ -266,6 +266,25 @@ pub fn accent_soft() -> u32 {
     shift_rgb(accent(), 52)
 }
 
+/// Accent presets shared by Settings in `qs-app` and `qs-editor` — (key, rgb).
+pub const ACCENTS: &[(&str, u32)] = &[
+    ("blue", 0x007AFF),
+    ("purple", 0xAF52DE),
+    ("pink", 0xFF2D55),
+    ("orange", 0xFF9500),
+    ("green", 0x34C759),
+    ("gray", 0x8E8E93),
+];
+
+/// Look up an accent preset RGB by config key (falls back to `"blue"`).
+pub fn accent_by_name(name: &str) -> u32 {
+    ACCENTS
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map(|(_, rgb)| *rgb)
+        .unwrap_or(ACCENTS[0].1)
+}
+
 /// Set the process-wide accent colour (`0xRRGGBB`).
 pub fn set_accent(rgb: u32) {
     CURRENT_ACCENT.store(rgb & 0x00FF_FFFF, Ordering::Relaxed);

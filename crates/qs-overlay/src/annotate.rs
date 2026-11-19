@@ -30,7 +30,7 @@ pub const TEXT_SIZES: [(f64, &str); 6] = [
 /// Index into `TEXT_SIZES` armed by default — 14 px.
 pub const TEXT_SIZE_DEFAULT: usize = 1;
 pub const PIX_BLOCK: i32 = 8; // pixelate block, logical px
-const ACCENT: u32 = qs_theme::ACCENT_DEFAULT; // pixelate drag-preview outline
+// pixelate drag-preview outline reads dynamic `qs_theme::accent()` at draw time
 
 #[derive(Clone)]
 pub enum Annotation {
@@ -275,12 +275,12 @@ impl Annotation {
             let x1 = ((r.right() - vrect.x) as f64 * scale).round() as i32;
             let y1 = ((r.bottom() - vrect.y) as f64 * scale).round() as i32;
             for x in x0..x1 {
-                t.blend(x, y0, ACCENT, 0.9);
-                t.blend(x, y1 - 1, ACCENT, 0.9);
+                t.blend(x, y0, qs_theme::accent(), 0.9);
+                t.blend(x, y1 - 1, qs_theme::accent(), 0.9);
             }
             for y in y0..y1 {
-                t.blend(x0, y, ACCENT, 0.9);
-                t.blend(x1 - 1, y, ACCENT, 0.9);
+                t.blend(x0, y, qs_theme::accent(), 0.9);
+                t.blend(x1 - 1, y, qs_theme::accent(), 0.9);
             }
             return;
         }

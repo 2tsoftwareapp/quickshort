@@ -88,12 +88,13 @@ const OPTS: &[Item] = &[
     Item::Color(7),
 ];
 
-const R: f64 = 14.0; // button radius, logical px
-const GAP: f64 = 8.0; // between buttons
-const PAD: f64 = 6.0; // toolbar edge padding
-const EDGE_GAP: f64 = 4.0; // between selection edge and toolbar
-const STROKE: f64 = 1.8; // icon stroke width, logical px
-// HUD colours are `qs_theme::pal().hud / hud_hover / on_hud / shadow` — dark in every theme
+const R: f64 = 14.0; // button half-size (28×28px >= 24px hit target)
+const GAP: f64 = qs_theme::space::XS; // 4px grid between buttons
+const PAD: f64 = 6.0; // dock inner padding
+const EDGE_GAP: f64 = qs_theme::space::SM; // 8px between selection edge and dock
+const STROKE: f64 = 1.6; // SF-Symbol-weight icon stroke, logical px
+const DOCK_RAD: f64 = qs_theme::radius::LG; // 10px outer dock corner radius
+const BTN_RAD: f64 = qs_theme::radius::SM; // 6px concentric inner button radius
 
 
 pub struct Toolbar {
@@ -133,7 +134,7 @@ impl Toolbar {
             font_size: crate::annotate::TEXT_SIZE_DEFAULT as u8,
             can_undo: false,
             has_redo: false,
-            accent: crate::ACCENT,
+            accent: qs_theme::accent(),
         };
         tb.layout(sel, mr, opts);
         tb
@@ -254,8 +255,7 @@ impl Toolbar {
         p.x >= r.x && p.x < r.right() && p.y >= r.y && p.y < r.bottom()
     }
 
-    /// Paint buttons into the physical surface. `vrect` = this window's monitor
-    /// rect in virtual coords; parts outside this monitor clip naturally.
+    /// Paint unified Liquid Glass dock + buttons into the physical surface.
     pub fn paint(&self, buf: &mut [u32], sw: usize, sh: usize, vrect: Rect, scale: f64) {
         let mut cv = Canvas {
             buf,
@@ -263,14 +263,37 @@ impl Toolbar {
             h: sh,
             scale,
         };
+        let dock_x = self.rect.x as f64 - vrect.x as f64;
+        let dock_y = self.rect.y as f64 - vrect.y as f64;
+        let dock_w = self.rect.w as f64;
+        let dock_h = self.rect.h as f64;
+        paint_dock(&mut cv, dock_x, dock_y, dock_w, dock_h);
+
+        // Subtle vertical dividers between Tools | History | Actions (horizontal layout)
+        if dock_w >= dock_h && self.buttons.len() >= 11 {
+            for split_idx in [8usize, 10usize] {
+                let prev = self.buttons[split_idx - 1].1;
+                let next = self.buttons[split_idx].1;
+                let lx = (prev.right() as f64 + next.x as f64) * 0.5 - vrect.x as f64;
+                let ly0 = prev.y as f64 + 5.0 - vrect.y as f64;
+                let ly1 = prev.bottom() as f64 - 5.0 - vrect.y as f64;
+                let px = (lx * scale).round() as i32;
+                for py in (ly0 * scale) as i32..=(ly1 * scale) as i32 {
+                    cv.blend(px, py, qs_theme::pal().border, 0.85);
+                }
+            }
+        }
+
         for (i, (item, r)) in self.buttons.iter().enumerate() {
             let cx = (r.x as f64 + r.w as f64 / 2.0 - vrect.x as f64) * scale;
             let cy = (r.y as f64 + r.h as f64 / 2.0 - vrect.y as f64) * scale;
+            let is_primary = matches!(item, Item::Act(Action::Copy));
             let active = matches!(item, Item::Tool(t) if self.tool == Some(*t))
                 || matches!(item, Item::Size(s) if self.size == *s)
                 || matches!(item, Item::Color(c) if self.color == *c)
                 || matches!(item, Item::FontSize(s) if self.font_size == *s)
-                || matches!(item, Item::Bold) && self.bold;
+                || matches!(item, Item::Bold) && self.bold
+                || is_primary;
             let enabled = match item {
                 Item::Undo => self.can_undo,
                 Item::Redo => self.has_redo,
@@ -291,6 +314,50 @@ impl Toolbar {
     }
 }
 
+/// Paint the unified Apple Liquid Glass floating dock behind all toolbar items.
+fn paint_dock(cv: &mut Canvas, x: f64, y: f64, w: f64, h: f64) {
+    let s = cv.scale;
+    let p = qs_theme::pal();
+    let cx = x + w * 0.5;
+    let cy = y + h * 0.5;
+    let hw = w * 0.5;
+    let hh = h * 0.5;
+    let sh_pad = 12.0;
+    let x0 = ((x - sh_pad) * s).floor() as i32;
+    let y0 = ((y - sh_pad) * s).floor() as i32;
+    let x1 = ((x + w + sh_pad) * s).ceil() as i32;
+    let y1 = ((y + h + sh_pad) * s).ceil() as i32;
+    let sh_alpha = if p.dark { 0.42 } else { 0.16 };
+
+    for py in y0..=y1 {
+        for px in x0..=x1 {
+            let lx = (px as f64 + 0.5) / s;
+            let ly = (py as f64 + 0.5) / s;
+            // Smooth ambient + key drop shadow
+            let sd = rrect_sdf(lx, ly, cx, cy + 3.0, hw, hh, DOCK_RAD);
+            if sd > 0.0 && sd < sh_pad {
+                let t = 1.0 - sd / sh_pad;
+                cv.blend(px, py, p.shadow, sh_alpha * t * t);
+            }
+            // Dock surface + 1px hairline border
+            let d = rrect_sdf(lx, ly, cx, cy, hw, hh, DOCK_RAD);
+            let cov = fill_cov(d, s);
+            if cov > 0.0 {
+                cv.blend(px, py, p.popover, cov * 0.96);
+            }
+            let bc = stroke_cov(d, 1.0, s);
+            if bc > 0.0 {
+                cv.blend(px, py, p.popover_border, bc);
+            }
+            // Subtle top specular highlight
+            if ly >= y + 0.5 && ly <= y + 1.5 && lx >= x + DOCK_RAD && lx <= x + w - DOCK_RAD {
+                let spec_a = if p.dark { 0.10 } else { 0.72 };
+                cv.blend(px, py, p.on_accent, spec_a);
+            }
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn paint_button(
     cv: &mut Canvas,
@@ -304,42 +371,33 @@ fn paint_button(
     accent: u32,
 ) {
     let scale = cv.scale;
-    // bbox covers button + soft shadow falloff
-    let pad = (STROKE * scale).ceil() as i32 + (4.0 * scale).ceil() as i32 + 2;
+    let p = qs_theme::pal();
+    let pad = (STROKE * scale).ceil() as i32 + 2;
     let r = rad.ceil() as i32 + pad;
+    let half = rad / scale;
+    let has_fill = active || hovered;
     let bg = if active {
         accent
     } else if hovered {
-        qs_theme::pal().hud_hover
+        p.control
     } else {
-        qs_theme::pal().hud
+        p.popover
     };
-    let fg_a = if enabled { 1.0 } else { 0.35 };
+    let fg_col = if active { p.on_accent } else { p.fg };
+    let fg_a = if enabled { 1.0 } else { 0.32 };
     for y in (cy as i32 - r)..=(cy as i32 + r) {
         for x in (cx as i32 - r)..=(cx as i32 + r) {
             let px = x as f64 + 0.5 - cx;
             let py = y as f64 + 0.5 - cy;
-            // soft shadow: disc shifted down, alpha falls off over ~4 phys px
-            let sd = px.hypot(py - 1.5 * scale) - rad;
-            if sd > 0.0 {
-                let a = 0.24 * (1.0 - sd / (4.0 * scale)).clamp(0.0, 1.0);
-                if a > 0.0 {
-                    cv.blend(x, y, qs_theme::pal().shadow, a);
-                }
-            }
-            // disc + hairline rim
-            let d = px.hypot(py) - rad;
-            let a = (0.5 - d).clamp(0.0, 1.0);
-            if a > 0.0 {
-                cv.blend(x, y, bg, a * 0.9);
-                let rim = (0.5 - d.abs()).clamp(0.0, 1.0);
-                if rim > 0.0 {
-                    cv.blend(x, y, qs_theme::pal().on_hud, rim * 0.12);
-                }
-            }
-            // icon — work in logical units, sdf * scale -> physical coverage
             let (lx, ly) = (px / scale, py / scale);
-            draw_icon(cv, x, y, lx, ly, scale, bg, fg_a, item);
+            if has_fill {
+                let d = rrect_sdf(lx, ly, 0.0, 0.0, half, half, BTN_RAD);
+                let a = fill_cov(d, scale);
+                if a > 0.0 {
+                    cv.blend(x, y, bg, a);
+                }
+            }
+            draw_icon(cv, x, y, lx, ly, scale, bg, fg_col, fg_a, item);
         }
     }
 }
@@ -354,6 +412,7 @@ fn draw_icon(
     ly: f64,
     scale: f64,
     bg: u32,
+    fg_col: u32,
     fg_a: f64,
     item: Item,
 ) {
@@ -377,7 +436,7 @@ fn draw_icon(
             }
             let a = stroke(d, 1.6) * fg_a;
             if a > 0.0 {
-                cv.blend(x, y, qs_theme::pal().on_hud, a);
+                cv.blend(x, y, fg_col, a);
             }
         }
         Item::Tool(Tool::Pen) => {
@@ -386,7 +445,7 @@ fn draw_icon(
                 seg_sdf(lx, ly, -4.6, 4.6, 1.4, -1.4).min(seg_sdf(lx, ly, 1.4, -1.4, 4.6, -4.4));
             let a = stroke(d, 2.4) * fg_a;
             if a > 0.0 {
-                cv.blend(x, y, qs_theme::pal().on_hud, a);
+                cv.blend(x, y, fg_col, a);
             }
         }
         Item::Tool(Tool::Arrow) => {
@@ -396,19 +455,19 @@ fn draw_icon(
                 .min(seg_sdf(lx, ly, 3.6, -3.6, 3.6, 0.6));
             let a = stroke(d, STROKE) * fg_a;
             if a > 0.0 {
-                cv.blend(x, y, qs_theme::pal().on_hud, a);
+                cv.blend(x, y, fg_col, a);
             }
         }
         Item::Tool(Tool::Rect) => {
             let a = stroke(rrect_sdf(lx, ly, 0.0, 0.0, 4.8, 3.8, 0.9), STROKE) * fg_a;
             if a > 0.0 {
-                cv.blend(x, y, qs_theme::pal().on_hud, a);
+                cv.blend(x, y, fg_col, a);
             }
         }
         Item::Tool(Tool::Ellipse) => {
             let a = stroke(ellipse_sdf(lx, ly, 0.0, 0.0, 5.0, 3.8), STROKE) * fg_a;
             if a > 0.0 {
-                cv.blend(x, y, qs_theme::pal().on_hud, a);
+                cv.blend(x, y, fg_col, a);
             }
         }
         Item::Tool(Tool::Marker) => {
@@ -416,12 +475,12 @@ fn draw_icon(
             let d = seg_sdf(lx, ly, -4.8, 4.4, 1.6, -2.0);
             let a = stroke(d, 3.4) * fg_a;
             if a > 0.0 {
-                cv.blend(x, y, qs_theme::pal().on_hud, a);
+                cv.blend(x, y, fg_col, a);
             }
             let d2 = seg_sdf(lx, ly, 1.6, -2.0, 4.8, -5.2);
             let a = stroke(d2, STROKE) * fg_a;
             if a > 0.0 {
-                cv.blend(x, y, qs_theme::pal().on_hud, a);
+                cv.blend(x, y, fg_col, a);
             }
         }
         Item::Tool(Tool::Text) | Item::Bold | Item::FontSize(_) => {
@@ -441,7 +500,7 @@ fn draw_icon(
                 0.0
             };
             if a > 0.0 {
-                cv.blend(x, y, qs_theme::pal().on_hud, a);
+                cv.blend(x, y, fg_col, a);
             }
         }
         Item::Tool(Tool::Pixelate) => {
@@ -452,7 +511,7 @@ fn draw_icon(
                 .min(rrect_sdf(lx, ly, 2.9, 2.9, 1.7, 1.7, 0.4));
             let a = fill_cov(d, scale) * fg_a;
             if a > 0.0 {
-                cv.blend(x, y, qs_theme::pal().on_hud, a);
+                cv.blend(x, y, fg_col, a);
             }
         }
         Item::Undo | Item::Redo => {
@@ -474,7 +533,7 @@ fn draw_icon(
             d = d.min(seg_sdf(lx, ly, prev.0, prev.1, prev.0 - 2.0 * m, prev.1));
             let a = stroke(d, STROKE) * fg_a;
             if a > 0.0 {
-                cv.blend(x, y, qs_theme::pal().on_hud, a);
+                cv.blend(x, y, fg_col, a);
             }
         }
         Item::Size(s) => {
@@ -483,7 +542,7 @@ fn draw_icon(
             let d = lx.hypot(ly) - r;
             let a = fill_cov(d, scale) * fg_a;
             if a > 0.0 {
-                cv.blend(x, y, qs_theme::pal().on_hud, a);
+                cv.blend(x, y, fg_col, a);
             }
         }
         Item::Color(c) => {
@@ -503,7 +562,7 @@ fn draw_icon(
             }
             let a = stroke(d_back, STROKE).max(stroke(d_front, STROKE)) * fg_a;
             if a > 0.0 {
-                cv.blend(x, y, qs_theme::pal().on_hud, a);
+                cv.blend(x, y, fg_col, a);
             }
         }
         Item::Act(Action::Ocr) => {
@@ -513,7 +572,7 @@ fn draw_icon(
                 .min(seg_sdf(lx, ly, -5.75, 4.5, 1.5, 4.5));
             let a = stroke(d, STROKE) * fg_a;
             if a > 0.0 {
-                cv.blend(x, y, qs_theme::pal().on_hud, a);
+                cv.blend(x, y, fg_col, a);
             }
         }
         Item::Act(Action::Share) => {
@@ -526,7 +585,7 @@ fn draw_icon(
                 .min(seg_sdf(lx, ly, 0.0, -6.5, 3.0, -3.5));
             let a = stroke(d, STROKE) * fg_a;
             if a > 0.0 {
-                cv.blend(x, y, qs_theme::pal().on_hud, a);
+                cv.blend(x, y, fg_col, a);
             }
         }
         Item::Act(Action::Scroll) => {
@@ -537,7 +596,7 @@ fn draw_icon(
                 .min(seg_sdf(lx, ly, 2.2, 0.3, 0.0, 2.5));
             let a = stroke(d_page, STROKE).max(stroke(d_arrow, STROKE)) * fg_a;
             if a > 0.0 {
-                cv.blend(x, y, qs_theme::pal().on_hud, a);
+                cv.blend(x, y, fg_col, a);
             }
         }
         Item::Act(Action::Record) => {
@@ -548,7 +607,7 @@ fn draw_icon(
                 .min(seg_sdf(lx, ly, 6.4, 3.6, 3.8, 2.4));
             let a = stroke(d_body.min(d_lens), STROKE) * fg_a;
             if a > 0.0 {
-                cv.blend(x, y, qs_theme::pal().on_hud, a);
+                cv.blend(x, y, fg_col, a);
             }
         }
         Item::Act(Action::Edit) => {
@@ -559,7 +618,7 @@ fn draw_icon(
             let halo = fill_cov(d_pen - 2.6, scale);
             let a = (stroke(d_frame, STROKE) * (1.0 - halo)).max(stroke(d_pen, 2.2)) * fg_a;
             if a > 0.0 {
-                cv.blend(x, y, qs_theme::pal().on_hud, a);
+                cv.blend(x, y, fg_col, a);
             }
         }
         Item::Act(Action::Save) => {
@@ -572,7 +631,7 @@ fn draw_icon(
                 .min(seg_sdf(lx, ly, 3.2, -1.5, 0.0, 1.5));
             let a = stroke(d, STROKE) * fg_a;
             if a > 0.0 {
-                cv.blend(x, y, qs_theme::pal().on_hud, a);
+                cv.blend(x, y, fg_col, a);
             }
         }
     }

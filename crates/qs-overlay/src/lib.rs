@@ -31,7 +31,9 @@ pub use toolbar::{Action, Item, Tool};
 
 const MIN_SELECT: u32 = 3;
 /// Fallback accent — `Prefs::default` and the pixelate preview outline.
-const ACCENT: u32 = qs_theme::ACCENT_DEFAULT;
+pub(crate) fn accent_default() -> u32 {
+    qs_theme::accent()
+}
 
 /// User-tunable overlay behaviour — the host maps its config into this at
 /// `spawn` so a session never reads files itself.
@@ -62,7 +64,7 @@ pub struct Keys {
 impl Default for Prefs {
     fn default() -> Self {
         Self {
-            accent: ACCENT,
+            accent: accent_default(),
             keys: Keys {
                 save: 's',
                 copy: 'c',

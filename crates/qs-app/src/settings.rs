@@ -239,7 +239,7 @@ impl Settings {
             }
         }
         let win = Rc::new(el.create_window(attrs).context("settings window")?);
-        force_dark_appearance(&win);
+        sync_window_appearance(&win);
         // an accessory app opened from the tray stays deactivated — without
         // activation the window never gets KeyboardInput, so the hotkey
         // recorder looks dead
@@ -642,6 +642,7 @@ impl Settings {
             Some(Hit::Swatch(i)) => {
                 if let Some((name, _)) = ACCENTS.get(i) {
                     cfg.accent = (*name).into();
+                    qs_theme::set_accent(cfg.accent_rgb());
                     self.dirty = true;
                     return Some(SettingsEvent::Changed);
                 }
@@ -1549,7 +1550,7 @@ fn draw_appearance(p: &Painter, cv: &mut Canvas, v: &View, hits: &mut Vec<(LRect
         (c.0, c.1 + ROW, c.2, ROW),
         Glyph::Display,
         "Mode",
-        "Dark Studio or Light surfaces",
+        "Light Glass or Dark Glass surfaces",
     );
     let tb = slot(c.1 + ROW, 160.0);
     let label = THEMES
@@ -2163,12 +2164,12 @@ fn refocus(win: &Window) {
     win.request_redraw();
 }
 
-/// Pin the window to the Dark appearance — the settings UI is
-/// modern dark studio-themed, matching the macOS dark titlebar.
+/// Match the macOS window titlebar appearance to the active Light / Dark Glass theme.
 #[cfg(target_os = "macos")]
-fn force_dark_appearance(win: &Window) {
+fn sync_window_appearance(win: &Window) {
     use objc2_app_kit::{
-        NSAppearance, NSAppearanceCustomization, NSAppearanceNameDarkAqua, NSView,
+        NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua,
+        NSView,
     };
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     let Ok(handle) = win.window_handle() else {
@@ -2181,13 +2182,16 @@ fn force_dark_appearance(win: &Window) {
     let Some(ns_win) = ns_view.window() else {
         return;
     };
-    unsafe {
-        ns_win.setAppearance(NSAppearance::appearanceNamed(NSAppearanceNameDarkAqua).as_deref());
-    }
+    let name = if pal().dark {
+        unsafe { NSAppearanceNameDarkAqua }
+    } else {
+        unsafe { NSAppearanceNameAqua }
+    };
+    ns_win.setAppearance(NSAppearance::appearanceNamed(name).as_deref());
 }
 
 #[cfg(not(target_os = "macos"))]
-fn force_dark_appearance(_win: &Window) {}
+fn sync_window_appearance(_win: &Window) {}
 
 /// right-trimmed tail for display
 fn tail(s: &str, n: usize) -> String {
