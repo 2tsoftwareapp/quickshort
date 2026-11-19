@@ -169,7 +169,8 @@ pub fn paint_workspace(painter: &egui::Painter, rect: Rect) {
 
 /// Paint multi-layer macOS soft drop shadow behind the document bounds.
 pub fn paint_document_shadow(painter: &egui::Painter, doc_screen_rect: Rect) {
-    theme::paint_soft_shadow(painter, doc_screen_rect, 2.0, 9.0, 26.0, 128);
+    let alpha = if qs_theme::pal().dark { 108 } else { 36 };
+    theme::paint_soft_shadow(painter, doc_screen_rect, 4.0, 6.0, 22.0, alpha);
 }
 
 /// Paint a checkerboard pattern strictly inside `doc_rect` for transparent areas.

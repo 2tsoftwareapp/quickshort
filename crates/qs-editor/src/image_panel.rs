@@ -1,8 +1,12 @@
 //! Right-hand "Image" panel: whole-image operations (rotate / flip).
 
-use crate::theme;
+use crate::{
+    components::{self, TransformIcon},
+    theme,
+};
 use eframe::egui::{self, RichText};
 use qs_edit::Editor;
+use qs_theme::space;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OrientCmd {
@@ -23,28 +27,28 @@ pub fn apply_orient(editor: &mut Editor, cmd: OrientCmd) {
 }
 
 fn section(ui: &mut egui::Ui, title: &str) {
-    theme::section_header(ui, title);
+    components::section_header(ui, title);
 }
 
 /// Draw the panel contents; returns true when the document changed.
 pub fn render(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
     let mut changed = false;
     if !editor.selection().is_empty() {
-        theme::inspector_card(ui, |ui| {
+        components::card(ui, |ui| {
             changed |= object_ui(ui, editor);
         });
-        ui.add_space(8.0);
+        ui.add_space(space::MD as f32);
     }
     if matches!(
         editor.selected_object().map(|o| &o.kind),
         Some(qs_doc::ObjectKind::Text { .. } | qs_doc::ObjectKind::Callout { .. })
     ) {
-        theme::inspector_card(ui, |ui| {
+        components::card(ui, |ui| {
             changed |= text_ui(ui, editor);
         });
-        ui.add_space(8.0);
+        ui.add_space(space::MD as f32);
     }
-    theme::inspector_card(ui, |ui| {
+    components::card(ui, |ui| {
         section(ui, "Transform");
         let cmds = [
             OrientCmd::RotateCcw,
@@ -52,21 +56,21 @@ pub fn render(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
             OrientCmd::FlipH,
             OrientCmd::FlipV,
         ];
-        if let Some(idx) = theme::segmented_icon_bar(
+        if let Some(idx) = components::segmented_icon_bar(
             ui,
             &[
-                (theme::TransformIcon::RotateCcw, "Rotate 90° counter-clockwise (Ctrl+Shift+R)"),
-                (theme::TransformIcon::RotateCw, "Rotate 90° clockwise (Ctrl+R)"),
-                (theme::TransformIcon::FlipH, "Flip horizontal"),
-                (theme::TransformIcon::FlipV, "Flip vertical"),
+                (TransformIcon::RotateCcw, "Rotate 90° counter-clockwise (Ctrl+Shift+R)"),
+                (TransformIcon::RotateCw, "Rotate 90° clockwise (Ctrl+R)"),
+                (TransformIcon::FlipH, "Flip horizontal"),
+                (TransformIcon::FlipV, "Flip vertical"),
             ],
         ) {
             apply_orient(editor, cmds[idx]);
             changed = true;
         }
     });
-    ui.add_space(8.0);
-    theme::inspector_card(ui, |ui| {
+    ui.add_space(space::MD as f32);
+    components::card(ui, |ui| {
         changed |= effects_ui(ui, editor);
     });
     changed
@@ -130,7 +134,7 @@ fn text_ui(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
     let mut changed = false;
     let mut current = style;
     let mut on = current.outline.is_some();
-    if theme::toggle_switch(ui, &mut on, "Outline") {
+    if components::switch_row(ui, &mut on, "Outline") {
         current.outline = on.then(|| qs_doc::TextOutline {
             width: (style.px * 0.14).clamp(1.0, 6.0),
             rgb: qs_edit::contrast(style.rgb),
@@ -190,7 +194,7 @@ fn color(ui: &mut egui::Ui, label: &str, value: &mut u32) {
 
 fn toggle<T: Default>(ui: &mut egui::Ui, label: &str, effect: &mut Option<T>) {
     let mut on = effect.is_some();
-    if theme::toggle_switch(ui, &mut on, label) {
+    if components::switch_row(ui, &mut on, label) {
         *effect = on.then(T::default);
     }
 }
@@ -202,7 +206,7 @@ fn effects_ui(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
     if let Some(b) = &mut effects.border {
         ui.add(egui::Slider::new(&mut b.width, 0.0..=256.0).text("Width"));
         ui.add(egui::Slider::new(&mut b.radius, 0.0..=1024.0).text("Corner radius"));
-        theme::toggle_switch(ui, &mut b.inset, "Inside image");
+        components::switch_row(ui, &mut b.inset, "Inside image");
         color(ui, "Border color", &mut b.color);
     }
     toggle(ui, "Drop shadow", &mut effects.shadow);

@@ -1419,37 +1419,42 @@ impl eframe::App for EditorApp {
         self.export_dialog(&ctx);
         self.combine_dialog(&ctx);
 
-        // Bottom Studio Status Bar (must be added before CentralPanel)
-        egui::Panel::bottom("status_bar")
-            .exact_size(30.0)
+        // Bottom Studio Status Bar (32px = 4px + 24px hit target + 4px, single top hairline)
+        let status_resp = egui::Panel::bottom("status_bar")
+            .exact_size(32.0)
             .frame(
                 egui::Frame::NONE
                     .fill(theme::bg_status())
-                    .stroke(egui::Stroke::new(1.0, theme::border_dark_hairline()))
-                    .inner_margin(egui::Margin::symmetric(12, 5)),
+                    .inner_margin(egui::Margin::symmetric(
+                        qs_theme::space::MD as i8,
+                        qs_theme::space::XS as i8,
+                    )),
             )
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 8.0;
-                    if ui
-                        .selectable_label(self.show_layers, "Layers")
-                        .on_hover_text("Toggle Layers panel")
-                        .clicked()
-                    {
+                    ui.spacing_mut().item_spacing.x = qs_theme::space::XS as f32;
+                    if crate::components::status_pill(
+                        ui,
+                        "Layers",
+                        self.show_layers,
+                        "Toggle Layers panel",
+                    ) {
                         self.show_layers = !self.show_layers;
                     }
-                    if ui
-                        .selectable_label(self.show_inspector, "Inspector")
-                        .on_hover_text("Toggle Properties & Effects panel")
-                        .clicked()
-                    {
+                    if crate::components::status_pill(
+                        ui,
+                        "Inspector",
+                        self.show_inspector,
+                        "Toggle Properties & Effects panel",
+                    ) {
                         self.show_inspector = !self.show_inspector;
                     }
-                    if ui
-                        .selectable_label(self.show_filmstrip, "Tray")
-                        .on_hover_text("Toggle Recent Captures filmstrip")
-                        .clicked()
-                    {
+                    if crate::components::status_pill(
+                        ui,
+                        "Tray",
+                        self.show_filmstrip,
+                        "Toggle Recent Captures filmstrip",
+                    ) {
                         self.show_filmstrip = !self.show_filmstrip;
                     }
                     ui.separator();
@@ -1461,7 +1466,7 @@ impl eframe::App for EditorApp {
                             view_r.w.round() as i32,
                             view_r.h.round() as i32
                         ))
-                        .size(11.0)
+                        .size(qs_theme::font::SMALL as f32)
                         .color(theme::text_secondary()),
                     );
 
@@ -1473,7 +1478,7 @@ impl eframe::App for EditorApp {
                                 p.x.round() as i32,
                                 p.y.round() as i32
                             ))
-                            .size(11.0)
+                            .size(qs_theme::font::SMALL as f32)
                             .color(theme::text_tertiary()),
                         );
                     }
@@ -1492,7 +1497,7 @@ impl eframe::App for EditorApp {
                         };
                         ui.label(
                             egui::RichText::new(label)
-                                .size(11.0)
+                                .size(qs_theme::font::SMALL as f32)
                                 .color(theme::accent_blue_soft()),
                         );
                     }
@@ -1500,11 +1505,12 @@ impl eframe::App for EditorApp {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let is_dark = qs_theme::pal().dark;
                         let theme_lbl = if is_dark { "Dark" } else { "Light" };
-                        if ui
-                            .selectable_label(false, egui::RichText::new(theme_lbl).size(11.0))
-                            .on_hover_text("Switch Light / Dark Glass theme")
-                            .clicked()
-                        {
+                        if crate::components::status_pill(
+                            ui,
+                            theme_lbl,
+                            false,
+                            "Switch Light / Dark Glass theme",
+                        ) {
                             qs_theme::set_theme(if is_dark { "light" } else { "dark" });
                             theme::sync_egui_visuals(&ctx);
                         }
@@ -1512,10 +1518,7 @@ impl eframe::App for EditorApp {
                         for (label, target_zoom) in [("200%", 2.0f32), ("100%", 1.0), ("50%", 0.5)]
                         {
                             let active = (self.view.zoom - target_zoom).abs() < 0.01;
-                            if ui
-                                .selectable_label(active, egui::RichText::new(label).size(11.0))
-                                .clicked()
-                            {
+                            if crate::components::status_pill(ui, label, active, "") {
                                 if let Some(rect) = self.last_canvas_rect {
                                     self.view.zoom_at(
                                         target_zoom / self.view.zoom.max(0.01),
@@ -1525,16 +1528,17 @@ impl eframe::App for EditorApp {
                                 }
                             }
                         }
-                        if ui
-                            .selectable_label(false, egui::RichText::new("Fit").size(11.0))
-                            .on_hover_text("Fit to window")
-                            .clicked()
-                        {
+                        if crate::components::status_pill(ui, "Fit", false, "Fit to window") {
                             self.apply_zoom_cmd(ZoomCmd::Fit);
                         }
                     });
                 });
             });
+        crate::components::panel_divider(
+            ui,
+            status_resp.response.rect,
+            crate::components::DividerEdge::Top,
+        );
 
         // Collapsible Recent Captures Filmstrip (sits cleanly above Status Bar)
         if self.show_filmstrip {
@@ -1718,14 +1722,13 @@ impl eframe::App for EditorApp {
         }
 
         let layers_mutated = if self.show_layers {
-            egui::Panel::left("layers_panel")
+            let layers_resp = egui::Panel::left("layers_panel")
             .resizable(true)
             .default_size(204.0)
             .size_range(176.0..=300.0)
             .frame(
                 egui::Frame::NONE
                     .fill(theme::bg_inspector_top())
-                    .stroke(egui::Stroke::new(1.0, theme::border_dark_hairline()))
                     .inner_margin(egui::Margin::same(12)),
             )
             .show(ui, |ui| {
@@ -1789,11 +1792,14 @@ impl eframe::App for EditorApp {
                     })
                     .collect();
                 if rows.is_empty() {
-                    theme::empty_state(
+                    if crate::components::empty_state(
                         ui,
                         "No annotations yet",
-                        "Pick a tool above and\ndrag on the canvas",
-                    );
+                        "Pick a tool above or start\nwith an arrow callout",
+                        Some("Draw Arrow"),
+                    ) {
+                        self.editor.set_tool(Tool::Arrow);
+                    }
                 } else {
                     egui::ScrollArea::vertical().show(ui, |ui| {
                     for (index, id, label, visible, locked, grouped, selected) in rows {
@@ -1853,8 +1859,13 @@ impl eframe::App for EditorApp {
                     });
                 }
                 changed
-            })
-            .inner
+            });
+            let lr = layers_resp.response.rect;
+            ui.painter().line_segment(
+                [lr.right_top(), lr.right_bottom()],
+                egui::Stroke::new(1.0, theme::border_dark_hairline()),
+            );
+            layers_resp.inner
         } else {
             false
         };
@@ -1904,26 +1915,25 @@ impl eframe::App for EditorApp {
         }
 
         let panel_mutated = if self.show_inspector {
-            egui::Panel::right("image_panel")
+            let panel_resp = egui::Panel::right("image_panel")
                 .resizable(false)
                 .exact_size(256.0)
                 .frame(
                     egui::Frame::NONE
                         .fill(theme::bg_inspector_top())
-                        .stroke(egui::Stroke::new(1.0, theme::border_dark_hairline()))
                         .inner_margin(egui::Margin::same(12)),
                 )
                 .show(ui, |ui| {
                     egui::ScrollArea::vertical()
                         .show(ui, |ui| {
                             let changed = image_panel::render(ui, &mut self.editor);
-                            ui.add_space(10.0);
-                            theme::inspector_card(ui, |ui| {
-                                theme::section_header(ui, "Quick Actions");
-                                if theme::tonal_button(
+                            ui.add_space(qs_theme::space::MD as f32);
+                            crate::components::card(ui, |ui| {
+                                crate::components::section_header(ui, "Quick Actions");
+                                if crate::components::button(
                                     ui,
                                     "Simplify UI",
-                                    true,
+                                    crate::components::ButtonVariant::Tonal,
                                     "Convert UI text/controls into clean editable blocks",
                                 )
                                 .clicked()
@@ -1936,11 +1946,11 @@ impl eframe::App for EditorApp {
                                         self.show_toast("No UI blocks detected");
                                     }
                                 }
-                                ui.add_space(6.0);
-                                if theme::tonal_button(
+                                ui.add_space(qs_theme::space::SM as f32);
+                                if crate::components::button(
                                     ui,
                                     "Flatten all…",
-                                    false,
+                                    crate::components::ButtonVariant::Secondary,
                                     "Bake every annotation into the image",
                                 )
                                 .clicked()
@@ -1951,8 +1961,13 @@ impl eframe::App for EditorApp {
                             changed
                         })
                         .inner
-                })
-                .inner
+                });
+            let pr = panel_resp.response.rect;
+            ui.painter().line_segment(
+                [pr.left_top(), pr.left_bottom()],
+                egui::Stroke::new(1.0, theme::border_dark_hairline()),
+            );
+            panel_resp.inner
         } else {
             false
         };

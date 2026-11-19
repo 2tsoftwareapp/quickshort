@@ -4,19 +4,19 @@ use eframe::egui::{self, Color32, CornerRadius, Pos2, Rect, Stroke, StrokeKind, 
 use eframe::epaint::{Mesh, Vertex, WHITE_UV};
 
 // ---------------------------------------------------------------------------
-// Design Tokens
+// Design Tokens (derived strictly from `qs_theme::{space, radius, font}`)
 // ---------------------------------------------------------------------------
 
 pub const TOOLBAR_HEIGHT: f32 = 48.0;
 pub const INSPECTOR_HEIGHT: f32 = 40.0;
-pub const CHROME_PAD_X: f32 = 14.0;
+pub const CHROME_PAD_X: f32 = qs_theme::space::MD as f32;
 
-pub const RADIUS_WINDOW: CornerRadius = CornerRadius::same(14);
-pub const RADIUS_CARD: CornerRadius = CornerRadius::same(12);
-pub const RADIUS_TRACK: CornerRadius = CornerRadius::same(10);
-pub const RADIUS_PILL: CornerRadius = CornerRadius::same(8);
-pub const RADIUS_BTN: CornerRadius = CornerRadius::same(8);
-pub const RADIUS_CAPSULE: CornerRadius = CornerRadius::same(99);
+pub const RADIUS_WINDOW: CornerRadius = CornerRadius::same(qs_theme::radius::XL as u8);
+pub const RADIUS_CARD: CornerRadius = CornerRadius::same(qs_theme::radius::LG as u8);
+pub const RADIUS_TRACK: CornerRadius = CornerRadius::same(qs_theme::radius::MD as u8);
+pub const RADIUS_PILL: CornerRadius = CornerRadius::same(qs_theme::radius::SM as u8);
+pub const RADIUS_BTN: CornerRadius = CornerRadius::same(qs_theme::radius::MD as u8);
+pub const RADIUS_CAPSULE: CornerRadius = CornerRadius::same(255);
 
 // Colour tokens are functions, not consts: they read `qs_theme::pal()` at
 // draw time so a theme switch applies on the next frame. Hex lives only in
@@ -230,17 +230,18 @@ pub fn paint_soft_shadow(
     blur_outer: f32,
     max_alpha: u8,
 ) {
-    let steps = 4;
+    let steps = 8;
     for s in 0..steps {
         let t = (s + 1) as f32 / steps as f32;
         let spread = blur_inner + (blur_outer - blur_inner) * t;
         let shadow_rect = rect
-            .translate(Vec2::new(0.0, 1.5 + spread * 0.4))
-            .expand(spread * 0.5);
-        let alpha = ((max_alpha as f32) * (1.0 - t * 0.75) / (steps as f32)).round() as u8;
+            .translate(Vec2::new(0.0, 2.0 + spread * 0.32))
+            .expand(spread * 0.45);
+        let falloff = (1.0 - t * 0.85).powi(2);
+        let alpha = ((max_alpha as f32) * falloff / (steps as f32) * 2.2).round().clamp(1.0, 255.0) as u8;
         painter.rect_filled(
             shadow_rect,
-            CornerRadius::same((corner_radius + spread * 0.35).round() as u8),
+            CornerRadius::same((corner_radius + spread * 0.4).round() as u8),
             Color32::from_rgba_unmultiplied(0, 0, 0, alpha),
         );
     }
@@ -253,19 +254,12 @@ pub fn paint_soft_shadow(
 pub fn paint_chrome_bar(
     painter: &egui::Painter,
     rect: Rect,
-    top: Color32,
+    _top: Color32,
     bot: Color32,
-    is_top_level: bool,
+    _is_top_level: bool,
 ) {
-    paint_rect_v_gradient(painter, rect, top, bot);
-
-    if is_top_level {
-        painter.line_segment(
-            [rect.left_top(), rect.right_top()],
-            Stroke::new(1.0, highlight_top()),
-        );
-    }
-
+    // Flat crisp surface + single 1px bottom hairline (baseline-ui + Apple HIG)
+    painter.rect_filled(rect, CornerRadius::ZERO, bot);
     painter.line_segment(
         [rect.left_bottom(), rect.right_bottom()],
         Stroke::new(1.0, border_dark_hairline()),
@@ -297,35 +291,13 @@ pub fn paint_pill_button(
     }
 
     if is_accent {
-        let top = if hovered {
-            c(qs_theme::ACCENT_TOP_HOT)
-        } else {
-            accent_blue_top()
-        };
-        let bot = if hovered {
-            c(qs_theme::ACCENT_BOTTOM_HOT)
-        } else {
-            accent_blue_bot()
-        };
-        paint_rounded_v_gradient(painter, rect, cr, top, bot);
-        painter.rect_stroke(
-            rect,
-            cr,
-            Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 55)),
-            StrokeKind::Inside,
-        );
+        let fill = if hovered { accent_blue_top() } else { accent_blue() };
+        painter.rect_filled(rect, cr, fill);
         return;
     }
 
     if active {
-        paint_rounded_v_gradient(painter, rect, cr, bg_pill_active_top(), bg_pill_active_bot());
-        painter.line_segment(
-            [
-                Pos2::new(rect.left() + 2.0, rect.top() + 0.5),
-                Pos2::new(rect.right() - 2.0, rect.top() + 0.5),
-            ],
-            Stroke::new(1.0, highlight_top()),
-        );
+        painter.rect_filled(rect, cr, bg_card());
         painter.rect_stroke(
             rect,
             cr,
@@ -350,34 +322,15 @@ pub fn paint_secondary_button(
         return;
     }
 
-    let (top, bot, border) = if hovered && danger_hover {
-        (
-            c(qs_theme::pal().danger_top),
-            c(qs_theme::pal().danger_bottom),
-            c(qs_theme::pal().danger_edge),
-        )
+    let (fill, border) = if hovered && danger_hover {
+        (c(qs_theme::pal().danger_top), c(qs_theme::pal().danger_edge))
     } else if hovered {
-        (
-            bg_btn_secondary_hover_top(),
-            bg_btn_secondary_hover_bot(),
-            border_hot(),
-        )
+        (bg_btn_secondary_hover_bot(), border_hot())
     } else {
-        (
-            bg_btn_secondary_top(),
-            bg_btn_secondary_bot(),
-            border_subtle(),
-        )
+        (bg_btn_secondary_bot(), border_subtle())
     };
 
-    paint_rounded_v_gradient(painter, rect, cr, top, bot);
-    painter.line_segment(
-        [
-            Pos2::new(rect.left() + 2.0, rect.top() + 0.5),
-            Pos2::new(rect.right() - 2.0, rect.top() + 0.5),
-        ],
-        Stroke::new(1.0, highlight_top()),
-    );
+    painter.rect_filled(rect, cr, fill);
     painter.rect_stroke(rect, cr, Stroke::new(1.0, border), StrokeKind::Inside);
 }
 
@@ -389,45 +342,46 @@ pub fn paint_color_swatch(
     selected: bool,
     hovered: bool,
 ) {
+    let shadow_a = if qs_theme::pal().dark { 72 } else { 26 };
     painter.circle_filled(
-        center + Vec2::new(0.0, 1.0),
+        center + Vec2::new(0.0, 0.8),
         radius,
-        Color32::from_rgba_unmultiplied(0, 0, 0, 110),
+        Color32::from_rgba_unmultiplied(0, 0, 0, shadow_a),
     );
     painter.circle_filled(center, radius, color);
 
-    // Subtle dark hairline inner ring on light colors so white stands out
+    // Subtle dark hairline inner ring on light colors so white stands out cleanly
     let lum = 0.299 * color.r() as f32 + 0.587 * color.g() as f32 + 0.114 * color.b() as f32;
     if lum > 190.0 {
         painter.circle_stroke(
             center,
             radius - 0.5,
-            Stroke::new(1.0, Color32::from_rgba_unmultiplied(0, 0, 0, 60)),
+            Stroke::new(0.85, Color32::from_rgba_unmultiplied(0, 0, 0, 52)),
         );
     }
 
     if selected {
         painter.circle_stroke(
             center,
-            radius + 3.2,
-            Stroke::new(2.0, accent_blue()),
+            radius + 2.5,
+            Stroke::new(1.75, accent_blue()),
         );
         painter.circle_stroke(
             center,
-            radius + 1.2,
-            Stroke::new(1.2, bg_inspector_bot()),
+            radius + 0.9,
+            Stroke::new(1.0, bg_inspector_top()),
         );
     } else if hovered {
         painter.circle_stroke(
             center,
-            radius + 2.4,
-            Stroke::new(1.5, c_a(qs_theme::pal().wash, 160)),
+            radius + 2.0,
+            Stroke::new(1.25, c_a(qs_theme::pal().wash, 120)),
         );
     } else {
         painter.circle_stroke(
             center,
             radius,
-            Stroke::new(1.0, c_a(qs_theme::pal().wash, 45)),
+            Stroke::new(0.75, c_a(qs_theme::pal().wash, 35)),
         );
     }
 }
@@ -443,312 +397,24 @@ fn lerp_color(a: Color32, b: Color32, t: f32) -> Color32 {
 }
 
 // ---------------------------------------------------------------------------
-// Liquid Glass Inspector Cards, Switches, Segmented Controls & Modal Chrome
+// Modal Chrome & Component Bridges (components live in `crate::components`)
 // ---------------------------------------------------------------------------
 
-/// Elevated Liquid Glass card container for sidebar inspector sections.
+/// Rounded card container for sidebar inspector sections (delegates to `components::card`).
 pub fn inspector_card(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
-    let resp = egui::Frame::NONE
-        .fill(bg_card())
-        .stroke(Stroke::new(1.0, border_subtle()))
-        .corner_radius(RADIUS_CARD)
-        .inner_margin(egui::Margin::symmetric(12, 10))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            add_contents(ui);
-        });
-    // Specular top-edge highlight for Liquid Glass depth
-    let r = resp.response.rect;
-    let spec = if qs_theme::pal().dark {
-        Color32::from_white_alpha(18)
-    } else {
-        Color32::from_white_alpha(200)
-    };
-    ui.painter().line_segment(
-        [
-            Pos2::new(r.left() + 12.0, r.top() + 0.75),
-            Pos2::new(r.right() - 12.0, r.top() + 0.75),
-        ],
-        Stroke::new(1.0, spec),
-    );
+    crate::components::card(ui, add_contents);
 }
 
-/// Consistent uppercase-tracked section header inside inspector cards.
+/// Consistent uppercase section header (delegates to `components::section_header`).
 pub fn section_header(ui: &mut egui::Ui, title: &str) {
-    ui.label(
-        egui::RichText::new(title.to_uppercase())
-            .size(10.0)
-            .strong()
-            .color(text_tertiary()),
-    );
-    ui.add_space(6.0);
+    crate::components::section_header(ui, title);
 }
 
-/// Apple macOS / Liquid Glass pill toggle switch row (label on left, 32×18
-/// capsule switch on right). Matches the custom SDF switch in `qs-app`.
-pub fn toggle_switch(ui: &mut egui::Ui, on: &mut bool, label: &str) -> bool {
-    let row_h = 24.0;
-    let width = ui.available_width().max(120.0);
-    let (row_rect, resp) = ui.allocate_exact_size(Vec2::new(width, row_h), egui::Sense::click());
-    let mut changed = false;
-    if resp.clicked() {
-        *on = !*on;
-        changed = true;
-    }
-
-    let painter = ui.painter();
-    if resp.hovered() {
-        painter.rect_filled(
-            row_rect.expand2(Vec2::new(4.0, 1.0)),
-            RADIUS_PILL,
-            bg_pill_hover(),
-        );
-    }
-
-    // Label on the left
-    painter.text(
-        Pos2::new(row_rect.left(), row_rect.center().y),
-        egui::Align2::LEFT_CENTER,
-        label,
-        egui::FontId::proportional(12.5),
-        if *on { text_primary() } else { text_secondary() },
-    );
-
-    // 32×18 capsule switch on the right
-    let sw_w = 32.0;
-    let sw_h = 18.0;
-    let sw_rect = Rect::from_min_size(
-        Pos2::new(row_rect.right() - sw_w, row_rect.center().y - sw_h * 0.5),
-        Vec2::new(sw_w, sw_h),
-    );
-    let track_fill = if *on { accent_blue() } else { switch_off() };
-    painter.rect_filled(sw_rect, RADIUS_CAPSULE, track_fill);
-    if !*on {
-        painter.rect_stroke(
-            sw_rect,
-            RADIUS_CAPSULE,
-            Stroke::new(0.75, border_subtle()),
-            StrokeKind::Inside,
-        );
-    }
-
-    // Crisp white sliding knob with subtle drop shadow
-    let knob_r = 7.0;
-    let knob_x = if *on {
-        sw_rect.right() - 9.0
-    } else {
-        sw_rect.left() + 9.0
-    };
-    let knob_center = Pos2::new(knob_x, sw_rect.center().y);
-    painter.circle_filled(
-        knob_center + Vec2::new(0.0, 0.8),
-        knob_r,
-        Color32::from_rgba_unmultiplied(0, 0, 0, 36),
-    );
-    painter.circle_filled(knob_center, knob_r, on_accent());
-
-    if resp.hovered() {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-    }
-    changed
-}
-
-/// Sleek Liquid Glass pill button (accent-tinted tonal or subtle secondary).
-pub fn tonal_button(ui: &mut egui::Ui, label: &str, accent_tint: bool, tip: &str) -> egui::Response {
-    let h = 28.0;
-    let width = ui.available_width();
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, h), egui::Sense::click());
-    let hovered = resp.hovered();
-    let painter = ui.painter();
-
-    if accent_tint {
-        let fill = if hovered {
-            accent_alpha(if qs_theme::pal().dark { 58 } else { 36 })
-        } else {
-            accent_alpha(if qs_theme::pal().dark { 36 } else { 22 })
-        };
-        painter.rect_filled(rect, RADIUS_BTN, fill);
-        painter.rect_stroke(
-            rect,
-            RADIUS_BTN,
-            Stroke::new(1.0, accent_alpha(if hovered { 140 } else { 80 })),
-            StrokeKind::Inside,
-        );
-        painter.text(
-            rect.center(),
-            egui::Align2::CENTER_CENTER,
-            label,
-            egui::FontId::proportional(12.0),
-            if qs_theme::pal().dark { accent_blue_soft() } else { accent_blue() },
-        );
-    } else {
-        paint_secondary_button(painter, rect, RADIUS_BTN, hovered, true, false);
-        painter.text(
-            rect.center(),
-            egui::Align2::CENTER_CENTER,
-            label,
-            egui::FontId::proportional(12.0),
-            text_primary(),
-        );
-    }
-    if hovered {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-    }
-    if tip.is_empty() {
-        resp
-    } else {
-        resp.on_hover_text(tip)
-    }
-}
-
-/// Vector icon kinds for the Transform segmented bar (drawn with `egui::Painter`
-/// so they render razor-sharp like SF Symbols on every OS without font fallback).
-#[derive(Clone, Copy)]
-pub enum TransformIcon {
-    RotateCcw,
-    RotateCw,
-    FlipH,
-    FlipV,
-}
-
-fn draw_transform_icon(painter: &egui::Painter, c: Pos2, icon: TransformIcon, color: Color32) {
-    let st = Stroke::new(1.5, color);
-    match icon {
-        TransformIcon::RotateCcw | TransformIcon::RotateCw => {
-            let cw = matches!(icon, TransformIcon::RotateCw);
-            let r = 5.2;
-            let steps = 14;
-            let (a0, a1) = if cw {
-                (-std::f32::consts::FRAC_PI_2 - 0.3, std::f32::consts::PI * 1.15)
-            } else {
-                (-std::f32::consts::FRAC_PI_2 + 0.3, -std::f32::consts::PI * 1.85)
-            };
-            let pts: Vec<Pos2> = (0..=steps)
-                .map(|i| {
-                    let a = a0 + (a1 - a0) * (i as f32 / steps as f32);
-                    Pos2::new(c.x + r * a.cos(), c.y + r * a.sin())
-                })
-                .collect();
-            painter.add(egui::Shape::line(pts, st));
-            // Arrowhead at top of arc
-            let tip = Pos2::new(c.x + if cw { 1.8 } else { -1.8 }, c.y - r);
-            let dx = if cw { -3.2 } else { 3.2 };
-            painter.line_segment([tip, Pos2::new(tip.x + dx, tip.y - 2.2)], st);
-            painter.line_segment([tip, Pos2::new(tip.x + dx, tip.y + 2.5)], st);
-        }
-        TransformIcon::FlipH => {
-            // Vertical center axis + two mirrored triangles
-            painter.line_segment([Pos2::new(c.x, c.y - 6.0), Pos2::new(c.x, c.y + 6.0)], Stroke::new(1.1, divider_vertical()));
-            let left = vec![
-                Pos2::new(c.x - 2.0, c.y - 4.5),
-                Pos2::new(c.x - 6.5, c.y + 4.5),
-                Pos2::new(c.x - 2.0, c.y + 4.5),
-            ];
-            painter.add(egui::Shape::convex_polygon(left, color, Stroke::NONE));
-            let right = vec![
-                Pos2::new(c.x + 2.0, c.y - 4.5),
-                Pos2::new(c.x + 6.5, c.y + 4.5),
-                Pos2::new(c.x + 2.0, c.y + 4.5),
-            ];
-            painter.add(egui::Shape::closed_line(right, Stroke::new(1.3, color)));
-        }
-        TransformIcon::FlipV => {
-            // Horizontal center axis + two mirrored triangles
-            painter.line_segment([Pos2::new(c.x - 6.0, c.y), Pos2::new(c.x + 6.0, c.y)], Stroke::new(1.1, divider_vertical()));
-            let top = vec![
-                Pos2::new(c.x - 4.5, c.y - 2.0),
-                Pos2::new(c.x + 4.5, c.y - 6.5),
-                Pos2::new(c.x + 4.5, c.y - 2.0),
-            ];
-            painter.add(egui::Shape::convex_polygon(top, color, Stroke::NONE));
-            let bot = vec![
-                Pos2::new(c.x - 4.5, c.y + 2.0),
-                Pos2::new(c.x + 4.5, c.y + 6.5),
-                Pos2::new(c.x + 4.5, c.y + 2.0),
-            ];
-            painter.add(egui::Shape::closed_line(bot, Stroke::new(1.3, color)));
-        }
-    }
-}
-
-/// Single-row Liquid Glass segmented vector-icon bar (used for Transform).
-pub fn segmented_icon_bar(ui: &mut egui::Ui, items: &[(TransformIcon, &str)]) -> Option<usize> {
-    if items.is_empty() {
-        return None;
-    }
-    let h = 30.0;
-    let total_w = ui.available_width();
-    let (track_rect, _) = ui.allocate_exact_size(Vec2::new(total_w, h), egui::Sense::hover());
-    let painter = ui.painter();
-    paint_segmented_track(painter, track_rect, RADIUS_PILL);
-
-    let inner = track_rect.shrink(2.0);
-    let seg_w = inner.width() / items.len() as f32;
-    let mut clicked = None;
-
-    for (i, (icon, tip)) in items.iter().enumerate() {
-        let seg_rect = Rect::from_min_size(
-            Pos2::new(inner.left() + i as f32 * seg_w, inner.top()),
-            Vec2::new(seg_w, inner.height()),
-        );
-        let resp = ui.interact(seg_rect, ui.scope_id().with(("seg_icon", i)), egui::Sense::click());
-        let hovered = resp.hovered();
-        if hovered {
-            painter.rect_filled(seg_rect, CornerRadius::same(6), bg_btn_secondary_top());
-            painter.rect_stroke(
-                seg_rect,
-                CornerRadius::same(6),
-                Stroke::new(0.75, border_hot()),
-                StrokeKind::Inside,
-            );
-            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-        }
-        if i > 0 {
-            painter.line_segment(
-                [
-                    Pos2::new(seg_rect.left(), inner.top() + 5.0),
-                    Pos2::new(seg_rect.left(), inner.bottom() - 5.0),
-                ],
-                Stroke::new(1.0, divider_vertical()),
-            );
-        }
-        draw_transform_icon(
-            painter,
-            seg_rect.center(),
-            *icon,
-            if hovered { text_primary() } else { text_secondary() },
-        );
-        if resp.on_hover_text(*tip).clicked() {
-            clicked = Some(i);
-        }
-    }
-    clicked
-}
-
-/// Centered subtle empty state for panels (Layers, Recent).
-pub fn empty_state(ui: &mut egui::Ui, title: &str, subtitle: &str) {
-    ui.add_space(24.0);
-    ui.vertical_centered(|ui| {
-        ui.label(
-            egui::RichText::new(title)
-                .size(12.5)
-                .strong()
-                .color(text_secondary()),
-        );
-        ui.add_space(3.0);
-        ui.label(
-            egui::RichText::new(subtitle)
-                .size(11.0)
-                .color(text_tertiary()),
-        );
-    });
-}
-
-/// Consistent modal window frame for editor dialogs.
+/// Consistent modal window frame for editor dialogs (`radius::XL`, `space::LG` padding).
 pub fn modal_frame() -> egui::Frame {
     egui::Frame::window(&egui::Style::default())
         .fill(bg_card())
         .stroke(Stroke::new(1.0, border_hot()))
         .corner_radius(RADIUS_WINDOW)
-        .inner_margin(egui::Margin::same(16))
+        .inner_margin(egui::Margin::same(qs_theme::space::LG as i8))
 }

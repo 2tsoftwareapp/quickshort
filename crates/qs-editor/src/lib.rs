@@ -3,6 +3,7 @@
 pub mod app;
 pub mod canvas;
 pub mod clipboard;
+pub mod components;
 pub mod filmstrip;
 pub mod fonts;
 pub mod icons;

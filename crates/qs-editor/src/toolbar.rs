@@ -5,7 +5,7 @@ use crate::{
     theme::*,
 };
 use eframe::egui::{
-    self, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2,
+    self, Color32, FontId, Pos2, Rect, Sense, Stroke, Ui, Vec2,
 };
 use qs_doc::{
     Align, ArrowHead, BlurMode, CalloutShape, Fill, ObjectKind, PALETTE, SIZES, TEXT_SIZES,
@@ -76,16 +76,21 @@ pub fn render_top_bar(
     // --- Left Zone: Open / Save As + Undo / Redo Capsule + optional filename ---
     let hist_w = 60.0;
     let hist_h = 30.0;
-    let io_w = 30.0;
-    let io_gap = 4.0;
     // the capsule stays dead-center only while the right zone keeps its width,
     // so the file buttons appear once there is room for them
     let show_file_buttons = bar_rect.width() > 980.0;
     let mut left_x = inner.left();
     if show_file_buttons {
-        let open_rect = Rect::from_min_size(
+        let io_track_w = 60.0;
+        let io_track = Rect::from_min_size(
             Pos2::new(left_x, cy - hist_h * 0.5),
-            Vec2::new(io_w, hist_h),
+            Vec2::new(io_track_w, hist_h),
+        );
+        paint_segmented_track(ui.painter(), io_track, RADIUS_TRACK);
+        let io_seg_w = (io_track_w - 6.0) * 0.5;
+        let open_rect = Rect::from_min_size(
+            Pos2::new(io_track.left() + 3.0, io_track.top() + 3.0),
+            Vec2::new(io_seg_w, hist_h - 6.0),
         );
         if icon_segment(
             ui,
@@ -98,11 +103,9 @@ pub fn render_top_bar(
         ) {
             res.open = true;
         }
-        left_x = open_rect.right() + io_gap;
-
         let save_as_rect = Rect::from_min_size(
-            Pos2::new(left_x, cy - hist_h * 0.5),
-            Vec2::new(io_w, hist_h),
+            Pos2::new(open_rect.right(), io_track.top() + 3.0),
+            Vec2::new(io_seg_w, hist_h - 6.0),
         );
         if icon_segment(
             ui,
@@ -115,7 +118,7 @@ pub fn render_top_bar(
         ) {
             res.save_as = true;
         }
-        left_x = save_as_rect.right() + 8.0;
+        left_x = io_track.right() + 8.0;
     }
 
     let hist_rect = Rect::from_min_size(
@@ -579,13 +582,7 @@ fn paint_bar_divider(painter: &egui::Painter, x: f32, track: Rect) {
 
 fn paint_tool_segment(painter: &egui::Painter, rect: Rect, active: bool, hovered: bool) {
     if active {
-        paint_rounded_v_gradient(painter, rect, RADIUS_PILL, accent_blue_top(), accent_blue_bot());
-        painter.rect_stroke(
-            rect,
-            RADIUS_PILL,
-            Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 64)),
-            StrokeKind::Inside,
-        );
+        painter.rect_filled(rect, RADIUS_PILL, accent_blue());
     } else if hovered {
         painter.rect_filled(rect, RADIUS_PILL, bg_pill_hover());
     }
@@ -995,24 +992,7 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
 
         inner.right() - z_rect.left() + 12.0
     } else {
-        let doc = editor.doc();
-        let meta = format!(
-            "{} {}",
-            doc.objects.len(),
-            if doc.objects.len() == 1 {
-                "layer"
-            } else {
-                "layers"
-            }
-        );
-        ui.painter().text(
-            Pos2::new(inner.right(), cy),
-            egui::Align2::RIGHT_CENTER,
-            &meta,
-            FontId::proportional(11.5),
-            text_tertiary(),
-        );
-        165.0
+        0.0
     };
 
     // --- Left/Main Contextual Controls ---
@@ -1033,7 +1013,7 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
             paint_color_swatch(
                 ui.painter(),
                 sw_r.center(),
-                7.8,
+                6.8,
                 rgb_to_color32(rgb),
                 eff_rgb == rgb,
                 resp.hovered(),
@@ -1042,11 +1022,11 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
                 editor.set_color(rgb);
                 mutated = true;
             }
-            x += 23.0;
+            x += 22.0;
         }
     }
 
-    // 2. Stroke Width Capsule (with actual line-weight preview bars!)
+    // 2. Stroke Width Capsule (with rounded line-weight preview pills)
     if matches!(
         ctx_kind,
         ContextKind::Generic
@@ -1079,29 +1059,27 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
                 paint_pill_button(
                     ui.painter(),
                     sr,
-                    RADIUS_PILL,
+                    egui::CornerRadius::same(6),
                     active,
                     resp.hovered(),
                     true,
                     false,
                 );
                 let bar_h = match i {
-                    0 => 1.6,
-                    1 => 3.0,
-                    _ => 4.6,
+                    0 => 1.5,
+                    1 => 2.8,
+                    _ => 4.4,
                 };
                 let col = if active || resp.hovered() {
                     text_primary()
                 } else {
                     text_secondary()
                 };
-                ui.painter().line_segment(
-                    [
-                        Pos2::new(sr.left() + 6.0, sr.center().y),
-                        Pos2::new(sr.right() - 6.0, sr.center().y),
-                    ],
-                    Stroke::new(bar_h, col),
+                let bar_rect = Rect::from_center_size(
+                    sr.center(),
+                    Vec2::new(sr.width() - 12.0, bar_h),
                 );
+                ui.painter().rect_filled(bar_rect, RADIUS_CAPSULE, col);
                 if resp.clicked() {
                     editor.set_stroke_width(w);
                     mutated = true;
