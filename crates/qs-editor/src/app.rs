@@ -1887,13 +1887,28 @@ impl eframe::App for EditorApp {
                         .show(ui, |ui| {
                             let changed = image_panel::render(ui, &mut self.editor);
                             ui.add_space(8.0);
-                            if ui
-                                .button("Flatten all…")
-                                .on_hover_text("Bake every annotation into the image")
-                                .clicked()
-                            {
-                                self.confirm_flatten = true;
-                            }
+                            ui.horizontal_wrapped(|ui| {
+                                if ui
+                                    .button("Simplify UI")
+                                    .on_hover_text("Convert UI text/controls into clean editable blocks")
+                                    .clicked()
+                                {
+                                    let n = self.editor.simplify_from_image(&self.base);
+                                    if n > 0 {
+                                        self.touch();
+                                        self.show_toast(format!("Simplified {n} UI block(s)"));
+                                    } else {
+                                        self.show_toast("No UI blocks detected");
+                                    }
+                                }
+                                if ui
+                                    .button("Flatten all…")
+                                    .on_hover_text("Bake every annotation into the image")
+                                    .clicked()
+                                {
+                                    self.confirm_flatten = true;
+                                }
+                            });
                             changed
                         })
                         .inner

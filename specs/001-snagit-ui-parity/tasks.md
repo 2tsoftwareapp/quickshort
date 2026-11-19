@@ -33,8 +33,8 @@
 
 ## Phase 5: Capture Profiles & Smart Simplify (Priority: P5)
 
-- [ ] **T018** Add Capture Profiles (preset name, mode, delay timer, cursor toggle, auto-effect) to `qs-app/src/config.rs` and `settings.rs` / capture HUD.
-- [ ] **T019** Prototype `Simplify` tool using `qs-ocr` + connected-component / edge bounding boxes to convert UI screenshots into clean editable vector blocks.
+- [x] **T018** Add Capture Profiles (preset name, mode, delay timer, cursor toggle, auto-effect) to `qs-app/src/config.rs` and `settings.rs` / capture HUD.
+- [x] **T019** Prototype `Simplify` tool using `qs-ocr` + connected-component / edge bounding boxes to convert UI screenshots into clean editable vector blocks.
 
 ## Verification Gate (Run After Each Phase)
 

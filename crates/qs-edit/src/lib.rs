@@ -8,6 +8,7 @@
 //! and only if something actually changed.
 
 pub mod hit;
+pub mod simplify;
 pub mod trim;
 
 pub use hit::{Handle, HandleId};
@@ -1934,6 +1935,24 @@ impl Editor {
             });
         });
         true
+    }
+
+    /// Smart Simplify: detect UI content blocks in `base` and insert editable
+    /// rounded-rectangle blocks in a single undo step.
+    pub fn simplify_from_image(&mut self, base: &image::RgbaImage) -> usize {
+        let blocks = simplify::detect_ui_blocks(&self.doc, base);
+        let count = blocks.len();
+        if count == 0 {
+            return 0;
+        }
+        self.record(|ed| {
+            let mut ids = Vec::with_capacity(blocks.len());
+            for kind in blocks {
+                ids.push(ed.doc.push(kind));
+            }
+            ed.selection = ids;
+        });
+        count
     }
 
     pub fn set_background(&mut self, argb: u32) {

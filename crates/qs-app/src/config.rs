@@ -5,6 +5,74 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CaptureMode {
+    #[default]
+    Image,
+    Video,
+    Ocr,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AutoEffect {
+    #[default]
+    None,
+    BorderShadow,
+    RoundedShadow,
+}
+
+/// Snagit-style saved capture preset.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CaptureProfile {
+    pub name: String,
+    pub mode: CaptureMode,
+    pub delay_secs: u8,
+    pub include_cursor: bool,
+    pub auto_effect: AutoEffect,
+}
+
+impl Default for CaptureProfile {
+    fn default() -> Self {
+        Self {
+            name: "Quick Annotation".into(),
+            mode: CaptureMode::Image,
+            delay_secs: 0,
+            include_cursor: false,
+            auto_effect: AutoEffect::None,
+        }
+    }
+}
+
+pub fn default_profiles() -> Vec<CaptureProfile> {
+    vec![
+        CaptureProfile::default(),
+        CaptureProfile {
+            name: "Delayed Menu (3s)".into(),
+            mode: CaptureMode::Image,
+            delay_secs: 3,
+            include_cursor: true,
+            auto_effect: AutoEffect::None,
+        },
+        CaptureProfile {
+            name: "Clean Border & Shadow".into(),
+            mode: CaptureMode::Image,
+            delay_secs: 0,
+            include_cursor: false,
+            auto_effect: AutoEffect::BorderShadow,
+        },
+        CaptureProfile {
+            name: "OCR Text Grab".into(),
+            mode: CaptureMode::Ocr,
+            delay_secs: 0,
+            include_cursor: false,
+            auto_effect: AutoEffect::None,
+        },
+    ]
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -52,6 +120,12 @@ pub struct Config {
     /// Unix ts of the last update check (auto-checks once a day).
     #[serde(default)]
     pub last_update_check: u64,
+    /// Saved Snagit-style capture profiles.
+    #[serde(default = "default_profiles")]
+    pub profiles: Vec<CaptureProfile>,
+    /// Index of the active capture profile.
+    #[serde(default)]
+    pub active_profile: usize,
 }
 
 impl Default for Config {
@@ -88,6 +162,8 @@ impl Default for Config {
             ocr_lang: "auto".into(),
             popup_pos: "top-right".into(),
             last_update_check: 0,
+            profiles: default_profiles(),
+            active_profile: 0,
         }
     }
 }
