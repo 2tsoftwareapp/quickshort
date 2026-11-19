@@ -107,10 +107,19 @@ impl Painter<'_> {
         }
     }
 
-    /// Grouped inset card: flat white panel + hairline border.
+    /// Grouped Liquid Glass card: elevated panel + hairline border + subtle top specular catch.
     pub(crate) fn card(&self, cv: &mut Canvas, r: LRect) {
-        self.fill(cv, r, 10.0, pal().surface, 1.0);
-        self.stroke(cv, r, 10.0, pal().border, 1.0, 0.75);
+        self.fill(cv, r, 12.0, pal().surface, 1.0);
+        self.stroke(cv, r, 12.0, pal().border, 1.0, 0.75);
+        // Subtle specular top-edge highlight matching qs-editor cards
+        let spec_alpha = if pal().dark { 0.08 } else { 0.75 };
+        self.fill(
+            cv,
+            (r.0 + 12.0, r.1 + 0.75, (r.2 - 24.0).max(0.0), 1.0),
+            0.0,
+            pal().on_accent,
+            spec_alpha,
+        );
     }
 
     /// Grouped inset card with subtle dividers between rows.

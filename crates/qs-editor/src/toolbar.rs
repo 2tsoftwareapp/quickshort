@@ -579,12 +579,11 @@ fn paint_bar_divider(painter: &egui::Painter, x: f32, track: Rect) {
 
 fn paint_tool_segment(painter: &egui::Painter, rect: Rect, active: bool, hovered: bool) {
     if active {
-        let (top, bot) = crate::theme::tool_active_gradient();
-        paint_rounded_v_gradient(painter, rect, RADIUS_PILL, top, bot);
+        paint_rounded_v_gradient(painter, rect, RADIUS_PILL, accent_blue_top(), accent_blue_bot());
         painter.rect_stroke(
             rect,
             RADIUS_PILL,
-            Stroke::new(1.5, accent_blue()),
+            Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 64)),
             StrokeKind::Inside,
         );
     } else if hovered {
@@ -998,9 +997,7 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
     } else {
         let doc = editor.doc();
         let meta = format!(
-            "{:.0} × {:.0} px   ·   {} {}",
-            doc.view.w,
-            doc.view.h,
+            "{} {}",
             doc.objects.len(),
             if doc.objects.len() == 1 {
                 "layer"

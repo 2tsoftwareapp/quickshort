@@ -17,7 +17,7 @@
 //! Rules (see `docs/ui/CONVENTIONS.md`): no `0xRRGGBB` literal outside this
 //! crate; no magic spacing in components — pick the nearest scale step.
 
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU8, Ordering};
 
 /// Colour tokens, named by role (not by hue) so a theme can remap them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -116,139 +116,171 @@ pub struct Palette {
     pub shadow: u32,
 }
 
-/// Dark Studio — the default.
+/// Dark Glass — refined obsidian-zinc dark mode matching macOS Liquid Glass.
 pub const DARK: Palette = Palette {
-    bg_top: 0x1A1A1F,
-    bg_bottom: 0x141418,
-    sidebar: 0x18181D,
-    surface: 0x22222A,
-    surface_hover: 0x2C2C37,
-    popover: 0x1E1E24,
-    fringe: 0x0C0C10,
-    control: 0x2A2A34,
-    control_hot: 0x3A3A48,
-    tile: 0x282832,
-    tile_glyph: 0x9EA0AC,
-    keycap: 0x2E2E39,
-    keycap_edge: 0x181820,
-    switch_off: 0x383844,
-    border: 0x2F2F3B,
-    border_strong: 0x424252,
-    popover_border: 0x363644,
-    fg: 0xF4F4F7,
-    fg_dim: 0xB4B7C4,
-    fg_faint: 0x8E91A0,
+    bg_top: 0x16171C,
+    bg_bottom: 0x111216,
+    sidebar: 0x15161B,
+    surface: 0x1D1F26,
+    surface_hover: 0x262933,
+    popover: 0x1C1E25,
+    fringe: 0x090A0D,
+    control: 0x252832,
+    control_hot: 0x313543,
+    tile: 0x242731,
+    tile_glyph: 0xA6AAB8,
+    keycap: 0x2A2D38,
+    keycap_edge: 0x14161C,
+    switch_off: 0x343846,
+    border: 0x2B2E3A,
+    border_strong: 0x3E4354,
+    popover_border: 0x333746,
+    fg: 0xF5F6FA,
+    fg_dim: 0xB6BAC8,
+    fg_faint: 0x8F94A6,
     on_accent: 0xFFFFFF,
     success: 0x30D158,
     danger: 0xFF453A,
     warning: 0xFF9F0A,
     dark: true,
-    ws_top: 0x26262B,
-    ws_bottom: 0x1E1E23,
-    bar_top: 0x323237,
-    bar_bottom: 0x26262B,
-    panel_top: 0x242428,
-    panel_bottom: 0x1D1D21,
-    track: 0x18181C,
-    pill_top: 0x4C4C52,
-    pill_bottom: 0x3C3C42,
-    tool_active_top: 0x224C80,
-    tool_active_bot: 0x163660,
-    card_bg: 0x26262C,
-    status_bg: 0x19191D,
-    btn_top: 0x343439,
-    btn_bottom: 0x2A2A2E,
-    btn_hot_top: 0x404046,
-    btn_hot_bottom: 0x323238,
-    hairline: 0x141418,
-    border_soft: 0x38383E,
-    border_hot: 0x46464C,
-    danger_top: 0x5A1818,
-    danger_bottom: 0x461212,
-    danger_edge: 0xB43228,
+    ws_top: 0x121318,
+    ws_bottom: 0x0E0F13,
+    bar_top: 0x1C1E24,
+    bar_bottom: 0x181A20,
+    panel_top: 0x17181E,
+    panel_bottom: 0x14151A,
+    track: 0x131419,
+    pill_top: 0x2E323E,
+    pill_bottom: 0x262934,
+    tool_active_top: 0x1A8CFF,
+    tool_active_bot: 0x006AE6,
+    card_bg: 0x1E2028,
+    status_bg: 0x15161B,
+    btn_top: 0x272A34,
+    btn_bottom: 0x21242D,
+    btn_hot_top: 0x323644,
+    btn_hot_bottom: 0x2B2E3B,
+    hairline: 0x272A34,
+    border_soft: 0x2E323F,
+    border_hot: 0x43485A,
+    danger_top: 0x5A1C1F,
+    danger_bottom: 0x461518,
+    danger_edge: 0xC83A35,
     wash: 0xFFFFFF,
-    hud: 0x2C2C2E,
-    hud_hover: 0x48484D,
+    hud: 0x1E2028,
+    hud_hover: 0x343846,
     on_hud: 0xFFFFFF,
     shadow: 0x000000,
 };
 
-/// Light — same roles, macOS-style light surfaces.
+/// Light Glass — the default: airy Apple Liquid Glass / Sonoma light surfaces.
 pub const LIGHT: Palette = Palette {
-    bg_top: 0xF5F5F7,
-    bg_bottom: 0xECECEF,
-    sidebar: 0xE6E6EB,
+    bg_top: 0xF7F8FB,
+    bg_bottom: 0xEEF0F5,
+    sidebar: 0xF2F3F7,
     surface: 0xFFFFFF,
-    surface_hover: 0xF0F0F5,
+    surface_hover: 0xF3F5F9,
     popover: 0xFFFFFF,
-    fringe: 0x9A9AA6,
-    control: 0xEDEDF2,
-    control_hot: 0xDDDDE6,
-    tile: 0xEDEDF2,
-    tile_glyph: 0x5F6270,
+    fringe: 0x9CA2B0,
+    control: 0xEFF1F6,
+    control_hot: 0xE3E6EE,
+    tile: 0xEFF1F6,
+    tile_glyph: 0x595E6D,
     keycap: 0xFFFFFF,
-    keycap_edge: 0xC4C4CE,
-    switch_off: 0xC8C8D0,
-    border: 0xDADAE1,
-    border_strong: 0xB4B4C0,
-    popover_border: 0xD0D0D8,
-    fg: 0x1C1C1F,
-    fg_dim: 0x464955,
-    fg_faint: 0x6E7180,
+    keycap_edge: 0xCDD1DC,
+    switch_off: 0xCED2DC,
+    border: 0xDFE2EA,
+    border_strong: 0xBDC2CF,
+    popover_border: 0xD8DCE6,
+    fg: 0x16181D,
+    fg_dim: 0x4A4F5C,
+    fg_faint: 0x676D7E,
     on_accent: 0xFFFFFF,
-    success: 0x1F7A36,
+    success: 0x1E7E38,
     danger: 0xD70015,
     warning: 0xB25000,
     dark: false,
-    ws_top: 0xE9E9EE,
-    ws_bottom: 0xDFDFE5,
-    bar_top: 0xFAFAFC,
-    bar_bottom: 0xEDEDF1,
-    panel_top: 0xF3F3F6,
-    panel_bottom: 0xE8E8ED,
-    track: 0xDCDCE3,
+    ws_top: 0xECEEF3,
+    ws_bottom: 0xE5E8EF,
+    bar_top: 0xFFFFFF,
+    bar_bottom: 0xF7F8FB,
+    panel_top: 0xF7F8FB,
+    panel_bottom: 0xF2F4F8,
+    track: 0xE6E9F0,
     pill_top: 0xFFFFFF,
-    pill_bottom: 0xF1F1F5,
-    tool_active_top: 0x2092FF,
-    tool_active_bot: 0x0070E0,
+    pill_bottom: 0xF7F8FB,
+    tool_active_top: 0x1A8CFF,
+    tool_active_bot: 0x006CE6,
     card_bg: 0xFFFFFF,
-    status_bg: 0xEAEAEF,
+    status_bg: 0xF5F6FA,
     btn_top: 0xFFFFFF,
-    btn_bottom: 0xF0F0F4,
-    btn_hot_top: 0xF6F6F9,
-    btn_hot_bottom: 0xE4E4EA,
-    hairline: 0xC8C8D0,
-    border_soft: 0xD2D2DA,
-    border_hot: 0xB4B4C0,
-    danger_top: 0xFFE3E0,
-    danger_bottom: 0xFFD0CC,
-    danger_edge: 0xE5675D,
+    btn_bottom: 0xF5F6FA,
+    btn_hot_top: 0xF9FAFD,
+    btn_hot_bottom: 0xECEEF4,
+    hairline: 0xDCE0E9,
+    border_soft: 0xDFE3EC,
+    border_hot: 0xBFC5D4,
+    danger_top: 0xFFE8E6,
+    danger_bottom: 0xFFD8D4,
+    danger_edge: 0xE05A50,
     wash: 0x000000,
-    hud: 0x2C2C2E,
-    hud_hover: 0x48484D,
+    hud: 0x1E2028,
+    hud_hover: 0x343846,
     on_hud: 0xFFFFFF,
     shadow: 0x000000,
 };
 
-/// Default accent (macOS blue) and its gradient stops. The user's choice in
+/// Default accent (Apple Liquid Blue) and its gradient stops. The user's choice in
 /// Settings overrides this at runtime; these are the fallback.
-pub const ACCENT_DEFAULT: u32 = 0x0A84FF;
-pub const ACCENT_TOP: u32 = 0x2092FF;
-pub const ACCENT_BOTTOM: u32 = 0x0070E0;
+pub const ACCENT_DEFAULT: u32 = 0x007AFF;
+pub const ACCENT_TOP: u32 = 0x1A8CFF;
+pub const ACCENT_BOTTOM: u32 = 0x0066E0;
 pub const ACCENT_SOFT: u32 = 0x4DA6FF;
 /// Gradient stops of an accent button under the pointer.
-pub const ACCENT_TOP_HOT: u32 = 0x2C9CFF;
-pub const ACCENT_BOTTOM_HOT: u32 = 0x0A7AEB;
+pub const ACCENT_TOP_HOT: u32 = 0x3399FF;
+pub const ACCENT_BOTTOM_HOT: u32 = 0x0A78F0;
 
-/// Colours offered by the annotation tools — user data, identical in every
-/// theme: red, orange, yellow, green, blue, purple, white, black.
+static CURRENT_ACCENT: AtomicU32 = AtomicU32::new(ACCENT_DEFAULT);
+
+fn shift_rgb(rgb: u32, delta: i16) -> u32 {
+    let r = (((rgb >> 16) & 0xFF) as i16 + delta).clamp(0, 255) as u32;
+    let g = (((rgb >> 8) & 0xFF) as i16 + delta).clamp(0, 255) as u32;
+    let b = ((rgb & 0xFF) as i16 + delta).clamp(0, 255) as u32;
+    (r << 16) | (g << 8) | b
+}
+
+/// Active runtime accent colour (`0xRRGGBB`), shared by `qs-app` and `qs-editor`.
+pub fn accent() -> u32 {
+    CURRENT_ACCENT.load(Ordering::Relaxed)
+}
+
+pub fn accent_top() -> u32 {
+    shift_rgb(accent(), 20)
+}
+
+pub fn accent_bottom() -> u32 {
+    shift_rgb(accent(), -20)
+}
+
+pub fn accent_soft() -> u32 {
+    shift_rgb(accent(), 52)
+}
+
+/// Set the process-wide accent colour (`0xRRGGBB`).
+pub fn set_accent(rgb: u32) {
+    CURRENT_ACCENT.store(rgb & 0x00FF_FFFF, Ordering::Relaxed);
+}
+
+/// Curated modern Apple HIG / Sonoma annotation swatches — harmonious, crisp
+/// on both Light Glass and Dark Glass: coral red, amber, gold, emerald,
+/// liquid blue, iris purple, pure white, graphite ink.
 pub const ANNOTATION: [u32; 8] = [
-    0xFF453A, 0xFF9F0A, 0xFFD60A, 0x32D74B, 0x0A84FF, 0xBF5AF2, 0xFFFFFF, 0x1C1C1E,
+    0xFF3B30, 0xFF9500, 0xFFCC00, 0x34C759, 0x007AFF, 0xAF52DE, 0xFFFFFF, 0x1C1E24,
 ];
 
-/// Selectable themes — (config key, label). Unknown keys fall back to the
-/// first entry.
-pub const THEMES: &[(&str, &str)] = &[("dark", "Dark"), ("light", "Light")];
+/// Selectable themes — (config key, label). Light-first default; unknown keys
+/// fall back to the first entry (`light`).
+pub const THEMES: &[(&str, &str)] = &[("light", "Light"), ("dark", "Dark")];
 
 static CURRENT: AtomicU8 = AtomicU8::new(0);
 
@@ -256,9 +288,17 @@ static CURRENT: AtomicU8 = AtomicU8::new(0);
 /// theme switch shows up on the next frame.
 pub fn pal() -> &'static Palette {
     match CURRENT.load(Ordering::Relaxed) {
-        1 => &LIGHT,
-        _ => &DARK,
+        1 => &DARK,
+        _ => &LIGHT,
     }
+}
+
+/// Current active theme key (`"light"` or `"dark"`).
+pub fn theme_key() -> &'static str {
+    THEMES
+        .get(CURRENT.load(Ordering::Relaxed) as usize)
+        .map(|(k, _)| *k)
+        .unwrap_or("light")
 }
 
 /// Switch theme by config key.
@@ -412,10 +452,18 @@ mod tests {
 
     #[test]
     fn set_theme_switches_and_falls_back() {
-        set_theme("light");
-        assert_eq!(*pal(), LIGHT);
-        set_theme("nonsense");
+        set_theme("dark");
         assert_eq!(*pal(), DARK);
+        set_theme("nonsense");
+        assert_eq!(*pal(), LIGHT);
+    }
+
+    #[test]
+    fn set_accent_updates_runtime_accent() {
+        set_accent(0xAF52DE);
+        assert_eq!(accent(), 0xAF52DE);
+        set_accent(ACCENT_DEFAULT);
+        assert_eq!(accent(), ACCENT_DEFAULT);
     }
 
     #[test]

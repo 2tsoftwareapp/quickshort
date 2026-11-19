@@ -188,7 +188,7 @@ impl EditorApp {
             canvas_anchor: (1, 1),
             show_layers: true,
             show_inspector: true,
-            show_filmstrip: true,
+            show_filmstrip: false,
             last_cursor_doc: None,
             filmstrip,
             session_cache: std::collections::HashMap::new(),
@@ -1421,12 +1421,12 @@ impl eframe::App for EditorApp {
 
         // Bottom Studio Status Bar (must be added before CentralPanel)
         egui::Panel::bottom("status_bar")
-            .exact_size(26.0)
+            .exact_size(30.0)
             .frame(
                 egui::Frame::NONE
                     .fill(theme::bg_status())
                     .stroke(egui::Stroke::new(1.0, theme::border_dark_hairline()))
-                    .inner_margin(egui::Margin::symmetric(10, 3)),
+                    .inner_margin(egui::Margin::symmetric(12, 5)),
             )
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
@@ -1498,6 +1498,17 @@ impl eframe::App for EditorApp {
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let is_dark = qs_theme::pal().dark;
+                        let theme_lbl = if is_dark { "Dark" } else { "Light" };
+                        if ui
+                            .selectable_label(false, egui::RichText::new(theme_lbl).size(11.0))
+                            .on_hover_text("Switch Light / Dark Glass theme")
+                            .clicked()
+                        {
+                            qs_theme::set_theme(if is_dark { "light" } else { "dark" });
+                            theme::sync_egui_visuals(&ctx);
+                        }
+                        ui.separator();
                         for (label, target_zoom) in [("200%", 2.0f32), ("100%", 1.0), ("50%", 0.5)]
                         {
                             let active = (self.view.zoom - target_zoom).abs() < 0.01;
@@ -1709,42 +1720,53 @@ impl eframe::App for EditorApp {
         let layers_mutated = if self.show_layers {
             egui::Panel::left("layers_panel")
             .resizable(true)
-            .default_size(208.0)
+            .default_size(204.0)
             .size_range(176.0..=300.0)
             .frame(
                 egui::Frame::NONE
-                    .fill(theme::bg_inspector_bot())
-                    .inner_margin(egui::Margin::same(10)),
+                    .fill(theme::bg_inspector_top())
+                    .stroke(egui::Stroke::new(1.0, theme::border_dark_hairline()))
+                    .inner_margin(egui::Margin::same(12)),
             )
             .show(ui, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    ui.heading("Layers");
-                    ui.label(format!("{}", self.editor.doc().objects.len()));
-                    let can_group = self.editor.selection().len() >= 2;
-                    if ui
-                        .add_enabled(can_group, egui::Button::new("Group").small())
-                        .on_hover_text("Group selection (Ctrl+G)")
-                        .clicked()
-                        && self.editor.group_selected()
-                    {
-                        self.touch();
-                    }
-                    if ui
-                        .add_enabled(
-                            self.editor.selection_grouped(),
-                            egui::Button::new("Ungroup").small(),
-                        )
-                        .on_hover_text("Ungroup (Ctrl+Shift+G)")
-                        .clicked()
-                        && self.editor.ungroup_selected()
-                    {
-                        self.touch();
-                    }
-                    if self.editor.selection().len() >= 2 {
-                        self.alignment_open =
-                            ui.small_button("Align").clicked() || self.alignment_open;
-                    }
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new("LAYERS")
+                            .size(10.5)
+                            .strong()
+                            .color(theme::text_tertiary()),
+                    );
+                    ui.label(
+                        egui::RichText::new(format!("{}", self.editor.doc().objects.len()))
+                            .size(10.5)
+                            .color(theme::text_tertiary()),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if self.editor.selection().len() >= 2 {
+                            self.alignment_open =
+                                ui.small_button("Align").clicked() || self.alignment_open;
+                        }
+                        if self.editor.selection_grouped()
+                            && ui
+                                .small_button("Ungroup")
+                                .on_hover_text("Ungroup (Ctrl+Shift+G)")
+                                .clicked()
+                            && self.editor.ungroup_selected()
+                        {
+                            self.touch();
+                        }
+                        if self.editor.selection().len() >= 2
+                            && ui
+                                .small_button("Group")
+                                .on_hover_text("Group selection (Ctrl+G)")
+                                .clicked()
+                            && self.editor.group_selected()
+                        {
+                            self.touch();
+                        }
+                    });
                 });
+                ui.add_space(6.0);
                 ui.separator();
                 let mut changed = false;
                 let rows: Vec<_> = self
@@ -1766,7 +1788,14 @@ impl eframe::App for EditorApp {
                         )
                     })
                     .collect();
-                egui::ScrollArea::vertical().show(ui, |ui| {
+                if rows.is_empty() {
+                    theme::empty_state(
+                        ui,
+                        "No annotations yet",
+                        "Pick a tool above and\ndrag on the canvas",
+                    );
+                } else {
+                    egui::ScrollArea::vertical().show(ui, |ui| {
                     for (index, id, label, visible, locked, grouped, selected) in rows {
                         let response = ui
                             .horizontal(|ui| {
@@ -1821,7 +1850,8 @@ impl eframe::App for EditorApp {
                             }
                         }
                     }
-                });
+                    });
+                }
                 changed
             })
             .inner
@@ -1876,22 +1906,27 @@ impl eframe::App for EditorApp {
         let panel_mutated = if self.show_inspector {
             egui::Panel::right("image_panel")
                 .resizable(false)
-                .exact_size(244.0)
+                .exact_size(256.0)
                 .frame(
                     egui::Frame::NONE
-                        .fill(theme::bg_inspector_bot())
-                        .inner_margin(egui::Margin::same(10)),
+                        .fill(theme::bg_inspector_top())
+                        .stroke(egui::Stroke::new(1.0, theme::border_dark_hairline()))
+                        .inner_margin(egui::Margin::same(12)),
                 )
                 .show(ui, |ui| {
                     egui::ScrollArea::vertical()
                         .show(ui, |ui| {
                             let changed = image_panel::render(ui, &mut self.editor);
-                            ui.add_space(8.0);
-                            ui.horizontal_wrapped(|ui| {
-                                if ui
-                                    .button("Simplify UI")
-                                    .on_hover_text("Convert UI text/controls into clean editable blocks")
-                                    .clicked()
+                            ui.add_space(10.0);
+                            theme::inspector_card(ui, |ui| {
+                                theme::section_header(ui, "Quick Actions");
+                                if theme::tonal_button(
+                                    ui,
+                                    "Simplify UI",
+                                    true,
+                                    "Convert UI text/controls into clean editable blocks",
+                                )
+                                .clicked()
                                 {
                                     let n = self.editor.simplify_from_image(&self.base);
                                     if n > 0 {
@@ -1901,10 +1936,14 @@ impl eframe::App for EditorApp {
                                         self.show_toast("No UI blocks detected");
                                     }
                                 }
-                                if ui
-                                    .button("Flatten all…")
-                                    .on_hover_text("Bake every annotation into the image")
-                                    .clicked()
+                                ui.add_space(6.0);
+                                if theme::tonal_button(
+                                    ui,
+                                    "Flatten all…",
+                                    false,
+                                    "Bake every annotation into the image",
+                                )
+                                .clicked()
                                 {
                                     self.confirm_flatten = true;
                                 }
@@ -2245,7 +2284,7 @@ mod tests {
             saw_drag_press: false,
             show_layers: true,
             show_inspector: true,
-            show_filmstrip: true,
+            show_filmstrip: false,
             last_cursor_doc: None,
             filmstrip: Filmstrip::new(None),
             session_cache: std::collections::HashMap::new(),

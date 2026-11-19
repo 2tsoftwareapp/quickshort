@@ -559,10 +559,13 @@ pub fn open_editor(p: &Path) {
         cand.exists().then_some(cand)
     });
 
+    let cfg = crate::config::Config::load();
+    let accent_hex = format!("{:06x}", cfg.accent_rgb());
     if let Some(editor) = sibling_editor {
         let mut cmd = std::process::Command::new(editor);
         cmd.arg(p)
-            .env("QS_THEME", crate::config::Config::load().theme);
+            .env("QS_THEME", &cfg.theme)
+            .env("QS_ACCENT", &accent_hex);
         if let Err(e) = cmd.spawn() {
             eprintln!("failed to spawn qs-editor: {e}; falling back to open_path");
             open_path(p);
@@ -571,7 +574,8 @@ pub fn open_editor(p: &Path) {
         // Fallback: try PATH or default association
         let mut cmd = std::process::Command::new("qs-editor");
         cmd.arg(p)
-            .env("QS_THEME", crate::config::Config::load().theme);
+            .env("QS_THEME", &cfg.theme)
+            .env("QS_ACCENT", &accent_hex);
         if let Err(_) = cmd.spawn() {
             open_path(p);
         }

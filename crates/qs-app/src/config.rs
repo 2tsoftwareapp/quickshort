@@ -158,7 +158,7 @@ impl Default for Config {
             key_undo: "z".into(),
             key_edit: "e".into(),
             after_capture: "shelf".into(),
-            theme: "dark".into(),
+            theme: "light".into(),
             ocr_lang: "auto".into(),
             popup_pos: "top-right".into(),
             last_update_check: 0,
@@ -178,16 +178,17 @@ impl Config {
     }
 
     pub fn load() -> Self {
-        let Ok(s) = std::fs::read_to_string(Self::path()) else {
-            return Self::default();
+        let cfg = match std::fs::read_to_string(Self::path()) {
+            Ok(s) => toml::from_str(&s).unwrap_or_else(|e| {
+                eprintln!("config parse failed ({e}), using defaults");
+                Self::default()
+            }),
+            Err(_) => Self::default(),
         };
-        let cfg: Self = toml::from_str(&s).unwrap_or_else(|e| {
-            eprintln!("config parse failed ({e}), using defaults");
-            Self::default()
-        });
         // every entry point loads the config first, so this is the one
-        // place the process-wide theme gets selected at startup
+        // place the process-wide theme and accent get selected at startup
         qs_theme::set_theme(&cfg.theme);
+        qs_theme::set_accent(cfg.accent_rgb());
         cfg
     }
 

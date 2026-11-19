@@ -45,22 +45,23 @@ pub fn render(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
         ui.add_space(8.0);
     }
     theme::inspector_card(ui, |ui| {
-        let mut cmd = None;
-        section(ui, "Rotate & flip");
-        ui.horizontal_wrapped(|ui| {
-            for (c, label, tip) in [
-                (OrientCmd::RotateCcw, "Rotate left", "Rotate 90° counter-clockwise (Ctrl+Shift+R)"),
-                (OrientCmd::RotateCw, "Rotate right", "Rotate 90° clockwise (Ctrl+R)"),
-                (OrientCmd::FlipH, "Flip H", "Mirror left-right"),
-                (OrientCmd::FlipV, "Flip V", "Mirror top-bottom"),
-            ] {
-                if ui.button(label).on_hover_text(tip).clicked() {
-                    cmd = Some(c);
-                }
-            }
-        });
-        if let Some(c) = cmd {
-            apply_orient(editor, c);
+        section(ui, "Transform");
+        let cmds = [
+            OrientCmd::RotateCcw,
+            OrientCmd::RotateCw,
+            OrientCmd::FlipH,
+            OrientCmd::FlipV,
+        ];
+        if let Some(idx) = theme::segmented_icon_bar(
+            ui,
+            &[
+                (theme::TransformIcon::RotateCcw, "Rotate 90° counter-clockwise (Ctrl+Shift+R)"),
+                (theme::TransformIcon::RotateCw, "Rotate 90° clockwise (Ctrl+R)"),
+                (theme::TransformIcon::FlipH, "Flip horizontal"),
+                (theme::TransformIcon::FlipV, "Flip vertical"),
+            ],
+        ) {
+            apply_orient(editor, cmds[idx]);
             changed = true;
         }
     });
@@ -129,7 +130,7 @@ fn text_ui(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
     let mut changed = false;
     let mut current = style;
     let mut on = current.outline.is_some();
-    if ui.checkbox(&mut on, "Outline").changed() {
+    if theme::toggle_switch(ui, &mut on, "Outline") {
         current.outline = on.then(|| qs_doc::TextOutline {
             width: (style.px * 0.14).clamp(1.0, 6.0),
             rgb: qs_edit::contrast(style.rgb),
@@ -189,7 +190,9 @@ fn color(ui: &mut egui::Ui, label: &str, value: &mut u32) {
 
 fn toggle<T: Default>(ui: &mut egui::Ui, label: &str, effect: &mut Option<T>) {
     let mut on = effect.is_some();
-    if ui.checkbox(&mut on, label).changed() { *effect = on.then(T::default); }
+    if theme::toggle_switch(ui, &mut on, label) {
+        *effect = on.then(T::default);
+    }
 }
 
 fn effects_ui(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
@@ -199,7 +202,7 @@ fn effects_ui(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
     if let Some(b) = &mut effects.border {
         ui.add(egui::Slider::new(&mut b.width, 0.0..=256.0).text("Width"));
         ui.add(egui::Slider::new(&mut b.radius, 0.0..=1024.0).text("Corner radius"));
-        ui.checkbox(&mut b.inset, "Inside image");
+        theme::toggle_switch(ui, &mut b.inset, "Inside image");
         color(ui, "Border color", &mut b.color);
     }
     toggle(ui, "Drop shadow", &mut effects.shadow);
@@ -217,14 +220,28 @@ fn effects_ui(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
         ui.add(egui::Slider::new(&mut c.saturation, 0.0..=2.0).text("Saturation"));
     }
     let mut filter = effects.color_filter.unwrap_or(qs_doc::ColorFilter::None);
-    egui::ComboBox::from_label("Filter")
-        .selected_text(format!("{filter:?}"))
-        .show_ui(ui, |ui| {
-            use qs_doc::ColorFilter::*;
-            for f in [None, Grayscale, Sepia, Invert] {
-                ui.selectable_value(&mut filter, f, format!("{f:?}"));
-            }
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new("Filter")
+                .size(12.5)
+                .color(if filter == qs_doc::ColorFilter::None {
+                    theme::text_secondary()
+                } else {
+                    theme::text_primary()
+                }),
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            egui::ComboBox::from_id_salt("effect_color_filter")
+                .width(104.0)
+                .selected_text(format!("{filter:?}"))
+                .show_ui(ui, |ui| {
+                    use qs_doc::ColorFilter::*;
+                    for f in [None, Grayscale, Sepia, Invert] {
+                        ui.selectable_value(&mut filter, f, format!("{f:?}"));
+                    }
+                });
         });
+    });
     effects.color_filter = (filter != qs_doc::ColorFilter::None).then_some(filter);
     toggle(ui, "Page curl", &mut effects.page_curl);
     if let Some(pc) = &mut effects.page_curl {
