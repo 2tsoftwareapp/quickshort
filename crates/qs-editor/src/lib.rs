@@ -9,6 +9,7 @@ pub mod icons;
 pub mod image_panel;
 pub mod recovery;
 pub mod styles;
+pub mod templates;
 pub mod theme;
 pub mod toolbar;
 

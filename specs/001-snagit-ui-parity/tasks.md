@@ -28,8 +28,8 @@
 
 ## Phase 4: Combine Templates & Unified Share/Export (Priority: P4)
 
-- [ ] **T016** Implement unified Share/Export popover in `crates/qs-editor/src/toolbar.rs` (Copy, Save `.qsdoc`, Export PNG/JPEG/WebP with quality slider, Relay Share, Print).
-- [ ] **T017** Implement multi-image Combine Templates (`2-up`, `3-up`, `Step-by-Step Guide`) triggered from Filmstrip multi-selection.
+- [x] **T016** Implement unified Share/Export popover in `crates/qs-editor/src/toolbar.rs` (Copy, Save `.qsdoc`, Export PNG/JPEG/WebP with quality slider, Relay Share, Print).
+- [x] **T017** Implement multi-image Combine Templates (`2-up`, `3-up`, `Step-by-Step Guide`) triggered from Filmstrip multi-selection.
 
 ## Phase 5: Capture Profiles & Smart Simplify (Priority: P5)
 

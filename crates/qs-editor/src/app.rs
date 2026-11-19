@@ -9,6 +9,7 @@ use crate::{
     image_panel::{self, OrientCmd},
     recovery,
     styles,
+    templates::{self, CombineLayout},
     theme::{self, accent_blue, border_subtle, success_green, text_primary},
     toolbar::{self, ZoomCmd},
 };
@@ -26,6 +27,31 @@ enum CloseDecision {
     Save,
     Discard,
     Cancel,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum ExportFormat {
+    #[default]
+    Png,
+    Jpeg,
+    Webp,
+}
+
+impl ExportFormat {
+    fn ext(self) -> &'static str {
+        match self {
+            Self::Png => "png",
+            Self::Jpeg => "jpg",
+            Self::Webp => "webp",
+        }
+    }
+    fn label(self) -> &'static str {
+        match self {
+            Self::Png => "PNG (Lossless)",
+            Self::Jpeg => "JPEG (Compact)",
+            Self::Webp => "WebP",
+        }
+    }
 }
 
 struct SavedDocSession {
@@ -72,6 +98,12 @@ pub struct EditorApp {
     resize_w: u32,
     resize_h: u32,
     resize_lock: bool,
+    export_dialog_open: bool,
+    export_format: ExportFormat,
+    export_quality: u8,
+    combine_dialog_open: bool,
+    combine_layout: CombineLayout,
+    tray_selected: Vec<PathBuf>,
     show_layers: bool,
     show_inspector: bool,
     show_filmstrip: bool,
@@ -147,6 +179,12 @@ impl EditorApp {
             resize_w: init_w,
             resize_h: init_h,
             resize_lock: true,
+            export_dialog_open: false,
+            export_format: ExportFormat::Png,
+            export_quality: 90,
+            combine_dialog_open: false,
+            combine_layout: CombineLayout::SideBySide,
+            tray_selected: Vec::new(),
             canvas_anchor: (1, 1),
             show_layers: true,
             show_inspector: true,
@@ -757,6 +795,192 @@ impl EditorApp {
         Ok(())
     }
 
+    fn export_with_dialog(&mut self, fmt: ExportFormat, quality: u8) -> anyhow::Result<()> {
+        let default_name = self
+            .doc_path
+            .as_ref()
+            .and_then(|p| p.file_stem())
+            .and_then(|s| s.to_str())
+            .unwrap_or("export");
+        let Some(out_path) = rfd::FileDialog::new()
+            .set_file_name(format!("{default_name}.{}", fmt.ext()))
+            .add_filter(fmt.label(), &[fmt.ext()])
+            .save_file()
+        else {
+            return Ok(());
+        };
+        let flat = qs_render::render(self.editor.doc(), &self.base);
+        match fmt {
+            ExportFormat::Png => flat.save(&out_path)?,
+            ExportFormat::Jpeg => {
+                let rgb = image::DynamicImage::ImageRgba8(flat).to_rgb8();
+                let mut f = std::fs::File::create(&out_path)?;
+                let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut f, quality);
+                enc.encode_image(&rgb)?;
+            }
+            ExportFormat::Webp => {
+                image::DynamicImage::ImageRgba8(flat).save(&out_path)?;
+            }
+        }
+        let name = out_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("export");
+        self.show_toast(format!("Exported {name}"));
+        Ok(())
+    }
+
+    fn print_image(&mut self) -> anyhow::Result<()> {
+        let flat = qs_render::render(self.editor.doc(), &self.base);
+        let tmp = std::env::temp_dir().join(format!("quickshort_print_{}.png", std::process::id()));
+        flat.save(&tmp)?;
+        #[cfg(target_os = "macos")]
+        {
+            std::process::Command::new("open")
+                .args(["-a", "Preview"])
+                .arg(&tmp)
+                .spawn()?;
+        }
+        #[cfg(target_os = "linux")]
+        {
+            std::process::Command::new("xdg-open").arg(&tmp).spawn()?;
+        }
+        #[cfg(target_os = "windows")]
+        {
+            std::process::Command::new("cmd")
+                .args(["/c", "start", ""])
+                .arg(&tmp)
+                .spawn()?;
+        }
+        self.show_toast("Opened in system print viewer");
+        Ok(())
+    }
+
+    fn export_dialog(&mut self, ctx: &egui::Context) {
+        if !self.export_dialog_open {
+            return;
+        }
+        let mut open = self.export_dialog_open;
+        let mut do_export = false;
+        let mut do_copy = false;
+        let mut do_save = false;
+        let mut do_print = false;
+
+        egui::Window::new("Export & Share")
+            .frame(theme::modal_frame())
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.set_min_width(280.0);
+                theme::section_header(ui, "Format");
+                ui.horizontal(|ui| {
+                    for fmt in [ExportFormat::Png, ExportFormat::Jpeg, ExportFormat::Webp] {
+                        ui.selectable_value(&mut self.export_format, fmt, fmt.label());
+                    }
+                });
+                if self.export_format == ExportFormat::Jpeg {
+                    ui.add_space(4.0);
+                    ui.add(
+                        egui::Slider::new(&mut self.export_quality, 40..=100)
+                            .suffix("%")
+                            .text("Quality"),
+                    );
+                }
+                ui.add_space(10.0);
+                theme::section_header(ui, "Destination");
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button("Save Image As…").clicked() {
+                        do_export = true;
+                    }
+                    if ui.button("Copy Flattened").clicked() {
+                        do_copy = true;
+                    }
+                    if ui.button("Save .qsdoc").clicked() {
+                        do_save = true;
+                    }
+                    if ui.button("Print…").clicked() {
+                        do_print = true;
+                    }
+                });
+            });
+        self.export_dialog_open = open;
+
+        if do_export {
+            if let Err(e) = self.export_with_dialog(self.export_format, self.export_quality) {
+                self.show_toast(format!("Export failed: {e}"));
+            }
+            self.export_dialog_open = false;
+        } else if do_copy {
+            let _ = self.copy_to_clipboard();
+            self.export_dialog_open = false;
+        } else if do_save {
+            let _ = self.save();
+            self.export_dialog_open = false;
+        } else if do_print {
+            if let Err(e) = self.print_image() {
+                self.show_toast(format!("Print failed: {e}"));
+            }
+            self.export_dialog_open = false;
+        }
+    }
+
+    fn combine_dialog(&mut self, ctx: &egui::Context) {
+        if !self.combine_dialog_open {
+            return;
+        }
+        let mut open = self.combine_dialog_open;
+        let mut create = false;
+        egui::Window::new("Combine in Template")
+            .frame(theme::modal_frame())
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.set_min_width(260.0);
+                ui.label(format!(
+                    "Combining {} captures with numbered Step badges:",
+                    self.tray_selected.len()
+                ));
+                ui.add_space(6.0);
+                for layout in [
+                    CombineLayout::SideBySide,
+                    CombineLayout::VerticalSteps,
+                    CombineLayout::Grid2x2,
+                ] {
+                    ui.radio_value(&mut self.combine_layout, layout, layout.label());
+                }
+                ui.add_space(10.0);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("Create Combined Sheet").clicked() {
+                        create = true;
+                    }
+                });
+            });
+        self.combine_dialog_open = open;
+
+        if create {
+            match templates::build_combined_document(
+                &self.tray_selected,
+                self.combine_layout,
+                self.editor.doc().background,
+            ) {
+                Ok((doc, base)) => {
+                    self.doc_path = None;
+                    self.apply_document(doc, base);
+                    self.editor.mark_modified();
+                    self.touch();
+                    self.tray_selected.clear();
+                    self.combine_dialog_open = false;
+                    self.show_toast("Created combined template");
+                }
+                Err(e) => {
+                    self.show_toast(format!("Combine failed: {e}"));
+                }
+            }
+        }
+    }
+
     pub fn copy_to_clipboard(&mut self) -> anyhow::Result<()> {
         let region = self.editor.doc().region;
         let (flat, what) = match region.and_then(|r| {
@@ -1179,7 +1403,7 @@ impl eframe::App for EditorApp {
             let _ = self.open_dialog();
         }
         if top_res.export {
-            let _ = self.export_png(None);
+            self.export_dialog_open = !self.export_dialog_open;
         }
         if top_res.canvas {
             self.canvas_dialog_open = !self.canvas_dialog_open;
@@ -1192,6 +1416,8 @@ impl eframe::App for EditorApp {
         }
         self.canvas_dialog(&ctx);
         self.flatten_dialog(&ctx);
+        self.export_dialog(&ctx);
+        self.combine_dialog(&ctx);
 
         // Bottom Studio Status Bar (must be added before CentralPanel)
         egui::Panel::bottom("status_bar")
@@ -1314,20 +1540,28 @@ impl eframe::App for EditorApp {
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.vertical(|ui| {
-                            ui.set_width(58.0);
+                            ui.set_width(74.0);
                             ui.label(
                                 egui::RichText::new("RECENT")
                                     .size(10.0)
                                     .strong()
                                     .color(theme::text_tertiary()),
                             );
-                            ui.add_space(4.0);
+                            ui.add_space(3.0);
                             if ui
                                 .small_button("Refresh")
-                                .on_hover_text("Rescan recent captures")
+                                .on_hover_text("Rescan recent captures (Shift+Click to multi-select)")
                                 .clicked()
                             {
                                 refresh_tray = true;
+                            }
+                            if self.tray_selected.len() >= 2
+                                && ui
+                                    .small_button(format!("Combine ({})", self.tray_selected.len()))
+                                    .on_hover_text("Combine selected captures into a template")
+                                    .clicked()
+                            {
+                                self.combine_dialog_open = true;
                             }
                         });
                         ui.separator();
@@ -1353,6 +1587,10 @@ impl eframe::App for EditorApp {
                                         for item in &self.filmstrip.items {
                                             let is_active =
                                                 self.doc_path.as_deref() == Some(item.path.as_path());
+                                            let is_tray_sel = self
+                                                .tray_selected
+                                                .iter()
+                                                .any(|p| p == &item.path);
                                             let is_dirty = is_active && self.unsaved
                                                 || self
                                                     .session_cache
@@ -1369,7 +1607,9 @@ impl eframe::App for EditorApp {
                                             } else {
                                                 theme::bg_card()
                                             };
-                                            let border = if is_active {
+                                            let border = if is_tray_sel {
+                                                Stroke::new(1.5, theme::success_green())
+                                            } else if is_active {
                                                 Stroke::new(1.5, theme::accent_blue())
                                             } else if resp.hovered() {
                                                 Stroke::new(1.0, theme::border_hot())
@@ -1429,8 +1669,26 @@ impl eframe::App for EditorApp {
                                                     theme::amber_orange(),
                                                 );
                                             }
-                                            if resp.on_hover_text(&item.label).clicked() {
-                                                switch_target = Some(item.path.clone());
+                                            if resp
+                                                .on_hover_text(format!(
+                                                    "{} (Shift+Click to select for Combine)",
+                                                    item.label
+                                                ))
+                                                .clicked()
+                                            {
+                                                if ui.input(|i| i.modifiers.shift) {
+                                                    if let Some(pos) = self
+                                                        .tray_selected
+                                                        .iter()
+                                                        .position(|p| p == &item.path)
+                                                    {
+                                                        self.tray_selected.remove(pos);
+                                                    } else {
+                                                        self.tray_selected.push(item.path.clone());
+                                                    }
+                                                } else {
+                                                    switch_target = Some(item.path.clone());
+                                                }
                                             }
                                         }
                                     });
@@ -1984,6 +2242,12 @@ mod tests {
             resize_w: 20,
             resize_h: 10,
             resize_lock: true,
+            export_dialog_open: false,
+            export_format: ExportFormat::Png,
+            export_quality: 90,
+            combine_dialog_open: false,
+            combine_layout: CombineLayout::SideBySide,
+            tray_selected: Vec::new(),
             canvas_anchor: (1, 1),
             layer_drag_id: None,
             alignment_open: false,
