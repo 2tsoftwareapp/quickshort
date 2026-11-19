@@ -10,6 +10,56 @@ pub struct Effects {
     pub watermark: Option<WatermarkEffect>,
     pub edge: Option<EdgeEffect>,
     pub color_adjust: Option<ColorAdjustEffect>,
+    pub color_filter: Option<ColorFilter>,
+    pub page_curl: Option<PageCurlEffect>,
+    pub reflection: Option<ReflectionEffect>,
+}
+
+/// Preset color filters applied after `color_adjust`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ColorFilter {
+    #[default]
+    None,
+    Grayscale,
+    Sepia,
+    Invert,
+}
+
+/// Decorative curled corner effect.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PageCurlEffect {
+    pub corner: Anchor,
+    pub size: f32,
+    pub shadow: f32,
+}
+impl Default for PageCurlEffect {
+    fn default() -> Self {
+        Self {
+            corner: Anchor::BottomRight,
+            size: 36.0,
+            shadow: 0.45,
+        }
+    }
+}
+
+/// Mirror reflection below the framed image.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ReflectionEffect {
+    pub height: f32,
+    pub opacity: f32,
+    pub gap: f32,
+}
+impl Default for ReflectionEffect {
+    fn default() -> Self {
+        Self {
+            height: 48.0,
+            opacity: 0.35,
+            gap: 4.0,
+        }
+    }
 }
 
 /// Brightness/contrast in -1..=1, saturation 0..=2; defaults are identity.
@@ -171,6 +221,20 @@ impl Effects {
         if let Some(e) = &self.edge {
             anyhow::ensure!(range(e.amplitude, 0.0, 256.0), "invalid torn edge");
         }
+        if let Some(pc) = &self.page_curl {
+            anyhow::ensure!(
+                range(pc.size, 4.0, 256.0) && range(pc.shadow, 0.0, 1.0),
+                "invalid page curl"
+            );
+        }
+        if let Some(rf) = &self.reflection {
+            anyhow::ensure!(
+                range(rf.height, 4.0, 512.0)
+                    && range(rf.opacity, 0.0, 1.0)
+                    && range(rf.gap, 0.0, 64.0),
+                "invalid reflection"
+            );
+        }
         Ok(())
     }
 
@@ -192,6 +256,11 @@ impl Effects {
                 r += (halo + dx).max(0.0);
                 t += (halo - dy).max(0.0);
                 b += (halo + dy).max(0.0);
+            }
+        }
+        if let Some(rf) = &self.reflection {
+            if rf.opacity > 0.0 && rf.height > 0.0 {
+                b += ((rf.gap + rf.height) * scale).ceil();
             }
         }
         EffectLayout {

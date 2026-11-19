@@ -390,6 +390,7 @@ pub fn render_top_bar(
         (Tool::Stamp, "Stamp (G)"),
         (Tool::Eraser, "Eraser (E)"),
         (Tool::Crop, "Crop / Trim (K)"),
+        (Tool::Cutout, "Cutout Strip (X)"),
     ];
 
     let tool_w = 29.0;
@@ -413,13 +414,14 @@ pub fn render_top_bar(
         (Tool::Blur, "Blur / Pixelate (B)"),
         (Tool::Crop, "Crop / Trim (K)"),
     ];
-    let overflow_tools: [(Tool, &str); 6] = [
+    let overflow_tools: [(Tool, &str); 7] = [
         (Tool::Line, "Line (L)"),
         (Tool::Ellipse, "Ellipse (O)"),
         (Tool::Magnify, "Magnify Lens (I)"),
         (Tool::Spotlight, "Spotlight (F)"),
         (Tool::Stamp, "Stamp (G)"),
         (Tool::Eraser, "Eraser (E)"),
+        (Tool::Cutout, "Cutout Strip (X)"),
     ];
 
     let more_w = 34.0;
@@ -867,6 +869,7 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
                 Tool::Stamp => ContextKind::Stamp,
                 Tool::Eraser => ContextKind::Eraser,
                 Tool::Crop => ContextKind::Generic,
+                Tool::Cutout => ContextKind::Generic,
                 Tool::SelectRegion => ContextKind::Generic,
             };
             (

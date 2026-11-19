@@ -42,6 +42,7 @@ pub enum Tool {
     Stamp,
     Eraser,
     Crop,
+    Cutout,
     SelectRegion,
 }
 
@@ -71,6 +72,8 @@ pub struct Style {
     pub stamp_kind: StampKind,
     pub eraser_width: f32,
     pub step_radius: f32,
+    pub cutout_axis: qs_doc::CutoutAxis,
+    pub cutout_seam: qs_doc::CutoutSeam,
 }
 
 impl Default for Style {
@@ -91,6 +94,8 @@ impl Default for Style {
             stamp_kind: StampKind::Approved,
             eraser_width: 12.0,
             step_radius: 12.0,
+            cutout_axis: qs_doc::CutoutAxis::Horizontal,
+            cutout_seam: qs_doc::CutoutSeam::Jagged,
         }
     }
 }
@@ -154,6 +159,7 @@ struct Snap {
     step_start: u32,
     orientation: Orientation,
     effects: qs_doc::Effects,
+    cutouts: Vec<qs_doc::Cutout>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -178,6 +184,9 @@ enum Drag {
     },
     TextSelect,
     Crop {
+        start: PointF,
+    },
+    Cutout {
         start: PointF,
     },
     Region {
@@ -208,6 +217,8 @@ pub struct Editor {
     pub sticky_tools: bool,
     /// Crop rectangle being previewed by the Crop tool (transient, logical px).
     crop_rect: Option<RectF>,
+    /// Cutout strip being previewed by the Cutout tool (transient, logical px).
+    cutout_rect: Option<RectF>,
     /// Region rectangle being previewed by the SelectRegion tool (transient, logical px).
     region_rect: Option<RectF>,
     /// Marquee rectangle being previewed by the Select tool (transient, logical px).
@@ -407,6 +418,7 @@ impl Editor {
             sticky_tools: false,
             rev: 0,
             crop_rect: None,
+            cutout_rect: None,
             region_rect: None,
             marquee_rect: None,
             pending_shift: false,
@@ -421,6 +433,10 @@ impl Editor {
     /// Crop rectangle currently previewed by the Crop tool, if a drag is on.
     pub fn crop_rect(&self) -> Option<RectF> {
         self.crop_rect
+    }
+
+    pub fn cutout_rect(&self) -> Option<RectF> {
+        self.cutout_rect
     }
 
     /// Marquee rectangle preview (Select tool drag on empty canvas).
@@ -522,6 +538,7 @@ impl Editor {
             step_start: self.doc.step_start,
             orientation: self.doc.orientation,
             effects: self.doc.effects.clone(),
+            cutouts: self.doc.cutouts.clone(),
         }
     }
 
@@ -533,6 +550,7 @@ impl Editor {
         self.doc.step_start = s.step_start;
         self.doc.orientation = s.orientation;
         self.doc.effects = s.effects;
+        self.doc.cutouts = s.cutouts;
         self.selection.retain(|id| self.doc.get(*id).is_some());
     }
 
@@ -700,6 +718,12 @@ impl Editor {
             self.tool = Tool::Select;
             return;
         }
+        if matches!(self.drag, Drag::Cutout { .. }) {
+            self.drag = Drag::None;
+            self.cutout_rect = None;
+            self.tool = Tool::Select;
+            return;
+        }
         if matches!(self.drag, Drag::Region { .. }) {
             self.drag = Drag::None;
             self.region_rect = None;
@@ -770,6 +794,10 @@ impl Editor {
         }
         if self.tool == Tool::Crop {
             self.drag = Drag::Crop { start: p };
+            return;
+        }
+        if self.tool == Tool::Cutout {
+            self.drag = Drag::Cutout { start: p };
             return;
         }
         if self.tool == Tool::SelectRegion {
@@ -1013,6 +1041,10 @@ impl Editor {
                 let start = *start;
                 self.crop_rect = Some(RectF::from_points(start, p));
             }
+            Drag::Cutout { start } => {
+                let start = *start;
+                self.cutout_rect = Some(RectF::from_points(start, p));
+            }
             Drag::Region { start } => {
                 let start = *start;
                 self.region_rect = Some(RectF::from_points(start, p));
@@ -1070,6 +1102,23 @@ impl Editor {
             Drag::Crop { .. } => {
                 if let Some(r) = self.crop_rect.take() {
                     self.set_view(r);
+                }
+                self.reset_tool();
+            }
+            Drag::Cutout { .. } => {
+                if let Some(r) = self.cutout_rect.take() {
+                    let a = self.doc.to_display(PointF::new(r.x, r.y));
+                    let b = self.doc.to_display(PointF::new(r.right(), r.bottom()));
+                    let (start, end) = match self.style.cutout_axis {
+                        qs_doc::CutoutAxis::Horizontal => (a.y.min(b.y), a.y.max(b.y)),
+                        qs_doc::CutoutAxis::Vertical => (a.x.min(b.x), a.x.max(b.x)),
+                    };
+                    self.apply_cutout(
+                        self.style.cutout_axis,
+                        start,
+                        end,
+                        self.style.cutout_seam,
+                    );
                 }
                 self.reset_tool();
             }
@@ -1855,6 +1904,36 @@ impl Editor {
             return;
         }
         self.record(|e| e.doc.view = v);
+    }
+
+    /// Non-destructive strip removal in oriented display coordinates (1 undo step).
+    /// Rejects strips < 4 px or >= 90% of the remaining span.
+    pub fn apply_cutout(
+        &mut self,
+        axis: qs_doc::CutoutAxis,
+        start: f32,
+        end: f32,
+        seam: qs_doc::CutoutSeam,
+    ) -> bool {
+        let eff = self.doc.effective_display_size();
+        let total = match axis {
+            qs_doc::CutoutAxis::Horizontal => eff.h,
+            qs_doc::CutoutAxis::Vertical => eff.w,
+        };
+        let (s, e) = (start.min(end).max(0.0), start.max(end).min(total));
+        let span = e - s;
+        if !span.is_finite() || span < 4.0 || span >= total * 0.90 {
+            return false;
+        }
+        self.record(|ed| {
+            ed.doc.cutouts.push(qs_doc::Cutout {
+                axis,
+                start: s,
+                end: e,
+                seam,
+            });
+        });
+        true
     }
 
     pub fn set_background(&mut self, argb: u32) {

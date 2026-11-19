@@ -159,10 +159,185 @@ fn adjust(img: &mut RgbaImage, c: &qs_doc::ColorAdjustEffect) {
     }
 }
 
+fn apply_cutout_one(img: RgbaImage, c: &qs_doc::Cutout, scale: f32) -> RgbaImage {
+    let (w, h) = img.dimensions();
+    let s = (c.start * scale).round().max(0.0) as u32;
+    let e = (c.end * scale).round().max(0.0) as u32;
+    match c.axis {
+        qs_doc::CutoutAxis::Horizontal => {
+            let s = s.min(h);
+            let e = e.min(h);
+            if e <= s || (e - s) >= h {
+                return img;
+            }
+            let new_h = h - (e - s);
+            let mut out = RgbaImage::new(w, new_h);
+            for y in 0..s {
+                for x in 0..w {
+                    out.put_pixel(x, y, *img.get_pixel(x, y));
+                }
+            }
+            for y in e..h {
+                let dy = y - (e - s);
+                for x in 0..w {
+                    out.put_pixel(x, dy, *img.get_pixel(x, y));
+                }
+            }
+            let seam_amp = (4.0 * scale).round().max(2.0);
+            for x in 0..w {
+                let offset = match c.seam {
+                    qs_doc::CutoutSeam::Clean => 0i32,
+                    qs_doc::CutoutSeam::Jagged => {
+                        let period = (10.0 * scale).max(4.0);
+                        let t = (x as f32 % period) / period;
+                        let tri = if t < 0.5 { t * 2.0 } else { (1.0 - t) * 2.0 };
+                        ((tri - 0.5) * seam_amp).round() as i32
+                    }
+                    qs_doc::CutoutSeam::Wave => {
+                        let freq = std::f32::consts::TAU / (16.0 * scale).max(6.0);
+                        ((x as f32 * freq).sin() * seam_amp * 0.5).round() as i32
+                    }
+                };
+                let sy = (s as i32 + offset).clamp(0, new_h as i32 - 1) as u32;
+                let p = out.get_pixel(x, sy);
+                let seam_col = Rgba([
+                    p[0].saturating_sub(45),
+                    p[1].saturating_sub(45),
+                    p[2].saturating_sub(45),
+                    p[3].max(180),
+                ]);
+                out.put_pixel(x, sy, seam_col);
+            }
+            out
+        }
+        qs_doc::CutoutAxis::Vertical => {
+            let s = s.min(w);
+            let e = e.min(w);
+            if e <= s || (e - s) >= w {
+                return img;
+            }
+            let new_w = w - (e - s);
+            let mut out = RgbaImage::new(new_w, h);
+            for y in 0..h {
+                for x in 0..s {
+                    out.put_pixel(x, y, *img.get_pixel(x, y));
+                }
+                for x in e..w {
+                    out.put_pixel(x - (e - s), y, *img.get_pixel(x, y));
+                }
+            }
+            let seam_amp = (4.0 * scale).round().max(2.0);
+            for y in 0..h {
+                let offset = match c.seam {
+                    qs_doc::CutoutSeam::Clean => 0i32,
+                    qs_doc::CutoutSeam::Jagged => {
+                        let period = (10.0 * scale).max(4.0);
+                        let t = (y as f32 % period) / period;
+                        let tri = if t < 0.5 { t * 2.0 } else { (1.0 - t) * 2.0 };
+                        ((tri - 0.5) * seam_amp).round() as i32
+                    }
+                    qs_doc::CutoutSeam::Wave => {
+                        let freq = std::f32::consts::TAU / (16.0 * scale).max(6.0);
+                        ((y as f32 * freq).sin() * seam_amp * 0.5).round() as i32
+                    }
+                };
+                let sx = (s as i32 + offset).clamp(0, new_w as i32 - 1) as u32;
+                let p = out.get_pixel(sx, y);
+                let seam_col = Rgba([
+                    p[0].saturating_sub(45),
+                    p[1].saturating_sub(45),
+                    p[2].saturating_sub(45),
+                    p[3].max(180),
+                ]);
+                out.put_pixel(sx, y, seam_col);
+            }
+            out
+        }
+    }
+}
+
+fn apply_filter(img: &mut RgbaImage, filter: qs_doc::ColorFilter) {
+    match filter {
+        qs_doc::ColorFilter::None => {}
+        qs_doc::ColorFilter::Grayscale => {
+            for p in img.pixels_mut() {
+                let l = (0.299 * p[0] as f32 + 0.587 * p[1] as f32 + 0.114 * p[2] as f32)
+                    .round()
+                    .clamp(0.0, 255.0) as u8;
+                p[0] = l;
+                p[1] = l;
+                p[2] = l;
+            }
+        }
+        qs_doc::ColorFilter::Sepia => {
+            for p in img.pixels_mut() {
+                let (r, g, b) = (p[0] as f32, p[1] as f32, p[2] as f32);
+                p[0] = (0.393 * r + 0.769 * g + 0.189 * b).round().clamp(0.0, 255.0) as u8;
+                p[1] = (0.349 * r + 0.686 * g + 0.168 * b).round().clamp(0.0, 255.0) as u8;
+                p[2] = (0.272 * r + 0.534 * g + 0.131 * b).round().clamp(0.0, 255.0) as u8;
+            }
+        }
+        qs_doc::ColorFilter::Invert => {
+            for p in img.pixels_mut() {
+                p[0] = 255 - p[0];
+                p[1] = 255 - p[1];
+                p[2] = 255 - p[2];
+            }
+        }
+    }
+}
+
+fn apply_page_curl(img: &mut RgbaImage, pc: &qs_doc::PageCurlEffect, scale: f32) {
+    let (w, h) = (img.width() as f32, img.height() as f32);
+    let sz = (pc.size * scale).min(w * 0.45).min(h * 0.45).max(4.0);
+    if w < 8.0 || h < 8.0 {
+        return;
+    }
+    let sh_w = (sz * 0.25).max(2.0);
+    for (x, y, p) in img.enumerate_pixels_mut() {
+        let px = x as f32 + 0.5;
+        let py = y as f32 + 0.5;
+        // Distance from the corner in normalized corner-local coords (0..sz)
+        let (cx, cy) = match pc.corner {
+            qs_doc::Anchor::TopLeft => (px, py),
+            qs_doc::Anchor::TopRight => (w - px, py),
+            qs_doc::Anchor::BottomLeft => (px, h - py),
+            _ => (w - px, h - py),
+        };
+        if cx < 0.0 || cy < 0.0 {
+            continue;
+        }
+        let sum = cx + cy;
+        if sum < sz {
+            // Inside the curled-away corner: either paper back (inside triangle) or cut away
+            let in_fold = cx <= sz * 0.5 && cy <= sz * 0.5 && sum >= sz * 0.5;
+            if in_fold || (cx < sz && cy < sz && (cx - sz * 0.5).abs() + (cy - sz * 0.5).abs() <= sz * 0.5 && sum >= sz * 0.55) {
+                let shade = (225.0 + 25.0 * ((sz - sum) / sz)).clamp(190.0, 250.0) as u8;
+                *p = Rgba([shade, shade, shade.saturating_sub(4), 255]);
+            } else {
+                *p = Rgba([0, 0, 0, 0]);
+            }
+        } else if sum < sz + sh_w && pc.shadow > 0.0 {
+            // Subtle fold shadow along the diagonal
+            let t = 1.0 - (sum - sz) / sh_w;
+            let dim = 1.0 - 0.35 * pc.shadow * t;
+            p[0] = (p[0] as f32 * dim).round() as u8;
+            p[1] = (p[1] as f32 * dim).round() as u8;
+            p[2] = (p[2] as f32 * dim).round() as u8;
+        }
+    }
+}
+
 pub fn apply(doc: &Document, mut content: RgbaImage) -> RgbaImage {
+    for c in &doc.cutouts {
+        content = apply_cutout_one(content, c, doc.scale);
+    }
     // Adjust content + annotations first so watermark/border/shadow keep their chosen colors.
     if let Some(c) = &doc.effects.color_adjust {
         adjust(&mut content, c);
+    }
+    if let Some(f) = doc.effects.color_filter {
+        apply_filter(&mut content, f);
     }
     if let Some(wm) = &doc.effects.watermark {
         stamp(&mut content, wm, doc.scale);
@@ -170,7 +345,13 @@ pub fn apply(doc: &Document, mut content: RgbaImage) -> RgbaImage {
     if let Some(e) = &doc.effects.edge {
         tear(&mut content, e, doc.scale);
     }
-    if doc.effects.border.is_none() && doc.effects.shadow.is_none() {
+    if let Some(pc) = &doc.effects.page_curl {
+        apply_page_curl(&mut content, pc, doc.scale);
+    }
+    if doc.effects.border.is_none()
+        && doc.effects.shadow.is_none()
+        && doc.effects.reflection.is_none()
+    {
         return content;
     }
     let scale = doc.scale;
@@ -239,5 +420,42 @@ pub fn apply(doc: &Document, mut content: RgbaImage) -> RgbaImage {
         }
     }
     image::imageops::overlay(&mut out, &frame, fx, fy);
+    if let Some(rf) = &doc.effects.reflection {
+        if rf.opacity > 0.0 && rf.height > 0.0 {
+            let rh = ((rf.height * scale).round() as u32).min(frame.height());
+            let gap = (rf.gap * scale).round() as i64;
+            let top_y = fy + frame.height() as i64 + gap;
+            for ry in 0..rh {
+                let dst_y = top_y + ry as i64;
+                if dst_y < 0 || dst_y >= out.height() as i64 {
+                    continue;
+                }
+                let src_y = frame.height() - 1 - ry;
+                let fade = rf.opacity * (1.0 - ry as f32 / rh.max(1) as f32);
+                for rx in 0..frame.width() {
+                    let dst_x = fx + rx as i64;
+                    if dst_x < 0 || dst_x >= out.width() as i64 {
+                        continue;
+                    }
+                    let sp = frame.get_pixel(rx, src_y);
+                    let sa = (sp[3] as f32 / 255.0) * fade;
+                    if sa <= 0.0 {
+                        continue;
+                    }
+                    let dp = out.get_pixel_mut(dst_x as u32, dst_y as u32);
+                    let da = dp[3] as f32 / 255.0;
+                    let oa = sa + da * (1.0 - sa);
+                    if oa > 0.0 {
+                        for k in 0..3 {
+                            dp[k] = ((sp[k] as f32 * sa + dp[k] as f32 * da * (1.0 - sa)) / oa)
+                                .round()
+                                .clamp(0.0, 255.0) as u8;
+                        }
+                        dp[3] = (oa * 255.0).round() as u8;
+                    }
+                }
+            }
+        }
+    }
     out
 }

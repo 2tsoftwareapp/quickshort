@@ -13,7 +13,10 @@ mod geom;
 mod orient;
 pub mod qsdoc;
 
-pub use effects::{Anchor, BorderEffect, ColorAdjustEffect, EdgeEffect, EffectLayout, Effects, ShadowEffect, WatermarkEffect};
+pub use effects::{
+    Anchor, BorderEffect, ColorAdjustEffect, ColorFilter, EdgeEffect, EffectLayout, Effects,
+    PageCurlEffect, ReflectionEffect, ShadowEffect, WatermarkEffect,
+};
 pub use geom::{PointF, RectF, SizeF};
 pub use orient::Orientation;
 
@@ -379,6 +382,32 @@ pub struct Meta {
     pub ocr_text: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CutoutAxis {
+    Horizontal,
+    Vertical,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CutoutSeam {
+    Clean,
+    #[default]
+    Jagged,
+    Wave,
+}
+
+/// Non-destructive strip removal in oriented display coordinates.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Cutout {
+    pub axis: CutoutAxis,
+    pub start: f32,
+    pub end: f32,
+    #[serde(default)]
+    pub seam: CutoutSeam,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Document {
     pub version: u32,
@@ -411,6 +440,9 @@ pub struct Document {
     pub orientation: Orientation,
     #[serde(default)]
     pub effects: Effects,
+    /// Non-destructive strip cutouts applied in oriented display space.
+    #[serde(default)]
+    pub cutouts: Vec<Cutout>,
 }
 
 fn white() -> u32 {
@@ -446,6 +478,7 @@ impl Document {
             meta: Meta::default(),
             orientation: Orientation::Normal,
             effects: Effects::default(),
+            cutouts: Vec::new(),
         }
     }
 
@@ -454,10 +487,27 @@ impl Document {
         self.orientation.output_size(SizeF::new(self.view.w, self.view.h))
     }
 
-    /// Shared effects layout after orientation.
+    /// Logical size of the oriented output after cutouts (before effects).
+    pub fn effective_display_size(&self) -> SizeF {
+        let mut s = self.display_size();
+        for c in &self.cutouts {
+            let span = (c.end - c.start).max(0.0);
+            match c.axis {
+                CutoutAxis::Horizontal => s.h = (s.h - span).max(1.0),
+                CutoutAxis::Vertical => s.w = (s.w - span).max(1.0),
+            }
+        }
+        s
+    }
+
+    /// Shared effects layout after orientation and cutouts.
     pub fn effect_layout(&self) -> EffectLayout {
-        let s = SizeF::new((self.view.w*self.scale).round().max(1.0)/self.scale, (self.view.h*self.scale).round().max(1.0)/self.scale);
-        self.effects.layout(self.orientation.output_size(s), self.scale)
+        let eff = self.effective_display_size();
+        let s = SizeF::new(
+            (eff.w * self.scale).round().max(1.0) / self.scale,
+            (eff.h * self.scale).round().max(1.0) / self.scale,
+        );
+        self.effects.layout(s, self.scale)
     }
 
     /// Document point -> oriented output point (logical, origin at the

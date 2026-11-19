@@ -21,10 +21,10 @@
 
 ## Phase 3: Snagit Image Tools & Effects (Priority: P3)
 
-- [ ] **T012** Implement `Cutout` operation in `crates/qs-doc`, `crates/qs-edit`, and `crates/qs-render` (horizontal/vertical strip removal, clean/jagged/wave seam, 1-step Undo, safety guard against `>= 90%` removal).
-- [ ] **T013** Add `Tool::Cutout` UI & icon in `crates/qs-editor` (`icons.rs`, `toolbar.rs`, `canvas.rs` drag preview).
-- [ ] **T014** Implement `Image Resize` (Lanczos3 / bilinear resampling with aspect-ratio lock) in `crates/qs-edit` and add tab/mode in the `Canvas` dialog of `crates/qs-editor/src/app.rs`.
-- [ ] **T015** [P] Add `Page Curl`, `Reflection`, and `Color Filters` (Grayscale, Sepia, Invert) to `Effects` in `crates/qs-doc`, `crates/qs-render`, and `crates/qs-editor/src/image_panel.rs` with pixel tests.
+- [x] **T012** Implement `Cutout` operation in `crates/qs-doc`, `crates/qs-edit`, and `crates/qs-render` (horizontal/vertical strip removal, clean/jagged/wave seam, 1-step Undo, safety guard against `>= 90%` removal).
+- [x] **T013** Add `Tool::Cutout` UI & icon in `crates/qs-editor` (`icons.rs`, `toolbar.rs`, `canvas.rs` drag preview).
+- [x] **T014** Implement `Image Resize` (Lanczos3 / bilinear resampling with aspect-ratio lock) in `crates/qs-edit` and add tab/mode in the `Canvas` dialog of `crates/qs-editor/src/app.rs`.
+- [x] **T015** [P] Add `Page Curl`, `Reflection`, and `Color Filters` (Grayscale, Sepia, Invert) to `Effects` in `crates/qs-doc`, `crates/qs-render`, and `crates/qs-editor/src/image_panel.rs` with pixel tests.
 
 ## Phase 4: Combine Templates & Unified Share/Export (Priority: P4)
 

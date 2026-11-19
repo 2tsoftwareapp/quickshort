@@ -241,6 +241,19 @@ pub fn paint_crop_overlay(painter: &mut egui::Painter, crop_screen: Rect, screen
     );
 }
 
+/// Cutout preview: highlight the strip that will be spliced out.
+pub fn paint_cutout_overlay(painter: &mut egui::Painter, strip_screen: Rect, screen_rect: Rect) {
+    let p = painter.with_clip_rect(screen_rect);
+    let col = theme::danger_red();
+    p.rect_filled(strip_screen, 0.0, col.gamma_multiply(0.28));
+    p.rect_stroke(
+        strip_screen,
+        0.0,
+        Stroke::new(1.5, col),
+        StrokeKind::Outside,
+    );
+}
+
 /// Paint a committed selection region outline: white core + black halo.
 pub fn paint_region(painter: &egui::Painter, region_screen: Rect) {
     painter.rect_stroke(

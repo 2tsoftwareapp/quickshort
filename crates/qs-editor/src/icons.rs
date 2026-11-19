@@ -185,6 +185,13 @@ pub fn draw_tool_icon(painter: &Painter, c: Pos2, tool: Tool, color: Color32) {
             );
             painter.circle_stroke(p(c, 0.0, 0.0), 1.2, thin);
         }
+        Tool::Cutout => {
+            // Split-strip cutout icon: top/bottom bars + dashed cut line
+            painter.line_segment([p(c, -5.5, -4.0), p(c, 5.5, -4.0)], st);
+            painter.line_segment([p(c, -5.5, 4.0), p(c, 5.5, 4.0)], st);
+            painter.line_segment([p(c, -5.5, 0.0), p(c, -1.5, 0.0)], thin);
+            painter.line_segment([p(c, 1.5, 0.0), p(c, 5.5, 0.0)], thin);
+        }
         Tool::SelectRegion => {
             // Dashed-style selection region: white core + black halo
             let size = 9.6;

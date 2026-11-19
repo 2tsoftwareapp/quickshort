@@ -91,6 +91,7 @@ impl QuickStyle {
             stamp_kind: self.stamp_kind,
             eraser_width: self.eraser_width,
             step_radius: self.step_radius,
+            ..Style::default()
         }
     }
 }
@@ -114,6 +115,7 @@ pub fn tool_key(tool: Tool) -> &'static str {
         Tool::Stamp => "stamp",
         Tool::Eraser => "eraser",
         Tool::Crop => "crop",
+        Tool::Cutout => "cutout",
         Tool::SelectRegion => "region",
     }
 }
@@ -245,7 +247,7 @@ pub fn defaults_for(tool: Tool) -> Vec<QuickStyle> {
                 q
             })
             .collect(),
-        Tool::Select | Tool::Crop | Tool::SelectRegion => Vec::new(),
+        Tool::Select | Tool::Crop | Tool::Cutout | Tool::SelectRegion => Vec::new(),
     };
     out.truncate(PRESETS_PER_TOOL);
     out
@@ -373,6 +375,7 @@ pub fn tool_label(tool: Tool) -> &'static str {
         Tool::Stamp => "Stamp",
         Tool::Eraser => "Eraser",
         Tool::Crop => "Crop",
+        Tool::Cutout => "Cutout",
         Tool::SelectRegion => "Region",
     }
 }

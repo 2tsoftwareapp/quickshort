@@ -69,6 +69,9 @@ pub struct EditorApp {
     confirm_flatten: bool,
     canvas_insets: [f32; 4],
     canvas_background: u32,
+    resize_w: u32,
+    resize_h: u32,
+    resize_lock: bool,
     show_layers: bool,
     show_inspector: bool,
     show_filmstrip: bool,
@@ -117,6 +120,7 @@ impl EditorApp {
             .clamp(0.2, 1.0);
         view.zoom = initial_zoom;
 
+        let (init_w, init_h) = (base.width().max(1), base.height().max(1));
         let filmstrip = Filmstrip::new(doc_path.as_deref());
         let mut app = Self {
             editor: Editor::new(doc),
@@ -140,6 +144,9 @@ impl EditorApp {
             confirm_flatten: false,
             canvas_insets: [0.0; 4],
             canvas_background,
+            resize_w: init_w,
+            resize_h: init_h,
+            resize_lock: true,
             canvas_anchor: (1, 1),
             show_layers: true,
             show_inspector: true,
@@ -434,6 +441,7 @@ impl EditorApp {
         let mut fit_to_image = false;
         let mut fit_to_objects = false;
         let mut trim = false;
+        let mut resample = false;
         egui::Window::new("Canvas")
             .frame(theme::modal_frame())
             .collapsible(false)
@@ -517,10 +525,59 @@ impl EditorApp {
                         }
                     });
                 });
+                ui.add_space(6.0);
+                ui.separator();
+                ui.label("Resample image (px)");
+                ui.horizontal(|ui| {
+                    let (bw, bh) = (self.base.width().max(1), self.base.height().max(1));
+                    let aspect = bw as f32 / bh as f32;
+                    let w_resp = ui.add(
+                        egui::DragValue::new(&mut self.resize_w)
+                            .range(1..=16384)
+                            .prefix("W: "),
+                    );
+                    if w_resp.changed() && self.resize_lock {
+                        self.resize_h = ((self.resize_w as f32 / aspect).round() as u32).max(1);
+                    }
+                    let h_resp = ui.add(
+                        egui::DragValue::new(&mut self.resize_h)
+                            .range(1..=16384)
+                            .prefix("H: "),
+                    );
+                    if h_resp.changed() && self.resize_lock {
+                        self.resize_w = ((self.resize_h as f32 * aspect).round() as u32).max(1);
+                    }
+                    ui.checkbox(&mut self.resize_lock, "Lock");
+                    if ui.button("Resize").clicked() {
+                        resample = true;
+                    }
+                });
             });
         self.canvas_dialog_open = open;
 
-        if trim {
+        if resample {
+            let nw = self.resize_w.clamp(1, 16384);
+            let nh = self.resize_h.clamp(1, 16384);
+            if nw != self.base.width() || nh != self.base.height() {
+                let resized =
+                    image::imageops::resize(&self.base, nw, nh, image::imageops::FilterType::Lanczos3);
+                let sx = nw as f32 / self.base.width().max(1) as f32;
+                let sy = nh as f32 / self.base.height().max(1) as f32;
+                let mut doc = self.editor.doc().clone();
+                doc.base_size = qs_doc::SizeF::new(nw as f32 / doc.scale, nh as f32 / doc.scale);
+                doc.view = RectF::new(
+                    doc.view.x * sx,
+                    doc.view.y * sy,
+                    doc.view.w * sx,
+                    doc.view.h * sy,
+                );
+                self.apply_document(doc, resized);
+                self.editor.mark_modified();
+                self.touch();
+                self.show_toast(format!("Resized image to {nw}×{nh}"));
+            }
+            self.canvas_dialog_open = false;
+        } else if trim {
             if let Some(rect) = qs_edit::trim::calculate_trim_rect(self.editor.doc(), &self.base, 6)
             {
                 self.editor.set_view(rect);
@@ -882,6 +939,8 @@ impl EditorApp {
                     Some(Tool::Eraser)
                 } else if i.key_pressed(Key::K) {
                     Some(Tool::Crop)
+                } else if i.key_pressed(Key::X) {
+                    Some(Tool::Cutout)
                 } else if i.key_pressed(Key::M) {
                     Some(Tool::SelectRegion)
                 } else {
@@ -1125,6 +1184,8 @@ impl eframe::App for EditorApp {
         if top_res.canvas {
             self.canvas_dialog_open = !self.canvas_dialog_open;
             self.canvas_background = self.editor.doc().background;
+            self.resize_w = self.base.width().max(1);
+            self.resize_h = self.base.height().max(1);
         }
         if top_res.zoom != ZoomCmd::None {
             self.apply_zoom_cmd(top_res.zoom);
@@ -1705,11 +1766,27 @@ impl eframe::App for EditorApp {
                 // 5. Crisp hairline rim around document
                 canvas::paint_document_frame(&painter, img_screen_rect);
 
-                // 5b. Crop preview: dim everything outside the pending crop rect
+                // 5b. Crop / Cutout preview
                 if self.editor.tool() == Tool::Crop {
                     if let Some(crop) = self.editor.crop_rect() {
                         let crop_screen = self.view.doc_rect_to_screen(crop, screen_rect);
                         canvas::paint_crop_overlay(&mut painter, crop_screen, screen_rect);
+                    }
+                }
+                if self.editor.tool() == Tool::Cutout {
+                    if let Some(strip) = self.editor.cutout_rect() {
+                        let mut s_rect = self.view.doc_rect_to_screen(strip, screen_rect);
+                        match self.editor.style.cutout_axis {
+                            qs_doc::CutoutAxis::Horizontal => {
+                                s_rect.min.x = img_screen_rect.min.x;
+                                s_rect.max.x = img_screen_rect.max.x;
+                            }
+                            qs_doc::CutoutAxis::Vertical => {
+                                s_rect.min.y = img_screen_rect.min.y;
+                                s_rect.max.y = img_screen_rect.max.y;
+                            }
+                        }
+                        canvas::paint_cutout_overlay(&mut painter, s_rect, screen_rect);
                     }
                 }
 
@@ -1904,6 +1981,9 @@ mod tests {
             confirm_flatten: false,
             canvas_insets: [0.0; 4],
             canvas_background: 0,
+            resize_w: 20,
+            resize_h: 10,
+            resize_lock: true,
             canvas_anchor: (1, 1),
             layer_drag_id: None,
             alignment_open: false,

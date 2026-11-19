@@ -216,6 +216,35 @@ fn effects_ui(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
         ui.add(egui::Slider::new(&mut c.contrast, -1.0..=1.0).text("Contrast"));
         ui.add(egui::Slider::new(&mut c.saturation, 0.0..=2.0).text("Saturation"));
     }
+    let mut filter = effects.color_filter.unwrap_or(qs_doc::ColorFilter::None);
+    egui::ComboBox::from_label("Filter")
+        .selected_text(format!("{filter:?}"))
+        .show_ui(ui, |ui| {
+            use qs_doc::ColorFilter::*;
+            for f in [None, Grayscale, Sepia, Invert] {
+                ui.selectable_value(&mut filter, f, format!("{f:?}"));
+            }
+        });
+    effects.color_filter = (filter != qs_doc::ColorFilter::None).then_some(filter);
+    toggle(ui, "Page curl", &mut effects.page_curl);
+    if let Some(pc) = &mut effects.page_curl {
+        egui::ComboBox::from_label("Corner")
+            .selected_text(format!("{:?}", pc.corner))
+            .show_ui(ui, |ui| {
+                use qs_doc::Anchor::*;
+                for a in [TopLeft, TopRight, BottomLeft, BottomRight] {
+                    ui.selectable_value(&mut pc.corner, a, format!("{a:?}"));
+                }
+            });
+        ui.add(egui::Slider::new(&mut pc.size, 8.0..=160.0).text("Curl size"));
+        ui.add(egui::Slider::new(&mut pc.shadow, 0.0..=1.0).text("Curl shadow"));
+    }
+    toggle(ui, "Reflection", &mut effects.reflection);
+    if let Some(rf) = &mut effects.reflection {
+        ui.add(egui::Slider::new(&mut rf.height, 8.0..=256.0).text("Height"));
+        ui.add(egui::Slider::new(&mut rf.opacity, 0.0..=1.0).text("Reflect opacity"));
+        ui.add(egui::Slider::new(&mut rf.gap, 0.0..=32.0).text("Gap"));
+    }
     toggle(ui, "Watermark", &mut effects.watermark);
     if let Some(w) = &mut effects.watermark {
         ui.text_edit_singleline(&mut w.text);
