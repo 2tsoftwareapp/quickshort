@@ -3950,6 +3950,7 @@ dependencies = [
  "qs-doc",
  "qs-edit",
  "qs-library",
+ "qs-ocr",
  "qs-render",
  "qs-theme",
  "rfd 0.15.4",

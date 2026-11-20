@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-20
 
-**Status**: Draft — Phase 1 in progress
+**Status**: Draft — Phases 1–2 implemented
 
 **Input**: The gap declared out of scope in `specs/003-annotation-parity/plan.md`: `qs-ocr` exposes
 `extract_text` only, so Smart Move needs a user-dragged box and there is no way to copy the text

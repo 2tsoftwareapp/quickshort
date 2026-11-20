@@ -9,6 +9,7 @@ pub mod fonts;
 pub mod icons;
 pub mod image_panel;
 pub mod library;
+pub mod ocr_hint;
 pub mod prefs;
 pub mod recovery;
 pub mod styles;

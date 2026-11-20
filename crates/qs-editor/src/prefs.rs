@@ -21,6 +21,9 @@ pub struct AppPrefs {
     /// `save_dir` from the shared config, when the user set one. The editor
     /// only reads it to point the Library at the folder captures land in.
     pub save_dir: Option<PathBuf>,
+    /// `ocr_lang` from the shared config; the Smart Move hints recognize with
+    /// it. `auto` lets the engine detect.
+    pub ocr_lang: String,
 }
 
 impl Default for AppPrefs {
@@ -31,6 +34,7 @@ impl Default for AppPrefs {
             after_capture: "shelf".into(),
             copy_after_save: false,
             save_dir: None,
+            ocr_lang: "auto".into(),
         }
     }
 }
@@ -78,6 +82,7 @@ impl AppPrefs {
                 "accent" => prefs.accent = val.to_owned(),
                 "after_capture" => prefs.after_capture = val.to_owned(),
                 "copy_after_save" => prefs.copy_after_save = val == "true",
+                "ocr_lang" => prefs.ocr_lang = val.to_owned(),
                 "save_dir" => {
                     if !val.is_empty() {
                         prefs.save_dir = Some(PathBuf::from(val));

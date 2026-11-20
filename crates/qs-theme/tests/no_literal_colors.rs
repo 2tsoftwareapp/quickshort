@@ -26,6 +26,7 @@ const MIGRATED: &[&str] = &[
     "qs-editor/src/toolbar.rs",
     "qs-editor/src/image_panel.rs",
     "qs-editor/src/library.rs",
+    "qs-editor/src/ocr_hint.rs",
     "qs-editor/src/styles.rs",
 ];
 

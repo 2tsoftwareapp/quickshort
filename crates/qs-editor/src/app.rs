@@ -119,6 +119,8 @@ pub struct EditorApp {
     styles: styles::Library,
     /// Text filter for the quick-style bar (session state).
     style_filter: String,
+    /// OCR line hints for the Smart Move tool.
+    ocr_hints: crate::ocr_hint::OcrHints,
     /// Capture library browser (search, tags, favourites, pruning).
     library: crate::library::Library,
 }
@@ -205,6 +207,7 @@ impl EditorApp {
             styles: styles::Library::load(),
             library: crate::library::Library::default(),
             style_filter: String::new(),
+            ocr_hints: crate::ocr_hint::OcrHints::default(),
         };
         app.update_texture(&cc.egui_ctx);
         app
@@ -241,6 +244,10 @@ impl EditorApp {
             .clamp(0.2, 1.0);
         self.base = base;
         self.editor = Editor::new(doc);
+        // A different document can share the previous one's size, scale and
+        // view; the hint cache is keyed on those, so it has to be dropped
+        // explicitly rather than waiting for a key mismatch.
+        self.ocr_hints.clear();
         self.canvas_background = canvas_background;
         self.canvas_insets = [0.0; 4];
         self.canvas_anchor = (1, 1);
@@ -2197,6 +2204,31 @@ impl eframe::App for EditorApp {
                     .filter(|p| screen_rect.contains(*p))
                     .map(|p| self.view.screen_to_doc(p, screen_rect));
 
+                // Smart Move: keep line hints in step with the base image, and
+                // keep repainting while the worker runs so the proposal shows
+                // up without the user moving the mouse again.
+                if self.editor.tool() == Tool::SmartMove {
+                    self.ocr_hints.ensure(
+                        self.editor.doc(),
+                        &self.base,
+                        &self.prefs.ocr_lang,
+                    );
+                    if self.ocr_hints.is_scanning() {
+                        ui.ctx()
+                            .request_repaint_after(std::time::Duration::from_millis(120));
+                    }
+                    self.ocr_hints.poll();
+                }
+                let hint_rect = if self.editor.tool() == Tool::SmartMove
+                    && self.editor.pending_smart_move().is_none()
+                    && self.editor.move_src_rect().is_none()
+                {
+                    self.last_cursor_doc
+                        .and_then(|p| self.ocr_hints.hit(p).map(|h| h.rect))
+                } else {
+                    None
+                };
+
                 if self.needs_initial_fit
                     && screen_rect.width() > 32.0
                     && screen_rect.height() > 32.0
@@ -2264,8 +2296,20 @@ impl eframe::App for EditorApp {
                 } else if response.clicked() && !self.saw_drag_press {
                     if let Some(pos) = response.interact_pointer_pos() {
                         let doc_p = self.view.screen_to_doc(pos, screen_rect);
-                        self.editor.pointer_down_mod(doc_p, shift_held);
-                        self.editor.pointer_up(doc_p);
+                        // Smart Move: a click on a recognized line arms that
+                        // line; anywhere else keeps the manual drag flow.
+                        let arm = if self.editor.tool() == Tool::SmartMove
+                            && self.editor.pending_smart_move().is_none()
+                        {
+                            self.ocr_hints.hit(doc_p).map(|h| h.rect)
+                        } else {
+                            None
+                        };
+                        let armed = arm.is_some_and(|r| self.editor.begin_smart_move(r));
+                        if !armed {
+                            self.editor.pointer_down_mod(doc_p, shift_held);
+                            self.editor.pointer_up(doc_p);
+                        }
                         self.touch();
                     }
                 }
@@ -2331,7 +2375,7 @@ impl eframe::App for EditorApp {
                     let rect = if armed {
                         self.editor.pending_smart_move()
                     } else {
-                        self.editor.move_src_rect()
+                        self.editor.move_src_rect().or(hint_rect)
                     };
                     if let Some(r) = rect {
                         let s_rect = self.view.doc_rect_to_screen(r, screen_rect);
@@ -2547,6 +2591,7 @@ mod tests {
             styles: styles::Library::default(),
             library: crate::library::Library::default(),
             style_filter: String::new(),
+            ocr_hints: crate::ocr_hint::OcrHints::default(),
         };
         app.editor.preview_effects(qs_doc::Effects {
             border: Some(qs_doc::BorderEffect::default()),
