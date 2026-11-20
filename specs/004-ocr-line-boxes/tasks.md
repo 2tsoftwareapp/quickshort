@@ -19,7 +19,7 @@
 - [x] **T010** Click on a proposal arms it as the source rect; clicking elsewhere keeps today's manual drag.
 - [x] **T011** UAT: proposal box matches the OCR rect within a pixel at the four viewports.
 
-## Phase 3: Copy text by region (this change) and the other engines (blocked)
+## Phase 3: Copy text by region (done) and the other engines (blocked)
 
 - [x] **T012** Drag a region with the text tool to copy the lines inside it, in reading order.
 - [x] **T013** Empty-region feedback distinct from "engine unavailable".
@@ -107,3 +107,23 @@ that line.
   for those backends could be neither compiled nor run — it would be unverified FFI presented as
   done. They need a machine (or CI runner) for their own target; the contract they must satisfy is
   already fixed by `OcrLine` and the Phase 1 tests.
+
+## Phase 4: Find in capture (this change)
+
+- [x] **T016** `OcrHints::find(query)` — case-insensitive substring over recognized lines, indices in reading order, an empty query matches nothing.
+- [x] **T017** ⌘F / Ctrl+F opens a small dialog with the search field, a match counter, Prev/Next, and Escape to close.
+- [x] **T018** Every match is highlighted; the current one is framed, and the canvas centres on it as the user steps through, wrapping at the ends.
+- [x] **T019** Recognition also runs while the dialog is open, so the first search does not race the worker; the dialog says "reading" instead of "no match".
+
+### Verification
+
+- `cargo test --workspace` — **291 passed / 0 failed** (3 new).
+- `cargo check --workspace --all-targets` — clean.
+- Integration test on `docs/shots/settings-general.png`: searching `settings` returns only lines that
+  actually contain it, an absent word returns nothing, and an empty query highlights nothing.
+
+### Scope note
+
+Find is deliberately *navigation*, not text editing: it highlights the recognized line boxes and
+pans the canvas. It does not read the clipboard, rewrite the image, or search inside documents other
+than the open capture.

@@ -46,6 +46,8 @@ until they can be compiled on their own targets. Shipping untestable FFI would v
 | `crates/qs-ocr/src/lib.rs` | `OcrLine`, `extract_lines`, `px_rect_from_normalized`, unit tests. |
 | `crates/qs-ocr/src/macos.rs` | `extract_lines` from Vision observations; `extract` delegates to it. |
 | `crates/qs-ocr/src/linux.rs`, `windows.rs`, and the stub arm | `extract_lines` returns an explicit unsupported error. |
+| `crates/qs-editor/src/ocr_hint.rs` | `find()` alongside `hit`/`text_in`; keyed recognition cache. |
+| `crates/qs-editor/src/canvas.rs`, `app.rs` | Find highlights, the ⌘F dialog, panning to matches. |
 | `crates/qs-ocr/Cargo.toml` | Only if a Vision feature flag turns out to be missing for `boundingBox`. |
 
 ## Design Decisions
@@ -66,4 +68,8 @@ say "no text here" when the truth is "this build cannot tell you".
 1. **Phase 1 (this change)** — type, conversion helper + tests, macOS implementation, explicit errors
    elsewhere.
 2. **Phase 2** — Smart Move hover proposal in `qs-editor`, falling back to the manual drag.
-3. **Phase 3** — copy-text-in-region, plus geometry for the Linux and Windows backends.
+3. **Phase 3** — copy-text-in-region.
+4. **Phase 4 (this change)** — find-in-capture: `OcrHints::find`, a small dialog (⌘F), highlights and
+   panning, plus integration tests on the repo screenshot.
+5. **Phase 5 (blocked)** — geometry for the Linux and Windows backends, on a machine that can build
+   those targets.

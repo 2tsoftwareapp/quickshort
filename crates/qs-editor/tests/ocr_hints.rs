@@ -133,3 +133,38 @@ fn text_in_a_region_matches_the_engine_for_the_whole_capture() {
     ));
     assert_eq!(picked, hints.lines()[0].text.trim());
 }
+
+#[test]
+fn find_finds_real_text_in_the_capture() {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../docs/shots/settings-general.png"
+    );
+    let Ok(base) = image::open(path) else { return };
+    let base = base.to_rgba8();
+    let doc = Document::new(base.width(), base.height(), 1.0);
+
+    let mut hints = OcrHints::default();
+    hints.ensure(&doc, &base, "eng");
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while !hints.poll() {
+        assert!(Instant::now() < deadline, "OCR worker never reported back");
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    if hints.is_empty() {
+        return;
+    }
+
+    let hits = hints.find("settings");
+    assert!(!hits.is_empty(), "a settings window should mention settings");
+    for i in &hits {
+        assert!(
+            hints.lines()[*i].text.to_lowercase().contains("settings"),
+            "match {:?} does not contain the query",
+            hints.lines()[*i].text
+        );
+    }
+
+    assert!(hints.find("zzz-not-in-this-image").is_empty());
+    assert!(hints.find("").is_empty(), "an empty query highlights nothing");
+}

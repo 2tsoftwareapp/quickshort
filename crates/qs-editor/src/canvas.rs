@@ -255,6 +255,22 @@ pub fn paint_cutout_overlay(painter: &mut egui::Painter, strip_screen: Rect, scr
     );
 }
 
+/// Find in capture: every match dimly, the current one with a border.
+pub fn paint_find_hits(painter: &egui::Painter, rects: &[Rect], current: usize) {
+    let col = theme::accent_blue();
+    for (i, r) in rects.iter().enumerate() {
+        let is_current = i == current;
+        painter.rect_filled(
+            *r,
+            2.0,
+            col.gamma_multiply(if is_current { 0.34 } else { 0.15 }),
+        );
+        if is_current {
+            painter.rect_stroke(*r, 2.0, Stroke::new(1.5, col), StrokeKind::Outside);
+        }
+    }
+}
+
 /// Smart Move: the region being picked, or (armed) the one waiting for its
 /// drop point.
 pub fn paint_move_overlay(painter: &egui::Painter, rect_screen: Rect, armed: bool) {

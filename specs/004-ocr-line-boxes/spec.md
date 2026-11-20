@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-20
 
-**Status**: Draft — Phases 1–3 implemented (Linux/Windows geometry blocked on toolchain)
+**Status**: Draft — Phases 1–4 implemented (Linux/Windows geometry blocked on toolchain)
 
 **Input**: The gap declared out of scope in `specs/003-annotation-parity/plan.md`: `qs-ocr` exposes
 `extract_text` only, so Smart Move needs a user-dragged box and there is no way to copy the text
@@ -88,6 +88,29 @@ exactly that line's text.
 2. **Given** a box covering both lines, **Then** both are copied in reading order, one per line.
 3. **Given** a box over empty space, **Then** nothing is copied and the UI says so.
 
+### User Story 4 - Find in capture (Priority: P4, this phase)
+
+A user remembers the setting was called "Shortcuts" but not where it sits: they press ⌘F, type it,
+and the canvas highlights every matching line and jumps to the first one.
+
+**Why this priority**: It is the cheapest way to spend geometry — no new engine work, no new
+platform surface — and it turns the recognized text into navigation.
+
+**Independent Test**: Open a capture with known text, search for a word that appears twice, and
+confirm two highlights appear, the first one is framed and centered, and Next moves to the second.
+
+**Acceptance Scenarios**:
+
+1. **Given** recognized text, **When** the user searches a word, **Then** every line containing it is
+   highlighted and the current match is framed.
+2. **Given** several matches, **When** the user presses Next, **Then** the next match becomes current
+   and the canvas centres on it, wrapping at the end.
+3. **Given** a search with no matches, **Then** the dialog says so and nothing is highlighted.
+4. **Given** the recognition is still running, **Then** the dialog says it is reading rather than
+   claiming there are no matches.
+5. **Given** the dialog is open, **When** the user presses Escape, **Then** it closes and the
+   highlights disappear.
+
 ### Edge Cases
 
 - **Rect at the image edge**: clamping keeps it inside `0..=width` / `0..=height`.
@@ -116,6 +139,10 @@ exactly that line's text.
   stays self-contained (Constitution II keeps it a leaf).
 - **FR-007**: Existing OCR callers (clipboard extraction, the Settings language badges) MUST be
   unaffected.
+- **FR-008**: Searching MUST match recognized line text case-insensitively, highlight every match,
+  and treat an empty query as "match nothing" rather than highlighting everything.
+- **FR-009**: Stepping through matches MUST wrap and MUST pan the canvas so the current match is
+  visible; a search with no matches MUST say so instead of leaving the previous highlights up.
 
 ### Key Entities
 
@@ -133,6 +160,8 @@ exactly that line's text.
 - **SC-003**: `extract_text` output is unchanged for every existing caller (no call site edited).
 - **SC-004**: Phase 2 can place a box over a line using only the public API, with no arithmetic at
   the call site.
+- **SC-005**: Searching a word that appears in a real capture highlights exactly the lines that
+  contain it, verified against the repo screenshot.
 
 ## Assumptions
 

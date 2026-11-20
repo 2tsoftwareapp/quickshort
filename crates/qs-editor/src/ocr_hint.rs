@@ -133,6 +133,24 @@ impl OcrHints {
         self.last_error = None;
     }
 
+    /// Indices of the lines whose text contains `query`, case-insensitively,
+    /// in reading order.
+    ///
+    /// An empty query matches nothing: an empty find bar that highlighted every
+    /// line in the capture would be noise, not feedback.
+    pub fn find(&self, query: &str) -> Vec<usize> {
+        let needle = query.trim().to_lowercase();
+        if needle.is_empty() {
+            return Vec::new();
+        }
+        self.lines
+            .iter()
+            .enumerate()
+            .filter(|(_, h)| h.text.to_lowercase().contains(&needle))
+            .map(|(i, _)| i)
+            .collect()
+    }
+
     /// Every line whose centre falls inside `region`, one per line, in engine
     /// (reading) order.
     ///
@@ -278,5 +296,29 @@ mod tests {
             ..OcrHints::default()
         };
         assert!(hints.text_in(RectF::new(0.0, 0.0, 100.0, 50.0)).is_empty());
+    }
+    #[test]
+    fn find_matches_case_insensitively_in_reading_order() {
+        let hints = OcrHints {
+            lines: vec![
+                hint(0.0, 0.0, 10.0, 10.0, "General Settings"),
+                hint(0.0, 20.0, 10.0, 10.0, "Shortcuts"),
+                hint(0.0, 40.0, 10.0, 10.0, "SETTINGS again"),
+            ],
+            ..OcrHints::default()
+        };
+        assert_eq!(hints.find("settings"), vec![0, 2]);
+        assert_eq!(hints.find("SHORT"), vec![1]);
+        assert!(hints.find("missing").is_empty());
+    }
+
+    #[test]
+    fn an_empty_query_matches_nothing() {
+        let hints = OcrHints {
+            lines: vec![hint(0.0, 0.0, 10.0, 10.0, "x")],
+            ..OcrHints::default()
+        };
+        assert!(hints.find("").is_empty());
+        assert!(hints.find("   ").is_empty());
     }
 }
