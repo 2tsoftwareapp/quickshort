@@ -30,7 +30,18 @@ fn bcp47(code: &str) -> Option<&'static str> {
     })
 }
 
+/// Text only — the lines joined by `\n`, exactly the texts `extract_lines`
+/// returns for the same image so the two cannot drift.
 pub fn extract(img: &RgbaImage, lang: &str) -> Result<String> {
+    let lines = extract_lines(img, lang)?;
+    Ok(lines
+        .into_iter()
+        .map(|l| l.text)
+        .collect::<Vec<_>>()
+        .join("\n"))
+}
+
+pub fn extract_lines(img: &RgbaImage, lang: &str) -> Result<Vec<crate::OcrLine>> {
     // Feed Vision encoded image data — a PNG roundtrip is the cheapest way to
     // build a valid NSData source without touching CoreGraphics types.
     let mut png = Vec::new();
@@ -76,12 +87,33 @@ pub fn extract(img: &RgbaImage, lang: &str) -> Result<String> {
             let Some(obs) = obs.downcast_ref::<VNRecognizedTextObservation>() else {
                 continue;
             };
-            if let Some(best) = obs.topCandidates(1).iter().next() {
-                lines.push(best.string().to_string());
-            }
+            let Some(best) = obs.topCandidates(1).iter().next() else {
+                continue;
+            };
+            // Vision's box is normalized with a bottom-left origin; the helper
+            // turns it into top-left pixels of the image we passed in.
+            // `boundingBox` is marked unsafe by the bindings (it may trap on a
+            // freed observation); the observation is alive for this iteration.
+            let bb = unsafe { obs.boundingBox() };
+            let (x, y, w, h) = crate::px_rect_from_normalized(
+                bb.origin.x,
+                bb.origin.y,
+                bb.size.width,
+                bb.size.height,
+                img.width(),
+                img.height(),
+            );
+            lines.push(crate::OcrLine {
+                text: best.string().to_string(),
+                x,
+                y,
+                w,
+                h,
+                confidence: best.confidence().clamp(0.0, 1.0),
+            });
         }
     }
-    Ok(lines.join("\n"))
+    Ok(lines)
 }
 
 /// BCP-47 tags Vision can recognize at the Accurate level — feeds the

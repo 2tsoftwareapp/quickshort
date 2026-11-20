@@ -131,3 +131,9 @@ fn detect_lang(png: &[u8]) -> Result<String> {
         wanted.to_string()
     })
 }
+
+/// Line geometry is a separate capability from plain text: failing loudly beats
+/// returning an empty list that a caller would read as "no text here".
+pub fn extract_lines(_img: &RgbaImage, _lang: &str) -> Result<Vec<crate::OcrLine>> {
+    anyhow::bail!("OCR line geometry needs the engine's box output, which the tesseract path does not read yet.")
+}

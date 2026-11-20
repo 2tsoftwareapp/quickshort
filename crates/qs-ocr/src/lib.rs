@@ -82,6 +82,65 @@ fn canonical(tag: &str) -> Option<&'static str> {
         .map(|e| e.0)
 }
 
+/// One recognized text line and where it sits in the image.
+#[derive(Clone, Debug, PartialEq)]
+pub struct OcrLine {
+    pub text: String,
+    /// Pixel rect in the image handed to the engine, origin at the top-left.
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+    /// Engine confidence in 0..=1; 0 when the engine reports none.
+    pub confidence: f32,
+}
+
+/// Vision reports a rect normalized to 0..=1 with the origin at the
+/// **bottom-left**; every other surface in this workspace is top-left pixels.
+/// The rect is clamped to the image so a caller can draw it as-is.
+pub(crate) fn px_rect_from_normalized(
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    img_w: u32,
+    img_h: u32,
+) -> (f32, f32, f32, f32) {
+    let iw = img_w.max(1) as f64;
+    let ih = img_h.max(1) as f64;
+    let left = (x.clamp(0.0, 1.0) * iw).min(iw);
+    let px_w = (w.clamp(0.0, 1.0) * iw).min(iw - left);
+    let px_h = (h.clamp(0.0, 1.0) * ih).min(ih);
+    // Flip the vertical axis first: Vision's `y` is the line's bottom edge.
+    let top = (ih - (y.clamp(0.0, 1.0) * ih) - px_h).max(0.0);
+    (left as f32, top as f32, px_w as f32, px_h as f32)
+}
+
+/// Extract text together with the rectangle each line occupies.
+///
+/// An engine that finds nothing returns an empty list; a platform whose engine
+/// cannot report geometry returns an error. Collapsing those two would make the
+/// UI say "no text here" when the truth is "this build cannot tell you".
+pub fn extract_lines(img: &RgbaImage, lang: &str) -> Result<Vec<OcrLine>> {
+    #[cfg(target_os = "macos")]
+    {
+        macos::extract_lines(img, lang)
+    }
+    #[cfg(target_os = "windows")]
+    {
+        windows::extract_lines(img, lang)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        linux::extract_lines(img, lang)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        let _ = (img, lang);
+        anyhow::bail!("ocr line geometry is not implemented for this platform")
+    }
+}
+
 /// Extract text from an image using the platform-native OCR engine.
 /// Returns recognized text with lines separated by '\n'.
 /// `lang` uses tesseract's `eng+vie` syntax; "auto"/"" lets the engine
@@ -129,4 +188,56 @@ fn tidy(text: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::px_rect_from_normalized;
+
+    #[test]
+    fn a_line_at_the_top_left_maps_to_pixel_zero() {
+        // Vision: y is the bottom edge, so a line hugging the top has y ~ 0.9.
+        let (x, y, w, h) = px_rect_from_normalized(0.0, 0.9, 0.5, 0.1, 100, 50);
+        assert_eq!((x, y, w, h), (0.0, 0.0, 50.0, 5.0));
+    }
+
+    #[test]
+    fn a_line_at_the_bottom_sits_at_the_image_height() {
+        let (x, y, w, h) = px_rect_from_normalized(0.0, 0.0, 0.5, 0.1, 100, 50);
+        assert_eq!((x, y, w, h), (0.0, 45.0, 50.0, 5.0));
+    }
+
+    #[test]
+    fn a_full_image_rect_covers_everything() {
+        let (x, y, w, h) = px_rect_from_normalized(0.0, 0.0, 1.0, 1.0, 100, 50);
+        assert_eq!((x, y, w, h), (0.0, 0.0, 100.0, 50.0));
+    }
+
+    #[test]
+    fn a_zero_size_observation_is_kept_not_dropped() {
+        let (x, y, w, h) = px_rect_from_normalized(0.5, 0.5, 0.0, 0.0, 100, 50);
+        assert_eq!((x, y, w, h), (50.0, 25.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn a_rect_overrunning_the_edge_is_clamped_inside() {
+        let (x, y, w, h) = px_rect_from_normalized(0.9, 0.05, 0.5, 0.5, 100, 50);
+        assert_eq!(x, 90.0);
+        assert_eq!(w, 10.0, "width is reduced so the rect stays on the image");
+        assert_eq!(h, 25.0);
+        assert!(
+            x + w <= 100.0 && y >= 0.0 && y + h <= 50.0,
+            "rect {} {} {} {} escapes the image",
+            x,
+            y,
+            w,
+            h
+        );
+    }
+
+    #[test]
+    fn a_degenerate_image_size_does_not_divide_by_zero() {
+        let (x, y, w, h) = px_rect_from_normalized(0.0, 0.0, 1.0, 1.0, 0, 0);
+        assert!(x.is_finite() && y.is_finite() && w.is_finite() && h.is_finite());
+    }
 }
