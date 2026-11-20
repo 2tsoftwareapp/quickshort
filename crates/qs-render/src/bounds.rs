@@ -37,6 +37,15 @@ pub fn bounds(kind: &ObjectKind) -> RectF {
             RectF::new(x0 - pad, y0 - pad, x1 - x0 + 2.0 * pad, y1 - y0 + 2.0 * pad)
         }
         Magnify { rect, stroke, .. } => rect.normalized().inflate(stroke.width / 2.0),
+        // The filled region only exists once the canvas is composited, which
+        // `bounds` deliberately does not have. The seed is therefore the
+        // selection anchor: a small box around it keeps the object grabbable
+        // on the canvas and in the layers list.
+        Fill { seed, .. } => RectF::new(seed.x - 9.0, seed.y - 9.0, 18.0, 18.0),
+        SmartMove { src, dst } => {
+            let moved = RectF::new(dst.x, dst.y, src.w.abs(), src.h.abs());
+            src.normalized().union(&moved)
+        }
     }
 }
 

@@ -328,6 +328,39 @@ fn apply_page_curl(img: &mut RgbaImage, pc: &qs_doc::PageCurlEffect, scale: f32)
     }
 }
 
+/// Move every pixel within `tolerance` of the target colour toward the
+/// replacement, blended by `strength`.
+fn colorize(img: &mut RgbaImage, eff: &qs_doc::ColorizeEffect) {
+    let strength = eff.strength.clamp(0.0, 1.0);
+    if strength <= 0.0 || eff.target == eff.replacement {
+        return;
+    }
+    let (tr, tg, tb) = (
+        (eff.target >> 16) as u8,
+        (eff.target >> 8) as u8,
+        eff.target as u8,
+    );
+    let (rr, rg, rb) = (
+        (eff.replacement >> 16) as u8,
+        (eff.replacement >> 8) as u8,
+        eff.replacement as u8,
+    );
+    let tol = eff.tolerance as i32;
+    for p in img.pixels_mut() {
+        let [r, g, b, a] = p.0;
+        let near = (r as i32 - tr as i32).abs() <= tol
+            && (g as i32 - tg as i32).abs() <= tol
+            && (b as i32 - tb as i32).abs() <= tol;
+        if !near {
+            continue;
+        }
+        let mix = |orig: u8, want: u8| {
+            (orig as f32 + (want as f32 - orig as f32) * strength).round() as u8
+        };
+        p.0 = [mix(r, rr), mix(g, rg), mix(b, rb), a];
+    }
+}
+
 pub fn apply(doc: &Document, mut content: RgbaImage) -> RgbaImage {
     for c in &doc.cutouts {
         content = apply_cutout_one(content, c, doc.scale);
@@ -335,6 +368,9 @@ pub fn apply(doc: &Document, mut content: RgbaImage) -> RgbaImage {
     // Adjust content + annotations first so watermark/border/shadow keep their chosen colors.
     if let Some(c) = &doc.effects.color_adjust {
         adjust(&mut content, c);
+    }
+    if let Some(c) = &doc.effects.colorize {
+        colorize(&mut content, c);
     }
     if let Some(f) = doc.effects.color_filter {
         apply_filter(&mut content, f);

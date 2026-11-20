@@ -255,6 +255,19 @@ pub fn paint_cutout_overlay(painter: &mut egui::Painter, strip_screen: Rect, scr
     );
 }
 
+/// Smart Move: the region being picked, or (armed) the one waiting for its
+/// drop point.
+pub fn paint_move_overlay(painter: &egui::Painter, rect_screen: Rect, armed: bool) {
+    let col = theme::accent_blue();
+    painter.rect_filled(rect_screen, 0.0, col.gamma_multiply(0.12));
+    painter.rect_stroke(
+        rect_screen,
+        0.0,
+        Stroke::new(if armed { 2.0 } else { 1.5 }, col),
+        StrokeKind::Outside,
+    );
+}
+
 /// Paint a committed selection region outline: white core + black halo.
 pub fn paint_region(painter: &egui::Painter, region_screen: Rect) {
     painter.rect_stroke(

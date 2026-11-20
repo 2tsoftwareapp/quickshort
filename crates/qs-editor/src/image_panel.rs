@@ -192,6 +192,15 @@ fn color(ui: &mut egui::Ui, label: &str, value: &mut u32) {
     });
 }
 
+/// `color()` edits an ARGB value; document effects store plain RGB. The alpha
+/// byte is padded on the way in (so the picker opens opaque) and dropped on the
+/// way out.
+fn rgb_color(ui: &mut egui::Ui, label: &str, value: &mut u32) {
+    let mut argb = *value | ((u8::MAX as u32) << 24);
+    color(ui, label, &mut argb);
+    *value = argb & 0x00FF_FFFF; // allow-hex: bit mask, not a colour
+}
+
 fn toggle<T: Default>(ui: &mut egui::Ui, label: &str, effect: &mut Option<T>) {
     let mut on = effect.is_some();
     if components::switch_row(ui, &mut on, label) {
@@ -222,6 +231,13 @@ fn effects_ui(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
         ui.add(egui::Slider::new(&mut c.brightness, -1.0..=1.0).text("Brightness"));
         ui.add(egui::Slider::new(&mut c.contrast, -1.0..=1.0).text("Contrast"));
         ui.add(egui::Slider::new(&mut c.saturation, 0.0..=2.0).text("Saturation"));
+    }
+    toggle(ui, "Colorize", &mut effects.colorize);
+    if let Some(cz) = &mut effects.colorize {
+        rgb_color(ui, "Replace", &mut cz.target);
+        rgb_color(ui, "With", &mut cz.replacement);
+        ui.add(egui::Slider::new(&mut cz.tolerance, 0..=128).text("Tolerance"));
+        ui.add(egui::Slider::new(&mut cz.strength, 0.0..=1.0).text("Strength"));
     }
     let mut filter = effects.color_filter.unwrap_or(qs_doc::ColorFilter::None);
     ui.horizontal(|ui| {

@@ -70,6 +70,27 @@ pub fn draw_tool_icon(painter: &Painter, c: Pos2, tool: Tool, color: Color32) {
                 Stroke::new(1.1, eraser_col),
             );
         }
+        Tool::Fill => {
+            // Tilted bucket outline with a filled body and a falling drop.
+            let body = vec![p(c, -4.4, -1.2), p(c, 0.8, -4.6), p(c, 4.4, 0.8), p(c, -0.8, 4.4)];
+            painter.add(PathShape::convex_polygon(
+                body.clone(),
+                Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 70),
+                Stroke::NONE,
+            ));
+            painter.add(PathShape::closed_line(body, thin));
+            painter.circle_filled(p(c, 4.6, -4.4), 1.5, color);
+        }
+        Tool::SmartMove => {
+            // Four-way move cross over a small content box.
+            let s = 2.4;
+            painter.add(PathShape::closed_line(
+                vec![p(c, -s, -s), p(c, s, -s), p(c, s, s), p(c, -s, s)],
+                thin,
+            ));
+            painter.line_segment([p(c, -6.2, 0.0), p(c, 6.2, 0.0)], thin);
+            painter.line_segment([p(c, 0.0, -6.2), p(c, 0.0, 6.2)], thin);
+        }
         Tool::Highlighter => {
             // Broad angled marker + chisel tip + bottom highlight bar
             painter.line_segment([p(c, -4.2, 2.2), p(c, 1.8, -3.8)], Stroke::new(3.4, color));

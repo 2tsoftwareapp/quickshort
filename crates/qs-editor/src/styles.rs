@@ -42,6 +42,16 @@ pub struct QuickStyle {
     pub stamp_kind: StampKind,
     pub eraser_width: f32,
     pub step_radius: f32,
+    /// Paint-bucket tolerance; `default` keeps older `styles.json` loadable.
+    #[serde(default = "default_fill_tolerance")]
+    pub fill_tolerance: u8,
+    /// Starred presets sort first. `default` keeps older files loadable.
+    #[serde(default)]
+    pub favorite: bool,
+}
+
+fn default_fill_tolerance() -> u8 {
+    24
 }
 
 impl QuickStyle {
@@ -71,6 +81,8 @@ impl QuickStyle {
             stamp_kind: st.stamp_kind,
             eraser_width: st.eraser_width,
             step_radius: st.step_radius,
+            fill_tolerance: st.fill_tolerance,
+            favorite: false,
         }
     }
 
@@ -91,6 +103,7 @@ impl QuickStyle {
             stamp_kind: self.stamp_kind,
             eraser_width: self.eraser_width,
             step_radius: self.step_radius,
+            fill_tolerance: self.fill_tolerance,
             ..Style::default()
         }
     }
@@ -117,6 +130,8 @@ pub fn tool_key(tool: Tool) -> &'static str {
         Tool::Crop => "crop",
         Tool::Cutout => "cutout",
         Tool::SelectRegion => "region",
+        Tool::Fill => "fill",
+        Tool::SmartMove => "smart_move",
     }
 }
 
@@ -136,6 +151,7 @@ pub fn tool_from_key(key: &str) -> Option<Tool> {
         Tool::Spotlight,
         Tool::Stamp,
         Tool::Eraser,
+        Tool::Fill,
     ]
     .into_iter()
     .find(|t| tool_key(*t) == key)
@@ -155,7 +171,9 @@ pub fn defaults_for(tool: Tool) -> Vec<QuickStyle> {
             .collect::<Vec<_>>()
     };
     let mut out = match tool {
-        Tool::Pen | Tool::Highlighter | Tool::Line | Tool::Arrow => colours(),
+        Tool::Pen | Tool::Highlighter | Tool::Line | Tool::Arrow | Tool::Fill => colours(),
+        // Smart Move carries no style knobs, so it has no presets to offer.
+        Tool::SmartMove => Vec::new(),
         Tool::Rect | Tool::Ellipse => colours()
             .into_iter()
             .enumerate()
@@ -312,6 +330,21 @@ impl Library {
             .collect()
     }
 
+    /// Star / unstar a saved preset. Returns false when no such preset exists
+    /// (built-ins are regenerated each launch and are not persisted).
+    pub fn toggle_favorite(&mut self, tool: Tool, name: &str) -> bool {
+        let key = tool_key(tool);
+        let Some(slot) = self
+            .custom
+            .iter_mut()
+            .find(|(k, q)| k == key && q.name == name)
+        else {
+            return false;
+        };
+        slot.1.favorite = !slot.1.favorite;
+        true
+    }
+
     /// Add or replace a preset of the same name for `tool`.
     pub fn upsert(&mut self, tool: Tool, quick: QuickStyle) {
         let key = tool_key(tool).to_owned();
@@ -338,7 +371,29 @@ pub fn presets_for(editor: &Editor, library: &Library) -> Vec<QuickStyle> {
     let tool = editor.tool();
     let mut out = defaults_for(tool);
     out.extend(library.for_tool(tool));
+    // Stable partition: starred presets first, original order kept inside each
+    // group so the bar does not reshuffle as the user stars things.
+    out.sort_by_key(|q| !q.favorite);
     out
+}
+
+/// Presets matching the bar's filter text (case-insensitive substring on the
+/// name). An empty query keeps everything.
+pub fn filter_presets(presets: Vec<QuickStyle>, query: &str) -> Vec<QuickStyle> {
+    let needle = query.trim().to_lowercase();
+    if needle.is_empty() {
+        return presets;
+    }
+    presets
+        .into_iter()
+        .filter(|q| q.name.to_lowercase().contains(&needle))
+        .collect()
+}
+
+/// Star or unstar a saved preset. Built-in presets are regenerated on every
+/// launch, so they are not persisted and cannot be favourited.
+pub fn toggle_favorite(library: &mut Library, tool: Tool, name: &str) -> bool {
+    library.toggle_favorite(tool, name)
 }
 
 /// Apply one preset: tool defaults plus the whole selection, one undo step.
@@ -377,6 +432,8 @@ pub fn tool_label(tool: Tool) -> &'static str {
         Tool::Crop => "Crop",
         Tool::Cutout => "Cutout",
         Tool::SelectRegion => "Region",
+        Tool::Fill => "Fill",
+        Tool::SmartMove => "Smart Move",
     }
 }
 
@@ -391,9 +448,15 @@ fn swatch(quick: &QuickStyle) -> Color32 {
 
 /// Chips under the properties bar: one click applies the whole preset.
 /// Returns true when the document changed.
-pub fn render_bar(ui: &mut Ui, editor: &mut Editor, library: &mut Library) -> bool {
+pub fn render_bar(
+    ui: &mut Ui,
+    editor: &mut Editor,
+    library: &mut Library,
+    filter: &mut String,
+) -> bool {
     let tool = editor.tool();
-    let presets = presets_for(editor, library);
+    let all = presets_for(editor, library);
+    let presets = filter_presets(all, filter);
     let mut changed = false;
     let mut save_as: Option<QuickStyle> = None;
 
@@ -405,11 +468,12 @@ pub fn render_bar(ui: &mut Ui, editor: &mut Editor, library: &mut Library) -> bo
         );
         ui.add_space(4.0);
         if presets.is_empty() {
-            ui.label(
-                RichText::new("No presets for this tool")
-                    .color(theme::text_disabled())
-                    .size(11.0),
-            );
+            let msg = if filter.trim().is_empty() {
+                "No presets for this tool"
+            } else {
+                "No preset matches"
+            };
+            ui.label(RichText::new(msg).color(theme::text_disabled()).size(11.0));
         }
         egui::ScrollArea::horizontal()
             .id_salt("quick_styles")
@@ -422,6 +486,15 @@ pub fn render_bar(ui: &mut Ui, editor: &mut Editor, library: &mut Library) -> bo
                         }
                         response.context_menu(|ui| {
                             if library.for_tool(tool).iter().any(|q| q.name == quick.name) {
+                                let label = if quick.favorite {
+                                    "Remove from favourites"
+                                } else {
+                                    "Add to favourites"
+                                };
+                                if ui.button(label).clicked() {
+                                    library.toggle_favorite(tool, &quick.name);
+                                    let _ = library.save();
+                                }
                                 if ui.button("Delete preset").clicked() {
                                     library.remove(tool, &quick.name);
                                     let _ = library.save();
@@ -430,6 +503,11 @@ pub fn render_bar(ui: &mut Ui, editor: &mut Editor, library: &mut Library) -> bo
                                 ui.label(
                                     RichText::new("Built-in preset")
                                         .color(theme::text_tertiary()),
+                                );
+                                ui.label(
+                                    RichText::new("Save it as a preset to favourite it")
+                                        .color(theme::text_tertiary())
+                                        .size(10.0),
                                 );
                             }
                         });
@@ -446,6 +524,11 @@ pub fn render_bar(ui: &mut Ui, editor: &mut Editor, library: &mut Library) -> bo
                 quick.name = suggested_name(editor);
                 save_as = Some(quick);
             }
+            ui.add(
+                egui::TextEdit::singleline(filter)
+                    .hint_text("Filter")
+                    .desired_width(88.0),
+            );
         });
     });
 
@@ -458,11 +541,22 @@ pub fn render_bar(ui: &mut Ui, editor: &mut Editor, library: &mut Library) -> bo
 
 fn chip(ui: &mut Ui, quick: &QuickStyle) -> egui::Response {
     let label_w = (quick.name.chars().count() as f32 * 6.2).clamp(18.0, 96.0);
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(24.0 + label_w, 24.0), egui::Sense::click());
+    let star_w = if quick.favorite { 11.0 } else { 0.0 };
+    let (rect, response) =
+        ui.allocate_exact_size(Vec2::new(24.0 + star_w + label_w, 24.0), egui::Sense::click());
     let hovered = response.hovered();
     let painter = ui.painter();
     theme::paint_pill_button(painter, rect, 7.0, hovered, hovered, true, false);
-    let dot = Pos2::new(rect.left() + 13.0, rect.center().y);
+    if quick.favorite {
+        painter.text(
+            Pos2::new(rect.left() + 9.0, rect.center().y),
+            egui::Align2::CENTER_CENTER,
+            "★",
+            egui::FontId::proportional(10.0),
+            theme::amber_orange(),
+        );
+    }
+    let dot = Pos2::new(rect.left() + 13.0 + star_w, rect.center().y);
     painter.circle_filled(dot, 6.0, swatch(quick));
     painter.circle_stroke(
         dot,
@@ -616,5 +710,104 @@ mod tests {
         e.set_tool(Tool::Arrow);
         assert_eq!(suggested_name(&e), "Arrow custom");
         assert_eq!(qs_doc::SIZES.len(), 3, "sizes stay the documented S/M/L");
+    }
+    #[test]
+    fn favourites_sort_first_without_reshuffling_the_rest() {
+        let mut lib = Library::default();
+        let mut a = QuickStyle::new("Alpha", 0x112233);
+        let mut b = QuickStyle::new("Beta", 0x445566);
+        let c = QuickStyle::new("Gamma", 0x778899);
+        b.favorite = true;
+        a.favorite = true;
+        lib.upsert(Tool::Rect, a);
+        lib.upsert(Tool::Rect, b);
+        lib.upsert(Tool::Rect, c);
+
+        let mut editor = Editor::new(qs_doc::Document::new(80, 60, 1.0));
+        editor.set_tool(Tool::Rect);
+        let names: Vec<String> = presets_for(&editor, &lib)
+            .into_iter()
+            .filter(|q| q.favorite)
+            .map(|q| q.name)
+            .collect();
+        assert_eq!(names, vec!["Alpha".to_string(), "Beta".to_string()]);
+
+        let all = presets_for(&editor, &lib);
+        // Every favourite precedes every non-favourite, and the defaults keep
+        // their order among themselves.
+        let first_plain = all.iter().position(|q| !q.favorite).unwrap();
+        assert!(all[..first_plain].iter().all(|q| q.favorite));
+        assert!(all[first_plain..].iter().all(|q| !q.favorite));
+    }
+
+    #[test]
+    fn favouriting_needs_a_saved_preset() {
+        let mut lib = Library::default();
+        assert!(
+            !lib.toggle_favorite(Tool::Rect, "Crimson"),
+            "built-in presets are regenerated each launch, so they cannot hold a flag"
+        );
+
+        let mut mine = QuickStyle::new("Mine", 0x123456);
+        mine.favorite = false;
+        lib.upsert(Tool::Rect, mine);
+        assert!(lib.toggle_favorite(Tool::Rect, "Mine"));
+        assert!(lib.for_tool(Tool::Rect)[0].favorite);
+        assert!(lib.toggle_favorite(Tool::Rect, "Mine"));
+        assert!(!lib.for_tool(Tool::Rect)[0].favorite);
+    }
+
+    #[test]
+    fn a_styles_file_without_the_favourite_field_still_loads() {
+        let dir = std::env::temp_dir().join(format!("qs_styles_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("styles.json");
+
+        let mut lib = Library::default();
+        let mut preset = QuickStyle::new("Old preset", 0x0A0B0C);
+        preset.favorite = true;
+        lib.upsert(Tool::Pen, preset);
+        lib.save_to(&path).unwrap();
+
+        // Strip the key, exactly as a file written by the previous release.
+        let raw = std::fs::read_to_string(&path).unwrap();
+        let mut value: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        fn strip(v: &mut serde_json::Value) {
+            match v {
+                serde_json::Value::Object(map) => {
+                    map.remove("favorite");
+                    for (_, child) in map.iter_mut() {
+                        strip(child);
+                    }
+                }
+                serde_json::Value::Array(items) => {
+                    for item in items {
+                        strip(item);
+                    }
+                }
+                _ => {}
+            }
+        }
+        strip(&mut value);
+        std::fs::write(&path, serde_json::to_string_pretty(&value).unwrap()).unwrap();
+
+        let back = Library::load_from(&path);
+        let loaded = back.for_tool(Tool::Pen);
+        assert_eq!(loaded.len(), 1, "preset survived");
+        assert!(!loaded[0].favorite, "absent flag defaults to off");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn filter_matches_preset_names_case_insensitively() {
+        let presets = defaults_for(Tool::Rect);
+        assert_eq!(filter_presets(presets.clone(), "").len(), presets.len());
+        assert_eq!(filter_presets(presets.clone(), "   ").len(), presets.len());
+
+        let hit = filter_presets(presets.clone(), "crim");
+        assert_eq!(hit.len(), 1);
+        assert_eq!(hit[0].name, "Crimson");
+
+        assert!(filter_presets(presets, "no-such-preset").is_empty());
     }
 }

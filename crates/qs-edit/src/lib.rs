@@ -45,6 +45,10 @@ pub enum Tool {
     Crop,
     Cutout,
     SelectRegion,
+    /// Paint bucket: click fills the region under the cursor.
+    Fill,
+    /// Move existing canvas content: drag a box, then click where it lands.
+    SmartMove,
 }
 
 impl Tool {
@@ -75,6 +79,8 @@ pub struct Style {
     pub step_radius: f32,
     pub cutout_axis: qs_doc::CutoutAxis,
     pub cutout_seam: qs_doc::CutoutSeam,
+    /// Paint-bucket tolerance, per channel (0 = exact match).
+    pub fill_tolerance: u8,
 }
 
 impl Default for Style {
@@ -97,6 +103,7 @@ impl Default for Style {
             step_radius: 12.0,
             cutout_axis: qs_doc::CutoutAxis::Horizontal,
             cutout_seam: qs_doc::CutoutSeam::Jagged,
+            fill_tolerance: 24,
         }
     }
 }
@@ -190,6 +197,10 @@ enum Drag {
     Cutout {
         start: PointF,
     },
+    /// Smart Move: dragging out the region whose content will move.
+    SmartMoveSrc {
+        start: PointF,
+    },
     Region {
         start: PointF,
     },
@@ -226,6 +237,10 @@ pub struct Editor {
     marquee_rect: Option<RectF>,
     /// Shift state of the in-flight pointer_down (for Select toggling).
     pending_shift: bool,
+    /// Source rect of a Smart Move waiting for its destination click.
+    pending_move: Option<RectF>,
+    /// Source rect being dragged out by the Smart Move tool (transient).
+    move_src_rect: Option<RectF>,
 }
 
 /// Readable text colour on `rgb`.
@@ -423,6 +438,8 @@ impl Editor {
             region_rect: None,
             marquee_rect: None,
             pending_shift: false,
+            pending_move: None,
+            move_src_rect: None,
         }
     }
 
@@ -438,6 +455,11 @@ impl Editor {
 
     pub fn cutout_rect(&self) -> Option<RectF> {
         self.cutout_rect
+    }
+
+    /// Source rect being dragged out by the Smart Move tool.
+    pub fn move_src_rect(&self) -> Option<RectF> {
+        self.move_src_rect
     }
 
     /// Marquee rectangle preview (Select tool drag on empty canvas).
@@ -725,6 +747,12 @@ impl Editor {
             self.tool = Tool::Select;
             return;
         }
+        if matches!(self.drag, Drag::SmartMoveSrc { .. }) {
+            self.drag = Drag::None;
+            self.move_src_rect = None;
+            self.tool = Tool::Select;
+            return;
+        }
         if matches!(self.drag, Drag::Region { .. }) {
             self.drag = Drag::None;
             self.region_rect = None;
@@ -799,6 +827,19 @@ impl Editor {
         }
         if self.tool == Tool::Cutout {
             self.drag = Drag::Cutout { start: p };
+            return;
+        }
+        if self.tool == Tool::Fill {
+            self.fill_at(p);
+            return;
+        }
+        if self.tool == Tool::SmartMove {
+            // Second click drops the armed content; the first drag picks it.
+            if self.pending_move.is_some() {
+                self.commit_smart_move(p);
+            } else {
+                self.drag = Drag::SmartMoveSrc { start: p };
+            }
             return;
         }
         if self.tool == Tool::SelectRegion {
@@ -1046,6 +1087,10 @@ impl Editor {
                 let start = *start;
                 self.cutout_rect = Some(RectF::from_points(start, p));
             }
+            Drag::SmartMoveSrc { start } => {
+                let start = *start;
+                self.move_src_rect = Some(RectF::from_points(start, p));
+            }
             Drag::Region { start } => {
                 let start = *start;
                 self.region_rect = Some(RectF::from_points(start, p));
@@ -1105,6 +1150,13 @@ impl Editor {
                     self.set_view(r);
                 }
                 self.reset_tool();
+            }
+            Drag::SmartMoveSrc { .. } => {
+                if let Some(r) = self.move_src_rect.take() {
+                    // Degenerate boxes are rejected by `begin_smart_move`, so a
+                    // stray click leaves nothing armed.
+                    self.begin_smart_move(r);
+                }
             }
             Drag::Cutout { .. } => {
                 if let Some(r) = self.cutout_rect.take() {
@@ -1953,6 +2005,54 @@ impl Editor {
             ed.selection = ids;
         });
         count
+    }
+
+    /// Paint bucket: fill the region reachable from `seed` with the current
+    /// colour, as one undo step.
+    pub fn fill_at(&mut self, seed: PointF) -> bool {
+        let rgb = self.style.rgb;
+        let tolerance = self.style.fill_tolerance;
+        self.record(move |ed| {
+            let id = ed.doc.push(ObjectKind::Fill {
+                seed,
+                rgb,
+                tolerance,
+            });
+            ed.selection = vec![id];
+        });
+        true
+    }
+
+    /// Smart Move, step 1: remember what should move. Rejects degenerate boxes
+    /// so a stray click cannot arm a move.
+    pub fn begin_smart_move(&mut self, src: RectF) -> bool {
+        let r = src.normalized();
+        if r.w < 2.0 || r.h < 2.0 {
+            return false;
+        }
+        self.pending_move = Some(r);
+        true
+    }
+
+    /// The armed Smart Move source, for the canvas preview.
+    pub fn pending_smart_move(&self) -> Option<RectF> {
+        self.pending_move
+    }
+
+    pub fn cancel_smart_move(&mut self) {
+        self.pending_move = None;
+    }
+
+    /// Smart Move, step 2: drop the armed content at `dst`, one undo step.
+    pub fn commit_smart_move(&mut self, dst: PointF) -> bool {
+        let Some(src) = self.pending_move.take() else {
+            return false;
+        };
+        self.record(move |ed| {
+            let id = ed.doc.push(ObjectKind::SmartMove { src, dst });
+            ed.selection = vec![id];
+        });
+        true
     }
 
     pub fn set_background(&mut self, argb: u32) {
@@ -3515,5 +3615,60 @@ mod tests {
             (e.doc().objects[0].opacity - 0.3).abs() < f32::EPSILON,
             "the whole drag was one entry"
         );
+    }
+    #[test]
+    fn fill_is_one_undo_step_and_uses_the_style_colour() {
+        let mut e = editor();
+        e.style.rgb = 0x00FF00;
+        e.style.fill_tolerance = 40;
+        e.set_tool(Tool::Fill);
+
+        e.pointer_down(pt(10.0, 10.0));
+        e.pointer_up(pt(10.0, 10.0));
+
+        match &e.doc().objects[0].kind {
+            ObjectKind::Fill { rgb, tolerance, .. } => {
+                assert_eq!(*rgb, 0x00FF00);
+                assert_eq!(*tolerance, 40);
+            }
+            k => panic!("{k:?}"),
+        }
+        assert_eq!(e.selection().len(), 1, "the new fill is selected");
+
+        assert!(e.undo());
+        assert!(e.doc().objects.is_empty(), "one undo removes the fill");
+    }
+
+    #[test]
+    fn smart_move_needs_a_box_then_a_drop_and_is_one_undo_step() {
+        let mut e = editor();
+        e.set_tool(Tool::SmartMove);
+
+        // A stray click arms nothing.
+        drag(&mut e, pt(50.0, 50.0), pt(50.0, 50.0));
+        assert!(e.pending_smart_move().is_none(), "degenerate box rejected");
+        assert!(e.doc().objects.is_empty());
+
+        // Drag out the source, then click the destination.
+        drag(&mut e, pt(10.0, 10.0), pt(60.0, 40.0));
+        assert_eq!(
+            e.pending_smart_move(),
+            Some(RectF::new(10.0, 10.0, 50.0, 30.0))
+        );
+        assert!(e.doc().objects.is_empty(), "nothing committed yet");
+
+        e.pointer_down(pt(200.0, 120.0));
+        e.pointer_up(pt(200.0, 120.0));
+        match &e.doc().objects[0].kind {
+            ObjectKind::SmartMove { src, dst } => {
+                assert_eq!(*src, RectF::new(10.0, 10.0, 50.0, 30.0));
+                assert_eq!(*dst, pt(200.0, 120.0));
+            }
+            k => panic!("{k:?}"),
+        }
+        assert!(e.pending_smart_move().is_none(), "pending state cleared");
+
+        assert!(e.undo());
+        assert!(e.doc().objects.is_empty(), "one undo removes the move");
     }
 }

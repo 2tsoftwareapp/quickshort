@@ -14,8 +14,8 @@ mod orient;
 pub mod qsdoc;
 
 pub use effects::{
-    Anchor, BorderEffect, ColorAdjustEffect, ColorFilter, EdgeEffect, EffectLayout, Effects,
-    PageCurlEffect, ReflectionEffect, ShadowEffect, WatermarkEffect,
+    Anchor, BorderEffect, ColorAdjustEffect, ColorFilter, ColorizeEffect, EdgeEffect,
+    EffectLayout, Effects, PageCurlEffect, ReflectionEffect, ShadowEffect, WatermarkEffect,
 };
 pub use geom::{PointF, RectF, SizeF};
 pub use orient::Orientation;
@@ -327,6 +327,28 @@ pub enum ObjectKind {
         #[serde(default)]
         blur: f32,
     },
+    /// Paint bucket: fills the region reachable from `seed` whose pixels are
+    /// within `tolerance` (per channel) of the seed's colour.
+    ///
+    /// The region is recomputed at render time rather than baked, so the fill
+    /// follows the layers underneath it and hiding the object restores the
+    /// original pixels.
+    Fill {
+        seed: PointF,
+        rgb: u32,
+        #[serde(default = "default_fill_tolerance")]
+        tolerance: u8,
+    },
+    /// Moves the pixels under `src` to `dst` and heals the hole with the
+    /// surrounding colour.
+    SmartMove {
+        src: RectF,
+        dst: PointF,
+    },
+}
+
+fn default_fill_tolerance() -> u8 {
+    24
 }
 
 fn default_radius() -> f32 {
@@ -725,6 +747,8 @@ impl ObjectKind {
             }
             Stamp { rect, .. } => rect.is_finite(),
             Eraser { pts, width } => width.is_finite() && pts.iter().all(|p| p.is_finite()),
+            Fill { seed, .. } => seed.is_finite(),
+            SmartMove { src, dst } => src.is_finite() && dst.is_finite(),
         }
     }
 
@@ -746,6 +770,8 @@ impl ObjectKind {
             Spotlight { .. } => "Spotlight",
             Stamp { .. } => "Stamp",
             Eraser { .. } => "Eraser",
+            Fill { .. } => "Fill",
+            SmartMove { .. } => "Smart Move",
         }
     }
 
@@ -771,6 +797,11 @@ impl ObjectKind {
                 *tail = tail.offset(dx, dy);
             }
             Step { center, .. } => *center = center.offset(dx, dy),
+            Fill { seed, .. } => *seed = seed.offset(dx, dy),
+            SmartMove { src, dst } => {
+                *src = src.offset(dx, dy);
+                *dst = dst.offset(dx, dy);
+            }
         }
     }
 

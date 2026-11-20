@@ -13,6 +13,33 @@ pub struct Effects {
     pub color_filter: Option<ColorFilter>,
     pub page_curl: Option<PageCurlEffect>,
     pub reflection: Option<ReflectionEffect>,
+    pub colorize: Option<ColorizeEffect>,
+}
+
+/// Replaces a colour throughout the image: every pixel within `tolerance` of
+/// `target` moves toward `replacement` by `strength`.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ColorizeEffect {
+    /// 0xRRGGBB colour to find.
+    pub target: u32,
+    /// 0xRRGGBB colour to move matching pixels toward.
+    pub replacement: u32,
+    /// Per-channel distance that still counts as the target colour.
+    pub tolerance: u8,
+    /// 0 = original pixels, 1 = fully replaced.
+    pub strength: f32,
+}
+
+impl Default for ColorizeEffect {
+    fn default() -> Self {
+        Self {
+            target: 0x000000,
+            replacement: 0xD93025,
+            tolerance: 24,
+            strength: 1.0,
+        }
+    }
 }
 
 /// Preset color filters applied after `color_adjust`.

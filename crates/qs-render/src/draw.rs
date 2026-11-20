@@ -490,7 +490,197 @@ fn draw_object(pm: &mut Pixmap, xf: &Xf, kind: &ObjectKind, step_no: u32, snap: 
                 BlurMode::Gaussian => gaussian(pm, x0, y0, x1, y1, amount),
             }
         }
+        ObjectKind::Fill { seed, rgb, tolerance } => {
+            let (sx, sy) = (xf.px(seed.x).round() as i32, xf.py(seed.y).round() as i32);
+            flood_fill(pm, sx, sy, *rgb, *tolerance);
+        }
+        ObjectKind::SmartMove { src, dst } => {
+            let (x0, y0) = (xf.px(src.x).round() as i32, xf.py(src.y).round() as i32);
+            let (x1, y1) = (xf.px(src.right()).round() as i32, xf.py(src.bottom()).round() as i32);
+            let (dx, dy) = (xf.px(dst.x).round() as i32, xf.py(dst.y).round() as i32);
+            smart_move(pm, x0, y0, x1, y1, dx, dy);
+        }
     }
+}
+
+/// Paint-bucket fill of the region reachable from `(sx, sy)`.
+///
+/// Tolerance is the per-channel distance that still counts as "the same
+/// colour". A visited mask is kept instead of relying on the fill colour to
+/// stop the walk, so a fill colour close to the seed colour cannot make the
+/// scan revisit pixels forever.
+fn flood_fill(pm: &mut Pixmap, sx: i32, sy: i32, rgb: u32, tolerance: u8) {
+    let w = pm.width() as i32;
+    let h = pm.height() as i32;
+    if sx < 0 || sy < 0 || sx >= w || sy >= h {
+        return;
+    }
+    let fill = [(rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8, 255u8];
+    let tol = tolerance as i32;
+    let stride = w as usize;
+    let idx = |x: i32, y: i32| (y as usize * stride + x as usize) * 4;
+    let data = pm.data_mut();
+
+    let seed = {
+        let i = idx(sx, sy);
+        [data[i], data[i + 1], data[i + 2], data[i + 3]]
+    };
+    if seed == fill {
+        return;
+    }
+    let matches = |data: &[u8], i: usize| {
+        (data[i] as i32 - seed[0] as i32).abs() <= tol
+            && (data[i + 1] as i32 - seed[1] as i32).abs() <= tol
+            && (data[i + 2] as i32 - seed[2] as i32).abs() <= tol
+    };
+
+    let mut seen = vec![false; (w as usize) * (h as usize)];
+    let mut stack: Vec<(i32, i32)> = vec![(sx, sy)];
+    while let Some((x, y)) = stack.pop() {
+        let mut left = x;
+        while left > 0 && !seen[y as usize * stride + left as usize - 1] && matches(data, idx(left - 1, y)) {
+            left -= 1;
+        }
+        let mut right = x;
+        while right + 1 < w
+            && !seen[y as usize * stride + right as usize + 1]
+            && matches(data, idx(right + 1, y))
+        {
+            right += 1;
+        }
+        for xx in left..=right {
+            let i = idx(xx, y);
+            if seen[y as usize * stride + xx as usize] {
+                continue;
+            }
+            seen[y as usize * stride + xx as usize] = true;
+            data[i..i + 4].copy_from_slice(&fill);
+        }
+        for ny in [y - 1, y + 1] {
+            if ny < 0 || ny >= h {
+                continue;
+            }
+            let mut xx = left;
+            while xx <= right {
+                if !seen[ny as usize * stride + xx as usize] && matches(data, idx(xx, ny)) {
+                    stack.push((xx, ny));
+                }
+                xx += 1;
+            }
+        }
+    }
+}
+
+/// Move the pixels under the source rect to `(dx, dy)`, healing the hole with
+/// the dominant colour of the ring just outside it.
+///
+/// The patch is captured before the hole is covered, so a destination that
+/// overlaps the source still receives the original content.
+fn smart_move(pm: &mut Pixmap, x0: i32, y0: i32, x1: i32, y1: i32, dx: i32, dy: i32) {
+    let Some((x0, y0, x1, y1)) = clip(pm, x0, y0, x1, y1) else {
+        return;
+    };
+    let stride = pm.width() as usize;
+    let w = x1 - x0;
+    let h = y1 - y0;
+
+    // 1. Capture what is being moved.
+    let mut patch = Vec::with_capacity(w * h * 4);
+    {
+        let data = pm.data();
+        for y in y0..y1 {
+            let start = (y * stride + x0) * 4;
+            patch.extend_from_slice(&data[start..start + w * 4]);
+        }
+    }
+
+    // 2. Heal the hole with the colour that surrounds it.
+    let heal = ring_colour(pm, x0, y0, x1, y1);
+    {
+        let data = pm.data_mut();
+        for y in y0..y1 {
+            let start = (y * stride + x0) * 4;
+            for x in 0..w {
+                let i = start + x * 4;
+                data[i..i + 4].copy_from_slice(&heal);
+            }
+        }
+    }
+
+    // 3. Paste at the destination, clipped to the canvas.
+    let Some((px0, py0, px1, py1)) = clip(pm, dx, dy, dx + w as i32, dy + h as i32) else {
+        return;
+    };
+    let data = pm.data_mut();
+    for y in py0..py1 {
+        for x in px0..px1 {
+            let sx = x as i32 - dx;
+            let sy = y as i32 - dy;
+            let src = (sy as usize * w + sx as usize) * 4;
+            let dst = (y * stride + x) * 4;
+            data[dst..dst + 4].copy_from_slice(&patch[src..src + 4]);
+        }
+    }
+}
+
+/// The most common colour in the one-pixel ring around a rect. Falls back to
+/// the rect's own border average when the ring is entirely off-canvas, so the
+/// heal colour always comes from the image rather than an invented one.
+fn ring_colour(pm: &Pixmap, x0: usize, y0: usize, x1: usize, y1: usize) -> [u8; 4] {
+    use std::collections::HashMap;
+    let stride = pm.width() as usize;
+    let data = pm.data();
+    let mut counts: HashMap<[u8; 4], usize> = HashMap::new();
+    let mut push = |x: usize, y: usize| {
+        let i = (y * stride + x) * 4;
+        *counts.entry([data[i], data[i + 1], data[i + 2], data[i + 3]]).or_insert(0) += 1;
+    };
+    let (rx0, ry0) = (x0.saturating_sub(1), y0.saturating_sub(1));
+    let rx1 = (x1 + 1).min(stride);
+    let ry1 = (y1 + 1).min(pm.height() as usize);
+    for x in rx0..rx1 {
+        if ry0 < y0 {
+            push(x, ry0);
+        }
+        if ry1 > y1 {
+            push(x, ry1 - 1);
+        }
+    }
+    for y in ry0..ry1 {
+        if rx0 < x0 {
+            push(rx0, y);
+        }
+        if rx1 > x1 {
+            push(rx1 - 1, y);
+        }
+    }
+    if let Some((best, _)) = counts.iter().max_by_key(|(_, n)| **n) {
+        return *best;
+    }
+    // No ring at all (the source covers the canvas): average its own border.
+    let mut sum = [0u32; 4];
+    let mut n = 0u32;
+    for y in y0..y1 {
+        for x in x0..x1 {
+            if x != x0 && x + 1 != x1 && y != y0 && y + 1 != y1 {
+                continue;
+            }
+            let i = (y * stride + x) * 4;
+            for c in 0..4 {
+                sum[c] += data[i + c] as u32;
+            }
+            n += 1;
+        }
+    }
+    if n == 0 {
+        return [0, 0, 0, 0];
+    }
+    [
+        (sum[0] / n) as u8,
+        (sum[1] / n) as u8,
+        (sum[2] / n) as u8,
+        (sum[3] / n) as u8,
+    ]
 }
 
 fn clip(pm: &Pixmap, x0: i32, y0: i32, x1: i32, y1: i32) -> Option<(usize, usize, usize, usize)> {
@@ -702,7 +892,11 @@ fn render_content(doc: &Document, base: &RgbaImage) -> RgbaImage {
 fn is_paint_only(kind: &ObjectKind) -> bool {
     !matches!(
         kind,
-        ObjectKind::Blur { .. } | ObjectKind::Magnify { .. } | ObjectKind::Eraser { .. }
+        ObjectKind::Blur { .. }
+            | ObjectKind::Magnify { .. }
+            | ObjectKind::Eraser { .. }
+            | ObjectKind::Fill { .. }
+            | ObjectKind::SmartMove { .. }
     )
 }
 
@@ -1188,5 +1382,142 @@ mod tests {
                 assert_eq!(out.get_pixel(q.x as u32, q.y as u32).0[..2], [x as u8, y as u8], "{o:?}");
             }
         }
+    }
+    fn stripe_base() -> RgbaImage {
+        // White with a black divider at x = 20, so a fill has a wall to stop at.
+        RgbaImage::from_fn(40, 30, |x, _| {
+            if x == 20 {
+                image::Rgba([0, 0, 0, 255])
+            } else {
+                image::Rgba([255, 255, 255, 255])
+            }
+        })
+    }
+
+    #[test]
+    fn fill_stops_at_a_colour_boundary() {
+        let base = stripe_base();
+        let mut d = Document::new(40, 30, 1.0);
+        d.push(ObjectKind::Fill {
+            seed: qs_doc::PointF::new(5.0, 5.0),
+            rgb: 0xFF0000,
+            tolerance: 8,
+        });
+        let out = render(&d, &base);
+        assert_eq!(px(&out, 5, 5), [255, 0, 0], "seed area filled");
+        assert_eq!(px(&out, 19, 5), [255, 0, 0], "reaches the divider");
+        assert_eq!(px(&out, 20, 5), [0, 0, 0], "divider untouched");
+        assert_eq!(px(&out, 25, 5), [255, 255, 255], "far side untouched");
+    }
+
+    #[test]
+    fn fill_tolerance_controls_what_counts_as_the_same_colour() {
+        // Left half 200, right half 205 — five apart.
+        let base = RgbaImage::from_fn(40, 10, |x, _| {
+            if x < 20 {
+                image::Rgba([200, 200, 200, 255])
+            } else {
+                image::Rgba([205, 205, 205, 255])
+            }
+        });
+        let render_with = |tolerance: u8| {
+            let mut d = Document::new(40, 10, 1.0);
+            d.push(ObjectKind::Fill {
+                seed: qs_doc::PointF::new(2.0, 2.0),
+                rgb: 0x00FF00,
+                tolerance,
+            });
+            render(&d, &base)
+        };
+        assert_eq!(
+            px(&render_with(0), 25, 2),
+            [205, 205, 205],
+            "tolerance 0 stops at the seam"
+        );
+        assert_eq!(
+            px(&render_with(16), 25, 2),
+            [0, 255, 0],
+            "tolerance 16 crosses it"
+        );
+    }
+
+    #[test]
+    fn fill_outside_the_canvas_is_a_no_op() {
+        let base = stripe_base();
+        let mut d = Document::new(40, 30, 1.0);
+        d.push(ObjectKind::Fill {
+            seed: qs_doc::PointF::new(-50.0, -50.0),
+            rgb: 0xFF0000,
+            tolerance: 255,
+        });
+        assert_eq!(render(&d, &base).as_raw(), base.as_raw());
+    }
+
+    #[test]
+    fn hidden_fill_restores_the_original_pixels() {
+        let base = stripe_base();
+        let mut d = Document::new(40, 30, 1.0);
+        let id = d.push(ObjectKind::Fill {
+            seed: qs_doc::PointF::new(5.0, 5.0),
+            rgb: 0xFF0000,
+            tolerance: 8,
+        });
+        d.get_mut(id).unwrap().visible = false;
+        assert_eq!(
+            render(&d, &base).as_raw(),
+            base.as_raw(),
+            "a fill is non-destructive"
+        );
+    }
+
+    fn block_base() -> RgbaImage {
+        // White 80x40 with a black 10x6 block at (5,5).
+        let mut img = RgbaImage::from_pixel(80, 40, image::Rgba([255, 255, 255, 255]));
+        for y in 5..11 {
+            for x in 5..15 {
+                img.put_pixel(x, y, image::Rgba([0, 0, 0, 255]));
+            }
+        }
+        img
+    }
+
+    #[test]
+    fn smart_move_pastes_the_block_and_heals_the_hole() {
+        let base = block_base();
+        let mut d = Document::new(80, 40, 1.0);
+        d.push(ObjectKind::SmartMove {
+            src: RectF::new(5.0, 5.0, 10.0, 6.0),
+            dst: qs_doc::PointF::new(40.0, 5.0),
+        });
+        let out = render(&d, &base);
+        assert_eq!(px(&out, 45, 8), [0, 0, 0], "block landed at the destination");
+        assert_eq!(px(&out, 10, 8), [255, 255, 255], "hole healed with the background");
+        assert_eq!(px(&out, 60, 8), [255, 255, 255], "nothing else disturbed");
+    }
+
+    #[test]
+    fn smart_move_overlapping_the_source_keeps_the_original_content() {
+        let base = block_base();
+        let mut d = Document::new(80, 40, 1.0);
+        d.push(ObjectKind::SmartMove {
+            src: RectF::new(5.0, 5.0, 10.0, 6.0),
+            dst: qs_doc::PointF::new(10.0, 5.0),
+        });
+        let out = render(&d, &base);
+        // The patch is captured before the hole is healed, so the block's right
+        // half survives in the overlap.
+        assert_eq!(px(&out, 12, 8), [0, 0, 0]);
+    }
+
+    #[test]
+    fn smart_move_at_the_edge_is_clipped_not_panicked() {
+        let base = block_base();
+        let mut d = Document::new(80, 40, 1.0);
+        d.push(ObjectKind::SmartMove {
+            src: RectF::new(5.0, 5.0, 10.0, 6.0),
+            dst: qs_doc::PointF::new(78.0, 38.0),
+        });
+        let out = render(&d, &base);
+        assert_eq!((out.width(), out.height()), (80, 40));
     }
 }

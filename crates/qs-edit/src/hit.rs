@@ -103,6 +103,15 @@ pub fn hit(kind: &ObjectKind, p: PointF, tol: f32) -> bool {
             .contains(p),
         Spotlight { rect, .. } | Stamp { rect, .. } => rect.normalized().inflate(tol).contains(p),
         Eraser { pts, width, .. } => poly_dist(pts, p, false) <= width / 2.0 + tol,
+        // The filled region only exists at render time, so the seed is the
+        // grabbable point (matching `qs_render::bounds`).
+        Fill { seed, .. } => {
+            PointF::new(seed.x, seed.y).dist(p) <= 9.0 + tol
+        }
+        SmartMove { src, dst } => {
+            let moved = RectF::new(dst.x, dst.y, src.w.abs(), src.h.abs());
+            src.normalized().inflate(tol).contains(p) || moved.inflate(tol).contains(p)
+        }
     }
 }
 
@@ -135,7 +144,7 @@ pub fn handles(kind: &ObjectKind) -> Vec<Handle> {
     match kind {
         Rect { r, .. } | Ellipse { r, .. } | Blur { r, .. } => box_handles(*r),
         Magnify { rect, .. } | Spotlight { rect, .. } | Stamp { rect, .. } => box_handles(*rect),
-        Eraser { .. } => Vec::new(),
+        Eraser { .. } | Fill { .. } | SmartMove { .. } => Vec::new(),
         Callout { body, tail, .. } => {
             let mut v = box_handles(*body);
             v.push(h(HandleId::Tail, tail.x, tail.y));
@@ -219,6 +228,9 @@ pub fn resized(orig: &ObjectKind, hd: HandleId, to: PointF) -> ObjectKind {
                 *radius = center.dist(to).clamp(6.0, 200.0);
             }
         }
+        // No resize handles are offered for these, so a resize is a no-op
+        // rather than a silent distortion of where content lands.
+        Fill { .. } | SmartMove { .. } => {}
         Pen { pts, .. } | Highlighter { pts, .. } | Eraser { pts, .. } => {
             let old = RectF::bounding(pts.iter().copied()).unwrap_or_default();
             remap(pts, old, resize_rect(old, hd, to));

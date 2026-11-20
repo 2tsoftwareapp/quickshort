@@ -394,6 +394,8 @@ pub fn render_top_bar(
         (Tool::Eraser, "Eraser (E)"),
         (Tool::Crop, "Crop / Trim (K)"),
         (Tool::Cutout, "Cutout Strip (X)"),
+        (Tool::Fill, "Paint Bucket (U)"),
+        (Tool::SmartMove, "Smart Move (Y)"),
     ];
 
     let tool_w = 29.0;
@@ -417,7 +419,7 @@ pub fn render_top_bar(
         (Tool::Blur, "Blur / Pixelate (B)"),
         (Tool::Crop, "Crop / Trim (K)"),
     ];
-    let overflow_tools: [(Tool, &str); 7] = [
+    let overflow_tools: [(Tool, &str); 9] = [
         (Tool::Line, "Line (L)"),
         (Tool::Ellipse, "Ellipse (O)"),
         (Tool::Magnify, "Magnify Lens (I)"),
@@ -425,6 +427,8 @@ pub fn render_top_bar(
         (Tool::Stamp, "Stamp (G)"),
         (Tool::Eraser, "Eraser (E)"),
         (Tool::Cutout, "Cutout Strip (X)"),
+        (Tool::Fill, "Paint Bucket (U)"),
+        (Tool::SmartMove, "Smart Move (Y)"),
     ];
 
     let more_w = 34.0;
@@ -850,6 +854,16 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
             editor.style.rgb, editor.style.width, editor.style.fill, editor.style.callout_shape,
             editor.style.arrow_head, editor.style.blur_mode, editor.style.blur_strength, editor.style.text.clone(),
         ),
+        Some(ObjectKind::Fill { rgb, .. }) => (
+            ContextKind::Shape,
+            *rgb, editor.style.width, editor.style.fill, editor.style.callout_shape,
+            editor.style.arrow_head, editor.style.blur_mode, editor.style.blur_strength, editor.style.text.clone(),
+        ),
+        Some(ObjectKind::SmartMove { .. }) => (
+            ContextKind::Generic,
+            editor.style.rgb, editor.style.width, editor.style.fill, editor.style.callout_shape,
+            editor.style.arrow_head, editor.style.blur_mode, editor.style.blur_strength, editor.style.text.clone(),
+        ),
         None => {
             let kind = match editor.tool() {
                 Tool::Select => ContextKind::Generic,
@@ -867,6 +881,8 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
                 Tool::Crop => ContextKind::Generic,
                 Tool::Cutout => ContextKind::Generic,
                 Tool::SelectRegion => ContextKind::Generic,
+                Tool::Fill => ContextKind::Shape,
+                Tool::SmartMove => ContextKind::Generic,
             };
             (
                 kind,

@@ -117,6 +117,8 @@ pub struct EditorApp {
     prefs: crate::prefs::AppPrefs,
     /// Quick Styles: built-in presets + the user's saved ones.
     styles: styles::Library,
+    /// Text filter for the quick-style bar (session state).
+    style_filter: String,
     /// Capture library browser (search, tags, favourites, pruning).
     library: crate::library::Library,
 }
@@ -202,6 +204,7 @@ impl EditorApp {
             prefs: crate::prefs::AppPrefs::load(),
             styles: styles::Library::load(),
             library: crate::library::Library::default(),
+            style_filter: String::new(),
         };
         app.update_texture(&cc.egui_ctx);
         app
@@ -1332,6 +1335,10 @@ impl EditorApp {
                     Some(Tool::Crop)
                 } else if i.key_pressed(Key::X) {
                     Some(Tool::Cutout)
+                } else if i.key_pressed(Key::U) {
+                    Some(Tool::Fill)
+                } else if i.key_pressed(Key::Y) {
+                    Some(Tool::SmartMove)
                 } else if i.key_pressed(Key::M) {
                     Some(Tool::SelectRegion)
                 } else {
@@ -1548,7 +1555,12 @@ impl eframe::App for EditorApp {
             egui::Panel::top("quick_style_bar")
                 .frame(egui::Frame::NONE)
                 .show(ui, |ui| {
-                    styles::render_bar(ui, &mut self.editor, &mut self.styles)
+                    styles::render_bar(
+                        ui,
+                        &mut self.editor,
+                        &mut self.styles,
+                        &mut self.style_filter,
+                    )
                 })
                 .inner
         } else {
@@ -2314,6 +2326,18 @@ impl eframe::App for EditorApp {
                         canvas::paint_cutout_overlay(&mut painter, s_rect, screen_rect);
                     }
                 }
+                if self.editor.tool() == Tool::SmartMove {
+                    let armed = self.editor.pending_smart_move().is_some();
+                    let rect = if armed {
+                        self.editor.pending_smart_move()
+                    } else {
+                        self.editor.move_src_rect()
+                    };
+                    if let Some(r) = rect {
+                        let s_rect = self.view.doc_rect_to_screen(r, screen_rect);
+                        canvas::paint_move_overlay(&painter, s_rect, armed);
+                    }
+                }
 
                 // 5c. Committed selection region outline (when not cropping)
                 if self.editor.tool() != Tool::Crop
@@ -2522,6 +2546,7 @@ mod tests {
             prefs: crate::prefs::AppPrefs::default(),
             styles: styles::Library::default(),
             library: crate::library::Library::default(),
+            style_filter: String::new(),
         };
         app.editor.preview_effects(qs_doc::Effects {
             border: Some(qs_doc::BorderEffect::default()),
