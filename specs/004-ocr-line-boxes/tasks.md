@@ -36,18 +36,20 @@
 Landed and verified on this machine:
 
 - `cargo check --workspace --all-targets` — clean, no new warnings.
-- `cargo test --workspace` — **275 passed / 0 failed** (7 new).
+- `cargo test --workspace` — **276 passed / 0 failed** (8 new).
 - The Vision path is not just compiled but *executed*: `text_and_geometry_agree_on_the_same_image`
-  runs a real `VNRecognizeTextRequest` (≈1.2 s) and asserts the two entry points agree.
+  runs a real `VNRecognizeTextRequest` and asserts the two entry points agree, and
+  `geometry_of_real_ui_text_sits_inside_the_image` reads 33 real UI lines off a repo screenshot.
 - Six conversion tests pin the bottom-left→top-left flip, the `0..=1` clamp, a zero-size
   observation, an overrunning rect, and a degenerate image size.
 
 Honest gaps, on purpose:
 
-- **T007** is covered by the text↔geometry agreement test on a blank frame rather than a
-  text-fixture test: generating a bitmap with real glyphs would need a rasterizer, and `qs-ocr` must
-  not depend on `qs-render` (Constitution II). A real-text assertion belongs in Phase 2's UAT, where
-  the editor already has the bundled font and a real screenshot.
+- **T007** is covered twice: a blank-frame agreement test that holds on any machine, and a
+  real-text test on `docs/shots/settings-general.png` (1640×1200, already in the repo) which
+  recognizes 33 lines, asserts every rect and confidence is sane and inside the image, and checks
+  the joined geometry against `extract_text`. No rasterizer is needed, so `qs-ocr` keeps its leaf
+  status (Constitution II).
 - **T006** adds `extract_lines` stubs for the Linux and Windows backends. Those targets cannot be
   compiled here, so the stubs are deliberately the simplest possible code — an explicit `bail!` —
   rather than untested FFI. Real geometry for those engines is Phase 3 (T014, T015).
