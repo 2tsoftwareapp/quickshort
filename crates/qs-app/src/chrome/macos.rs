@@ -24,7 +24,8 @@ use objc2::{define_class, msg_send, AnyThread, DefinedClass, MainThreadMarker, M
 use objc2_app_kit::{
     NSAutoresizingMaskOptions, NSBitmapFormat, NSBitmapImageRep, NSColor, NSDragOperation,
     NSDraggingContext, NSDraggingItem, NSDraggingSession, NSDraggingSource, NSEvent, NSEventMask,
-    NSEventModifierFlags, NSFilePromiseProvider, NSFilePromiseProviderDelegate, NSImage, NSScreen,
+    NSEventModifierFlags, NSFilePromiseProvider, NSFilePromiseProviderDelegate, NSImage,
+    NSRunningApplication, NSScreen,
     NSStatusWindowLevel, NSView, NSWindowButton, NSWindowCollectionBehavior, NSWindowStyleMask,
     NSWindowTitleVisibility, NSWorkspace,
 };
@@ -1119,4 +1120,17 @@ fn unix_ts() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+/// Name of the app in front, recorded as capture provenance.
+///
+/// `None` when macOS reports nothing (the desktop has focus) or when the caller
+/// is not on the main thread and cannot ask AppKit — never a guessed name.
+pub fn frontmost_app_name() -> Option<String> {
+    if MainThreadMarker::new().is_none() {
+        return None;
+    }
+    let app: Option<Retained<NSRunningApplication>> =
+        NSWorkspace::sharedWorkspace().frontmostApplication();
+    app.and_then(|a| a.localizedName().map(|n| n.to_string()))
 }

@@ -12,6 +12,7 @@ qs-doc.workspace = true
 qs-theme.workspace = true
 qs-render.workspace = true
 qs-edit.workspace = true
+qs-library.workspace = true
 arboard = "3"
 eframe = { version = "0.37", default-features = false, features = ["glow", "x11", "wayland", "default_fonts"] }
 rfd = { version = "0.15", default-features = false, features = ["gtk3"] }

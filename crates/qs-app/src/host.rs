@@ -333,6 +333,7 @@ impl Host {
         let target = SaveTarget::Dir(self.cfg.save_dir());
         let copy = self.cfg.copy_after_save;
         let lang = self.cfg.ocr_lang.clone();
+        let prov = actions::provenance_now(qs_library::CaptureMode::Fullscreen);
         std::thread::spawn(move || {
             let res = actions::dispatch(
                 frames,
@@ -344,6 +345,7 @@ impl Host {
                 None,
                 copy,
                 &lang,
+                prov,
             )
             .map_err(|e| e.to_string());
             let _ = px.send_event(HostEvent::Done(res));
@@ -603,10 +605,21 @@ impl Host {
                 }
             }
             chrome::MENU_SAVE => {
-                let img = self.chrome.shot(wid, idx).map(|s| s.img.clone());
+                let shot = self.chrome.shot(wid, idx);
+                let mode = shot.map(|s| s.capture_mode()).unwrap_or_default();
+                let img = shot.map(|s| s.img.clone());
                 if let Some(img) = img {
-                    match actions::save_to_dir(&img, &self.cfg.save_dir()) {
+                    let dir = self.cfg.save_dir();
+                    match actions::save_to_dir(&img, &dir) {
                         Ok(p) => {
+                            actions::record_saved(
+                                &dir,
+                                &p,
+                                qs_library::Provenance {
+                                    mode,
+                                    source_app: chrome::frontmost_app_name(),
+                                },
+                            );
                             if let Some(w) = self.chrome.wins.iter_mut().find(|w| w.id() == wid) {
                                 if let Some(s) = w.stack_mut().shot_mut(idx) {
                                     s.path = Some(p);
@@ -739,14 +752,25 @@ impl Host {
                     actions::copy_image(c.image(), false);
                     c.notify("Copied to clipboard");
                 }
-                QaAction::SaveNow => match actions::save_to_dir(c.image(), &self.cfg.save_dir()) {
-                    Ok(p) => {
-                        c.set_saved(p);
-                        c.notify("Screenshot saved");
-                        rebuild = true;
+                QaAction::SaveNow => {
+                    let dir = self.cfg.save_dir();
+                    match actions::save_to_dir(c.image(), &dir) {
+                        Ok(p) => {
+                            actions::record_saved(
+                                &dir,
+                                &p,
+                                qs_library::Provenance {
+                                    mode: qs_library::CaptureMode::Unknown,
+                                    source_app: chrome::frontmost_app_name(),
+                                },
+                            );
+                            c.set_saved(p);
+                            c.notify("Screenshot saved");
+                            rebuild = true;
+                        }
+                        Err(e) => c.notify(&format!("Save failed: {e}")),
                     }
-                    Err(e) => c.notify(&format!("Save failed: {e}")),
-                },
+                }
                 QaAction::Reveal => {
                     if let Some(p) = c.saved_path() {
                         actions::open_path(&p);
@@ -1456,9 +1480,10 @@ impl ApplicationHandler<HostEvent> for Host {
             });
             let copy = self.cfg.copy_after_save;
             let lang = self.cfg.ocr_lang.clone();
+            let prov = actions::provenance_now(qs_library::CaptureMode::Region);
             std::thread::spawn(move || {
                 let res = actions::dispatch(
-                    frames, sel, action, &annots, &target, false, share, copy, &lang,
+                    frames, sel, action, &annots, &target, false, share, copy, &lang, prov,
                 )
                 .map_err(|e| e.to_string());
                 let _ = px.send_event(HostEvent::Done(res));

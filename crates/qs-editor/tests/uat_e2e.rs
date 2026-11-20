@@ -128,3 +128,62 @@ fn uat_full_snagit_workflow_simplify_cutout_effects_save_and_combine() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn uat_library_browses_a_real_folder_across_viewports_and_themes() {
+    let dir = std::env::temp_dir().join(format!("qs_uat_library_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    for i in 0..6u32 {
+        sample_ui_image(320 + i * 4, 200)
+            .save(dir.join(format!("quickshort-17000000{i:02}.png")))
+            .unwrap();
+    }
+    // Unsupported junk in the folder must never become a row.
+    std::fs::write(dir.join("notes.txt"), b"ignore me").unwrap();
+    std::fs::write(dir.join(".DS_Store"), b"junk").unwrap();
+
+    for &theme_name in &["dark", "light"] {
+        qs_theme::set_theme(theme_name);
+        for &(w, h) in &[(720.0, 600.0), (1000.0, 700.0), (1280.0, 800.0), (1600.0, 1000.0)] {
+            let ctx = egui::Context::default();
+            theme::apply_macos_visuals(&ctx);
+            let mut library = qs_editor::library::Library::default();
+            library.open = true;
+            library.set_dir(dir.clone());
+
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            loop {
+                let raw = egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::Vec2::new(w, h),
+                    )),
+                    ..Default::default()
+                };
+                let mut out = ctx.run_ui(raw, |ui| {
+                    let _ = ui;
+                    let _ = library.show(&ctx);
+                });
+                out.textures_delta.clear();
+
+                if !library.is_scanning() && library.len() == 6 {
+                    assert!(
+                        !out.shapes.is_empty(),
+                        "expected rendered library shapes for {theme_name} at {w}x{h}"
+                    );
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "library scan did not finish for {theme_name} at {w}x{h} (entries={})",
+                    library.len()
+                );
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+
+            assert_eq!(library.len(), 6, "junk files leaked into the library");
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

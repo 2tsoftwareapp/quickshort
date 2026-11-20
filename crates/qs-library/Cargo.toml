@@ -1,0 +1,17 @@
+[package]
+name = "qs-library"
+version = "0.1.0"
+edition = "2021"
+license.workspace = true
+description = "Capture library: entry index, search, provenance and trash"
+
+[dependencies]
+anyhow.workspace = true
+image.workspace = true
+qs-doc.workspace = true
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1"
+trash = "5"
+
+[dev-dependencies]
+tempfile = "3"

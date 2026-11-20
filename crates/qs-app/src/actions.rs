@@ -54,6 +54,10 @@ pub fn dispatch(
     share: Option<std::sync::Arc<crate::share::ShareManager>>,
     copy_after_save: bool,
     ocr_lang: &str,
+    // What produced this image, recorded in the library index. Only assets that
+    // land in a capture folder are indexed — shared copies and editor cache
+    // PNGs are not.
+    provenance: qs_library::Provenance,
 ) -> Result<Dispatch> {
     eprintln!("dispatch {action:?}");
     let img = std::thread::spawn(move || qs_core::stitch(&frames, sel))
@@ -126,7 +130,34 @@ pub fn dispatch(
             }
         }
     };
+    if let SaveTarget::Dir(dir) = target {
+        match &outcome {
+            Outcome::Saved(p) | Outcome::Edited(p, _) => record_saved(dir, p, provenance),
+            _ => {}
+        }
+    }
     Ok(Dispatch { outcome, img, sel })
+}
+
+/// Record a capture in the library index.
+///
+/// Best effort by design: the capture itself already succeeded and its file is
+/// on disk, so an index write must never turn a successful capture into a
+/// reported failure.
+pub fn record_saved(dir: &Path, path: &Path, provenance: qs_library::Provenance) {
+    if let Err(e) = qs_library::record_capture(dir, path, provenance) {
+        eprintln!("library index: {e:#}");
+    }
+}
+
+/// Provenance for a capture triggered right now: the mode the caller knows plus
+/// the frontmost app, read while still on the thread that can ask the window
+/// server.
+pub fn provenance_now(mode: qs_library::CaptureMode) -> qs_library::Provenance {
+    qs_library::Provenance {
+        mode,
+        source_app: crate::chrome::frontmost_app_name(),
+    }
 }
 
 fn save(img: &RgbaImage, target: &SaveTarget) -> Result<PathBuf> {

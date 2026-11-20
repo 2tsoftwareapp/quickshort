@@ -4,6 +4,7 @@
 use eframe::egui::{ColorImage, Context, TextureHandle, TextureOptions};
 use image::imageops::FilterType;
 use qs_doc::qsdoc;
+use qs_library::is_supported;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
@@ -110,16 +111,6 @@ fn candidate_dirs(active_dir: Option<&Path>) -> Vec<PathBuf> {
         push(home.join("Pictures").join("Quickshort"));
     }
     out
-}
-
-fn is_supported(path: &Path) -> bool {
-    let Some(ext) = path.extension().and_then(|s| s.to_str()) else {
-        return false;
-    };
-    matches!(
-        ext.to_ascii_lowercase().as_str(),
-        "qsdoc" | "png" | "jpg" | "jpeg" | "webp"
-    )
 }
 
 fn scan_dirs(dirs: &[PathBuf]) -> Vec<LoadedThumb> {

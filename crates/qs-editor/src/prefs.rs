@@ -18,6 +18,9 @@ pub struct AppPrefs {
     pub accent: String,
     pub after_capture: String,
     pub copy_after_save: bool,
+    /// `save_dir` from the shared config, when the user set one. The editor
+    /// only reads it to point the Library at the folder captures land in.
+    pub save_dir: Option<PathBuf>,
 }
 
 impl Default for AppPrefs {
@@ -27,6 +30,7 @@ impl Default for AppPrefs {
             accent: "blue".into(),
             after_capture: "shelf".into(),
             copy_after_save: false,
+            save_dir: None,
         }
     }
 }
@@ -74,10 +78,24 @@ impl AppPrefs {
                 "accent" => prefs.accent = val.to_owned(),
                 "after_capture" => prefs.after_capture = val.to_owned(),
                 "copy_after_save" => prefs.copy_after_save = val == "true",
+                "save_dir" => {
+                    if !val.is_empty() {
+                        prefs.save_dir = Some(PathBuf::from(val));
+                    }
+                }
                 _ => {}
             }
         }
         prefs
+    }
+
+    /// The capture folder: what the app config says, else the documented
+    /// default (`~/Pictures/quickshort`).
+    pub fn capture_dir(&self) -> PathBuf {
+        self.save_dir
+            .clone()
+            .or_else(qs_library::default_dir)
+            .unwrap_or_else(|| PathBuf::from("."))
     }
 
     pub fn save(&self) {

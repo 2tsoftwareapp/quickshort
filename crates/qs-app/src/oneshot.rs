@@ -254,10 +254,11 @@ impl Run {
                 let target = self.target.clone();
                 let share = (action == Action::Share).then(|| self.sm.clone());
                 let (copy, lang) = (self.copy_after_save, self.ocr_lang.clone());
+                let prov = actions::provenance_now(qs_library::CaptureMode::Region);
                 self.workers += 1;
                 std::thread::spawn(move || {
                     let res = actions::dispatch(
-                        frames, sel, action, &annots, &target, true, share, copy, &lang,
+                        frames, sel, action, &annots, &target, true, share, copy, &lang, prov,
                     )
                     .map_err(|e| e.to_string());
                     let _ = px.send_event(Ev::Done(res));

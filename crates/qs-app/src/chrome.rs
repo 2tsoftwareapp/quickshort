@@ -106,6 +106,28 @@ impl Shot {
     pub fn thumb(&self) -> (&[u32], usize, usize) {
         (&self.thumb, self.tw, self.th)
     }
+
+    /// Library provenance for this shelf item. A recording and a scrolling
+    /// capture say so; the rest cannot be told apart here, so they stay
+    /// unknown rather than being guessed.
+    pub fn capture_mode(&self) -> qs_library::CaptureMode {
+        match self.kind {
+            ShotKind::Scroll => qs_library::CaptureMode::Scrolling,
+            ShotKind::Record => qs_library::CaptureMode::Recording,
+            _ => qs_library::CaptureMode::Unknown,
+        }
+    }
+}
+
+/// Name of the application in front of the user, if the platform reports one.
+#[cfg(target_os = "macos")]
+pub fn frontmost_app_name() -> Option<String> {
+    imp::frontmost_app_name()
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn frontmost_app_name() -> Option<String> {
+    None
 }
 
 #[derive(Clone, Copy)]

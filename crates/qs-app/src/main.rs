@@ -222,6 +222,7 @@ fn run_one_shot(args: Args) -> Result<()> {
             None,
             cfg.copy_after_save,
             &cfg.ocr_lang,
+            actions::provenance_now(qs_library::CaptureMode::Fullscreen),
         )?;
         eprintln!("fullscreen saved, {:?} outcome", d.outcome);
         if let actions::Outcome::Saved(p) = &d.outcome {

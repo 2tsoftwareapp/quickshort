@@ -117,6 +117,8 @@ pub struct EditorApp {
     prefs: crate::prefs::AppPrefs,
     /// Quick Styles: built-in presets + the user's saved ones.
     styles: styles::Library,
+    /// Capture library browser (search, tags, favourites, pruning).
+    library: crate::library::Library,
 }
 
 fn anchored_insets(vertical: f32, horizontal: f32, anchor: (usize, usize)) -> [f32; 4] {
@@ -199,6 +201,7 @@ impl EditorApp {
             settings_open: false,
             prefs: crate::prefs::AppPrefs::load(),
             styles: styles::Library::load(),
+            library: crate::library::Library::default(),
         };
         app.update_texture(&cc.egui_ctx);
         app
@@ -1061,6 +1064,30 @@ impl EditorApp {
         self.settings_open = open;
     }
 
+    /// Library view: keep it pointed at the capture folder and apply the one
+    /// action it can request (open, or reveal in the file manager).
+    fn library_dialog(&mut self, ctx: &egui::Context) {
+        if !self.library.open {
+            return;
+        }
+        self.library.set_dir(self.prefs.capture_dir());
+        match self.library.show(ctx) {
+            Some(crate::library::LibraryAction::Open(path)) => {
+                if let Err(e) = self.switch_to_path(&path) {
+                    self.show_toast(format!("Failed to open: {e}"));
+                } else {
+                    self.library.open = false;
+                }
+            }
+            Some(crate::library::LibraryAction::Reveal(path)) => {
+                if let Err(e) = reveal_in_file_manager(&path) {
+                    self.show_toast(format!("Could not reveal file: {e}"));
+                }
+            }
+            None => {}
+        }
+    }
+
     fn combine_dialog(&mut self, ctx: &egui::Context) {
         if !self.combine_dialog_open {
             return;
@@ -1199,6 +1226,10 @@ impl EditorApp {
 
             if i.consume_key(Modifiers::COMMAND, Key::C) || i.consume_key(Modifiers::CTRL, Key::C) {
                 copy = true;
+            }
+
+            if i.consume_key(Modifiers::COMMAND, Key::L) || i.consume_key(Modifiers::CTRL, Key::L) {
+                self.library.toggle();
             }
 
             if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::S)
@@ -1555,6 +1586,7 @@ impl eframe::App for EditorApp {
         self.export_dialog(&ctx);
         self.combine_dialog(&ctx);
         self.settings_dialog(&ctx);
+        self.library_dialog(&ctx);
 
         // Bottom Studio Status Bar (32px = 4px + 24px hit target + 4px, single top hairline)
         let status_resp = egui::Panel::bottom("status_bar")
@@ -1642,6 +1674,14 @@ impl eframe::App for EditorApp {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if crate::components::status_pill(
                             ui,
+                            "Library",
+                            self.library.open,
+                            "Browse, search and tag captures (\u{2318}L)",
+                        ) {
+                            self.library.toggle();
+                        }
+                        if crate::components::status_pill(
+                            ui,
                             "Settings",
                             self.settings_open,
                             "Appearance & capture preferences (config.toml)",
@@ -1720,6 +1760,13 @@ impl eframe::App for EditorApp {
                                 .clicked()
                             {
                                 refresh_tray = true;
+                            }
+                            if ui
+                                .small_button("Library")
+                                .on_hover_text("Search, tag and prune every capture")
+                                .clicked()
+                            {
+                                self.library.toggle();
                             }
                             if self.tray_selected.len() >= 2
                                 && ui
@@ -2474,6 +2521,7 @@ mod tests {
             settings_open: false,
             prefs: crate::prefs::AppPrefs::default(),
             styles: styles::Library::default(),
+            library: crate::library::Library::default(),
         };
         app.editor.preview_effects(qs_doc::Effects {
             border: Some(qs_doc::BorderEffect::default()),
@@ -2515,6 +2563,30 @@ mod tests {
 }
 
 /// Reads `.qsdoc`, an image beside its `.qsdoc`, or a bare image.
+/// Reveal a capture in the platform's file manager, selecting it where the
+/// platform supports it.
+fn reveal_in_file_manager(path: &Path) -> std::io::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg("-R")
+            .arg(path)
+            .spawn()?;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(format!("/select,{}", path.display()))
+            .spawn()?;
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let target = path.parent().unwrap_or(path);
+        std::process::Command::new("xdg-open").arg(target).spawn()?;
+    }
+    Ok(())
+}
+
 fn load_document(p: &Path) -> anyhow::Result<(Document, RgbaImage, PathBuf)> {
     let side = qsdoc::sibling_path(p);
     // a flattened PNG with its `.qsdoc` beside it (overlay Edit) reopens

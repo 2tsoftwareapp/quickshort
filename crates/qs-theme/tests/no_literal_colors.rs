@@ -25,6 +25,7 @@ const MIGRATED: &[&str] = &[
     "qs-editor/src/templates.rs",
     "qs-editor/src/toolbar.rs",
     "qs-editor/src/image_panel.rs",
+    "qs-editor/src/library.rs",
 ];
 
 /// A line may keep a literal when it says why: `// allow-hex: <reason>`
