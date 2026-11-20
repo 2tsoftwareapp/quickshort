@@ -19,10 +19,10 @@
 - [x] **T010** Click on a proposal arms it as the source rect; clicking elsewhere keeps today's manual drag.
 - [x] **T011** UAT: proposal box matches the OCR rect within a pixel at the four viewports.
 
-## Phase 3: Copy text by region, and the other engines (later)
+## Phase 3: Copy text by region (this change) and the other engines (blocked)
 
-- [ ] **T012** Drag a region with the text tool to copy the lines inside it, in reading order.
-- [ ] **T013** Empty-region feedback distinct from "engine unavailable".
+- [x] **T012** Drag a region with the text tool to copy the lines inside it, in reading order.
+- [x] **T013** Empty-region feedback distinct from "engine unavailable".
 - [ ] **T014** Linux: tesseract `tsv` output parsed into `OcrLine`s (pure parser, fixture-tested).
 - [ ] **T015** Windows: WinRT `OcrLine.Words[].BoundingRect` mapped into `OcrLine`s (compile-verified on the Windows target).
 
@@ -79,3 +79,31 @@ Honest gap: **T011** is proven at the geometry level, not through the UI at the 
 driving a real hover needs a full `EditorApp` window, which the headless UAT harness does not
 build. The proposal paint itself is the same `canvas::paint_move_overlay` already exercised by the
 viewport UAT, so the untested part is the wiring, not the drawing.
+
+## Phase 3 Completion Notes
+
+Shipped:
+
+- **T012** — with a selection region on the canvas, the status bar offers **Copy text**: every
+  recognized line whose centre falls inside the region is copied, one per line, in the engine's
+  reading order. `OcrHints::text_in` is centre-based on purpose: a line half outside the selection
+  is either wanted or not, and area-splitting would make the result depend on how the box was
+  dragged.
+- **T013** — four distinct outcomes, because "nothing happened" is the worst feedback: still
+  reading, engine unavailable (carries the engine's own message), nothing recognized in this
+  capture, selection contains no recognized text. A successful copy reports the line count.
+- Recognition now also runs when a region exists, not only for Smart Move, since both consume the
+  same lines.
+
+Verified: `cargo test --workspace` **288 passed / 0 failed** (4 new) and `cargo check
+--workspace --all-targets` clean. The integration test proves `text_in(whole image)` equals
+`extract_text` byte for byte on the repo screenshot, and that one line's own box yields exactly
+that line.
+
+**Blocked, deliberately:**
+
+- **T014** (Linux tesseract `tsv`) and **T015** (Windows WinRT) are not implemented. This machine
+  has only the `aarch64-apple-darwin` target installed and no `tesseract` binary, so code written
+  for those backends could be neither compiled nor run — it would be unverified FFI presented as
+  done. They need a machine (or CI runner) for their own target; the contract they must satisfy is
+  already fixed by `OcrLine` and the Phase 1 tests.

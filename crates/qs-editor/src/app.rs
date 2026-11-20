@@ -1074,6 +1074,46 @@ impl EditorApp {
         self.settings_open = open;
     }
 
+    /// Copy the recognized text inside the selection region.
+    ///
+    /// Every outcome says something: an empty clipboard is indistinguishable
+    /// from a broken command, so "nothing recognized here" and "the engine is
+    /// unavailable" stay distinct messages.
+    fn copy_text_in_region(&mut self) {
+        let Some(region) = self.editor.region() else {
+            self.show_toast("Select a region first");
+            return;
+        };
+        if self.ocr_hints.is_scanning() {
+            self.show_toast("Still reading text — try again in a moment");
+            return;
+        }
+        if let Some(err) = self.ocr_hints.error().map(str::to_string) {
+            self.show_toast(format!("OCR unavailable: {err}"));
+            return;
+        }
+        let text = self.ocr_hints.text_in(region);
+        if text.is_empty() {
+            let why = if self.ocr_hints.is_empty() {
+                "No text was recognized in this capture"
+            } else {
+                "The selection contains no recognized text"
+            };
+            self.show_toast(why);
+            return;
+        }
+        match crate::clipboard::copy_text(&text) {
+            Ok(()) => {
+                let lines = text.lines().count();
+                self.show_toast(format!(
+                    "Copied {lines} line{}",
+                    if lines == 1 { "" } else { "s" }
+                ));
+            }
+            Err(e) => self.show_toast(format!("Copy failed: {e}")),
+        }
+    }
+
     /// Library view: keep it pointed at the capture folder and apply the one
     /// action it can request (open, or reveal in the file manager).
     fn library_dialog(&mut self, ctx: &egui::Context) {
@@ -1691,6 +1731,16 @@ impl eframe::App for EditorApp {
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if self.editor.region().is_some()
+                            && crate::components::status_pill(
+                                ui,
+                                "Copy text",
+                                false,
+                                "Copy the recognized text inside the selection",
+                            )
+                        {
+                            self.copy_text_in_region();
+                        }
                         if crate::components::status_pill(
                             ui,
                             "Library",
@@ -2207,7 +2257,11 @@ impl eframe::App for EditorApp {
                 // Smart Move: keep line hints in step with the base image, and
                 // keep repainting while the worker runs so the proposal shows
                 // up without the user moving the mouse again.
-                if self.editor.tool() == Tool::SmartMove {
+                // Hints feed two things: the Smart Move proposal, and copying
+                // the text inside the selection region.
+                let wants_hints =
+                    self.editor.tool() == Tool::SmartMove || self.editor.region().is_some();
+                if wants_hints {
                     self.ocr_hints.ensure(
                         self.editor.doc(),
                         &self.base,

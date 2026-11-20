@@ -133,6 +133,26 @@ impl OcrHints {
         self.last_error = None;
     }
 
+    /// Every line whose centre falls inside `region`, one per line, in engine
+    /// (reading) order.
+    ///
+    /// Centre-based on purpose: a line half outside the selection is either
+    /// wanted or not, and splitting it by area gives no better answer while
+    /// making the result depend on how the box was dragged.
+    pub fn text_in(&self, region: RectF) -> String {
+        let r = region.normalized();
+        self.lines
+            .iter()
+            .filter(|h| {
+                let centre = PointF::new(h.rect.x + h.rect.w / 2.0, h.rect.y + h.rect.h / 2.0);
+                r.contains(centre)
+            })
+            .map(|h| h.text.trim().to_string())
+            .filter(|t| !t.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     /// The line under `p`, preferring the tightest box: a heading recognized
     /// inside a larger block should win over the block.
     pub fn hit(&self, p: PointF) -> Option<&Hint> {
@@ -226,5 +246,37 @@ mod tests {
         let mut hints = OcrHints::default();
         assert!(!hints.poll());
         assert!(hints.is_empty());
+    }
+    #[test]
+    fn text_in_keeps_only_the_lines_inside_the_region() {
+        let hints = OcrHints {
+            lines: vec![
+                hint(0.0, 0.0, 100.0, 20.0, "first"),
+                hint(0.0, 40.0, 100.0, 20.0, "second"),
+                hint(0.0, 200.0, 100.0, 20.0, "outside"),
+            ],
+            ..OcrHints::default()
+        };
+        let picked = hints.text_in(RectF::new(0.0, 0.0, 120.0, 100.0));
+        assert_eq!(picked, "first\nsecond", "reading order, outside line dropped");
+    }
+
+    #[test]
+    fn text_in_a_region_with_nothing_is_empty_not_an_error() {
+        let hints = OcrHints {
+            lines: vec![hint(0.0, 0.0, 10.0, 10.0, "x")],
+            ..OcrHints::default()
+        };
+        assert!(hints.text_in(RectF::new(500.0, 500.0, 20.0, 20.0)).is_empty());
+    }
+
+    #[test]
+    fn text_in_uses_the_line_centre_not_any_overlap() {
+        // The line starts inside the region but its centre is outside it.
+        let hints = OcrHints {
+            lines: vec![hint(90.0, 0.0, 100.0, 20.0, "mostly outside")],
+            ..OcrHints::default()
+        };
+        assert!(hints.text_in(RectF::new(0.0, 0.0, 100.0, 50.0)).is_empty());
     }
 }
