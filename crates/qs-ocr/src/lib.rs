@@ -141,6 +141,96 @@ pub fn extract_lines(img: &RgbaImage, lang: &str) -> Result<Vec<OcrLine>> {
     }
 }
 
+/// Parse tesseract's `tsv` output into line-level geometry.
+///
+/// Columns: level, page, block, par, line, word, left, top, width, height,
+/// conf, text. Only `level == 5` rows are words; a line is their union, its text
+/// is the words joined by a space, and its confidence is their mean. The Linux
+/// backend runs `tidy` over each line afterwards, because tesseract splits CJK
+/// into space-separated glyphs.
+#[cfg_attr(not(any(test, target_os = "linux")), allow(dead_code))]
+pub(crate) fn parse_tesseract_tsv(tsv: &str) -> Vec<OcrLine> {
+    struct Group {
+        line: OcrLine,
+        conf_sum: f32,
+        conf_n: u32,
+    }
+    let mut groups: Vec<((u32, u32, u32, u32), Group)> = Vec::new();
+
+    for row in tsv.lines() {
+        // `splitn` keeps the text column intact even if it contains a tab.
+        let cols: Vec<&str> = row.splitn(12, '\t').collect();
+        if cols.len() < 12 {
+            continue;
+        }
+        let Ok(level) = cols[0].trim().parse::<u32>() else {
+            continue; // the header row
+        };
+        if level != 5 {
+            continue; // page / block / paragraph / line summaries
+        }
+        let text = cols[11].trim();
+        if text.is_empty() {
+            continue;
+        }
+        let num = |i: usize| cols[i].trim().parse::<f32>().unwrap_or(0.0);
+        let key = (
+            cols[1].trim().parse().unwrap_or(0),
+            cols[2].trim().parse().unwrap_or(0),
+            cols[3].trim().parse().unwrap_or(0),
+            cols[4].trim().parse().unwrap_or(0),
+        );
+        let (x, y, w, h) = (num(6), num(7), num(8), num(9));
+        // Tesseract reports confidence as a percentage, and -1 for "no idea".
+        let conf = match cols[10].trim().parse::<f32>() {
+            Ok(c) if c >= 0.0 => (c / 100.0).clamp(0.0, 1.0),
+            _ => 0.0,
+        };
+
+        match groups.iter_mut().find(|(k, _)| *k == key) {
+            Some((_, g)) => {
+                let right = (g.line.x + g.line.w).max(x + w);
+                let bottom = (g.line.y + g.line.h).max(y + h);
+                g.line.x = g.line.x.min(x);
+                g.line.y = g.line.y.min(y);
+                g.line.w = right - g.line.x;
+                g.line.h = bottom - g.line.y;
+                g.line.text.push(' ');
+                g.line.text.push_str(text);
+                g.conf_sum += conf;
+                g.conf_n += 1;
+            }
+            None => groups.push((
+                key,
+                Group {
+                    line: OcrLine {
+                        text: text.to_string(),
+                        x,
+                        y,
+                        w,
+                        h,
+                        confidence: conf,
+                    },
+                    conf_sum: conf,
+                    conf_n: 1,
+                },
+            )),
+        }
+    }
+
+    groups
+        .into_iter()
+        .map(|(_, mut g)| {
+            g.line.confidence = if g.conf_n > 0 {
+                g.conf_sum / g.conf_n as f32
+            } else {
+                0.0
+            };
+            g.line
+        })
+        .collect()
+}
+
 /// Extract text from an image using the platform-native OCR engine.
 /// Returns recognized text with lines separated by '\n'.
 /// `lang` uses tesseract's `eng+vie` syntax; "auto"/"" lets the engine
@@ -165,10 +255,13 @@ pub fn extract_text(img: &RgbaImage, lang: &str) -> Result<String> {
     }
 }
 
-/// Tesseract tokenizes CJK into space-separated "words", but real CJK
-/// text has no spaces — drop a space only when BOTH neighbours are
-/// non-ASCII, so Latin lines and mixed words ('café bar') stay intact.
-#[cfg(target_os = "linux")]
+/// Tesseract tokenizes CJK into space-separated "words", but real CJK text has
+/// no spaces — drop a space only when BOTH neighbours are non-ASCII, so Latin
+/// lines and mixed words ('café bar') stay intact.
+///
+/// Available on every platform so the Linux path's text handling is testable
+/// where it cannot be run.
+#[cfg_attr(not(any(test, target_os = "linux")), allow(dead_code))]
 fn tidy(text: &str) -> String {
     text.lines()
         .map(|l| {
@@ -192,7 +285,7 @@ fn tidy(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::px_rect_from_normalized;
+    use super::{parse_tesseract_tsv, px_rect_from_normalized, tidy};
 
     #[test]
     fn a_line_at_the_top_left_maps_to_pixel_zero() {
@@ -239,5 +332,51 @@ mod tests {
     fn a_degenerate_image_size_does_not_divide_by_zero() {
         let (x, y, w, h) = px_rect_from_normalized(0.0, 0.0, 1.0, 1.0, 0, 0);
         assert!(x.is_finite() && y.is_finite() && w.is_finite() && h.is_finite());
+    }
+    #[test]
+    fn tesseract_tsv_groups_words_into_lines() {
+        let tsv = concat!(
+            "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n",
+            "1\t1\t0\t0\t0\t0\t0\t0\t400\t160\t-1\t\n",
+            "5\t1\t1\t1\t1\t1\t24\t24\t120\t40\t90\tHELLO\n",
+            "5\t1\t1\t1\t1\t2\t150\t24\t130\t40\t100\tWORLD\n",
+            "5\t1\t1\t1\t2\t1\t24\t96\t200\t40\t80\tSECOND\n"
+        );
+        let lines = parse_tesseract_tsv(tsv);
+        assert_eq!(lines.len(), 2, "header and summaries are not lines");
+        assert_eq!(lines[0].text, "HELLO WORLD");
+        assert_eq!((lines[0].x, lines[0].y), (24.0, 24.0));
+        assert_eq!((lines[0].w, lines[0].h), (256.0, 40.0), "union of both words");
+        assert!((lines[0].confidence - 0.95).abs() < 0.001, "mean of 90 and 100");
+        assert_eq!(lines[1].text, "SECOND");
+        assert!((lines[1].confidence - 0.8).abs() < 0.001);
+    }
+
+    #[test]
+    fn tesseract_tsv_ignores_empty_words_and_bad_confidence() {
+        let tsv = concat!(
+            "5\t1\t1\t1\t1\t1\t10\t10\t20\t10\t-1\tHI\n",
+            "5\t1\t1\t1\t1\t2\t40\t10\t20\t10\t-1\t   \n"
+        );
+        let lines = parse_tesseract_tsv(tsv);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].text, "HI", "a blank word is not appended");
+        assert_eq!(lines[0].confidence, 0.0, "-1 means 'no confidence'");
+    }
+
+    #[test]
+    fn tesseract_tsv_of_nothing_is_empty() {
+        assert!(parse_tesseract_tsv("").is_empty());
+        assert!(parse_tesseract_tsv("garbage").is_empty());
+    }
+    #[test]
+    fn tidy_drops_only_the_artificial_cjk_spaces() {
+        assert_eq!(tidy("你 好 世 界"), "你好世界");
+        assert_eq!(tidy("café bar"), "café bar", "latin words keep their space");
+        assert_eq!(
+            tidy("Hello 世界"),
+            "Hello 世界",
+            "a space between ascii and cjk is real"
+        );
     }
 }

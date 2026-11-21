@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-20
 
-**Status**: Draft — Phases 1–4 implemented (Linux/Windows geometry blocked on toolchain)
+**Status**: Draft — Phases 1–4 implemented; Linux geometry added, Windows still blocked on toolchain
 
 **Input**: The gap declared out of scope in `specs/003-annotation-parity/plan.md`: `qs-ocr` exposes
 `extract_text` only, so Smart Move needs a user-dragged box and there is no way to copy the text

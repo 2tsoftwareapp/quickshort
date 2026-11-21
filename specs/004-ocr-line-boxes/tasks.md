@@ -23,7 +23,7 @@
 
 - [x] **T012** Drag a region with the text tool to copy the lines inside it, in reading order.
 - [x] **T013** Empty-region feedback distinct from "engine unavailable".
-- [ ] **T014** Linux: tesseract `tsv` output parsed into `OcrLine`s (pure parser, fixture-tested).
+- [x] **T014** Linux: tesseract `tsv` output parsed into `OcrLine`s (pure parser, fixture-tested).
 - [ ] **T015** Windows: WinRT `OcrLine.Words[].BoundingRect` mapped into `OcrLine`s (compile-verified on the Windows target).
 
 ## Verification Gate (Run After Each Phase)
@@ -101,13 +101,27 @@ Verified: `cargo test --workspace` **288 passed / 0 failed** (4 new) and `cargo 
 `extract_text` byte for byte on the repo screenshot, and that one line's own box yields exactly
 that line.
 
-**Blocked, deliberately:**
+**Linux backend (T014) — implemented, verified as far as this machine allows:**
 
-- **T014** (Linux tesseract `tsv`) and **T015** (Windows WinRT) are not implemented. This machine
-  has only the `aarch64-apple-darwin` target installed and no `tesseract` binary, so code written
-  for those backends could be neither compiled nor run — it would be unverified FFI presented as
-  done. They need a machine (or CI runner) for their own target; the contract they must satisfy is
-  already fixed by `OcrLine` and the Phase 1 tests.
+- `parse_tesseract_tsv` is a pure function in `qs-ocr` with three unit tests: words grouped into
+  lines, blank words and `-1` confidence dropped, empty/garbage input. It lives outside the Linux
+  `cfg`, so it is exercised on this machine.
+- `tidy` (the CJK space squasher the text path already used) is now platform-independent with its
+  own test, so the geometry path's text handling is verifiable where it cannot be run.
+- `linux.rs::extract_lines` runs `tesseract … stdin stdout tsv` under the same `timeout 60` wrapper
+  and feeds the parser.
+- `linux.rs` was compile-checked on this machine by temporarily including it in the crate under
+  `cfg(test)`; it built with only `dead_code` warnings, then the temporary module was removed.
+- **Not proven:** a real end-to-end run, because `tesseract` is not installed here and the Linux
+  target is not installed either. The invocation (`… stdin stdout tsv`) follows tesseract's
+  documented argument order; a machine with the binary should run it once before trusting it.
+- `extract` on Linux still uses the plain-text output on purpose: switching it to the geometry path
+  would change clipboard spacing on a platform this change cannot be run on. The divergence is
+  documented at the call site rather than hidden.
+
+**Still blocked — T015 (Windows WinRT):** the `windows` crate is only available on the Windows
+target, so even a compile check is impossible here. It stays unimplemented rather than shipped
+untested; the contract is fixed by `OcrLine` and the Phase 1 tests.
 
 ## Phase 4: Find in capture (this change)
 

@@ -132,8 +132,60 @@ fn detect_lang(png: &[u8]) -> Result<String> {
     })
 }
 
-/// Line geometry is a separate capability from plain text: failing loudly beats
-/// returning an empty list that a caller would read as "no text here".
-pub fn extract_lines(_img: &RgbaImage, _lang: &str) -> Result<Vec<crate::OcrLine>> {
-    anyhow::bail!("OCR line geometry needs the engine's box output, which the tesseract path does not read yet.")
+/// tesseract `tsv` output → line geometry. Same `timeout` wrapper as the text
+/// path so a pathological frame can never hang the action.
+fn run_tesseract_tsv(png: &[u8], lang: &str) -> Result<String> {
+    let mut child = Command::new("timeout")
+        .args(["60", "tesseract", "-l", lang, "stdin", "stdout", "tsv"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("tesseract not found — `sudo apt install tesseract-ocr`")?;
+
+    let png = png.to_vec();
+    let mut stdin = child.stdin.take().unwrap();
+    let writer = std::thread::spawn(move || stdin.write_all(&png));
+    let out = child.wait_with_output()?;
+    let _ = writer.join();
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let stderr = stderr.trim();
+        anyhow::bail!(
+            "tesseract tsv failed{}",
+            if stderr.is_empty() {
+                format!(" ({})", out.status)
+            } else {
+                format!(": {stderr}")
+            }
+        );
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// Text with line geometry, from the same engine and language resolution as
+/// [`extract`].
+///
+/// `extract` keeps using tesseract's plain-text output on purpose: switching it
+/// to this path would change OCR-to-clipboard spacing on a platform this change
+/// cannot be run on. The two therefore share an engine but not a formatter, and
+/// that difference is documented rather than hidden.
+pub fn extract_lines(img: &RgbaImage, lang: &str) -> Result<Vec<crate::OcrLine>> {
+    let mut png = std::io::Cursor::new(Vec::new());
+    img.write_to(&mut png, image::ImageFormat::Png)
+        .context("encode png for tesseract")?;
+    let png = png.into_inner();
+
+    let lang = if lang.is_empty() || lang == "auto" {
+        detect_lang(&png)?
+    } else {
+        lang.to_string()
+    };
+    let tsv = run_tesseract_tsv(&png, &lang)?;
+    let mut lines = crate::parse_tesseract_tsv(&tsv);
+    // tesseract splits CJK per glyph; `tidy` drops the artificial spaces.
+    for line in &mut lines {
+        line.text = crate::tidy(&line.text);
+    }
+    Ok(lines)
 }
