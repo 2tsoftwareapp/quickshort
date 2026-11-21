@@ -24,7 +24,7 @@
 - [x] **T012** Drag a region with the text tool to copy the lines inside it, in reading order.
 - [x] **T013** Empty-region feedback distinct from "engine unavailable".
 - [x] **T014** Linux: tesseract `tsv` output parsed into `OcrLine`s (pure parser, fixture-tested).
-- [ ] **T015** Windows: WinRT `OcrLine.Words[].BoundingRect` mapped into `OcrLine`s (compile-verified on the Windows target).
+- [x] **T015** Windows: WinRT `OcrLine.Words[].BoundingRect` mapped into `OcrLine`s (compile-verified on the Windows target).
 
 ## Verification Gate (Run After Each Phase)
 
@@ -119,9 +119,22 @@ that line.
   would change clipboard spacing on a platform this change cannot be run on. The divergence is
   documented at the call site rather than hidden.
 
-**Still blocked — T015 (Windows WinRT):** the `windows` crate is only available on the Windows
-target, so even a compile check is impossible here. It stays unimplemented rather than shipped
-untested; the contract is fixed by `OcrLine` and the Phase 1 tests.
+**Windows backend (T015) — implemented and compile-verified:**
+
+- The assumption that it could not even be compiled was wrong: `rustup target add
+  x86_64-pc-windows-msvc` installs the target on macOS, so `cargo check -p qs-ocr --target
+  x86_64-pc-windows-msvc --all-targets` builds the WinRT path here. It is clean, no warnings.
+- `windows.rs::extract_lines` walks `OcrResult.Lines()`, unions each line's `OcrWord.BoundingRect()`
+  (WinRT boxes are already pixel/top-left, so no flip is needed) and reads `OcrLine.Text()`.
+- WinRT exposes **no per-word confidence**, so `confidence` stays 0 ("unknown") instead of being
+  invented; `px_rect_from_normalized` is now `allow(dead_code)` off macOS because only Vision needs
+  the flip.
+- The shared bitmap/engine setup moved into `recognize()`, so `extract` and `extract_lines` cannot
+  drift apart in language or bitmap handling.
+- **Not proven:** a real run on Windows — there is no Windows machine here. The API shape follows the
+  `windows` crate's generated bindings, and the compiler is the evidence.
+
+All three backends now satisfy the same contract; only macOS has been executed end to end.
 
 ## Phase 4: Find in capture (this change)
 

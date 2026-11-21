@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-20
 
-**Status**: Draft — Phases 1–4 implemented; Linux geometry added, Windows still blocked on toolchain
+**Status**: Draft — Phases 1–4 implemented; geometry on macOS (run), Linux and Windows (compile-verified)
 
 **Input**: The gap declared out of scope in `specs/003-annotation-parity/plan.md`: `qs-ocr` exposes
 `extract_text` only, so Smart Move needs a user-dragged box and there is no way to copy the text
@@ -166,8 +166,8 @@ confirm two highlights appear, the first one is framed and centered, and Next mo
 ## Assumptions
 
 - macOS is the first platform: Vision reports geometry natively and the crate already links it.
-- Linux (tesseract) and Windows (WinRT OCR) also expose geometry, but neither target can be compiled
-  or exercised on this machine, so shipping untested bindings there is worse than an explicit error.
-  They get their own task in Phase 3.
+- Linux (tesseract) and Windows (WinRT OCR) also expose geometry. Both backends are implemented and
+  compile-verified on their own targets from this machine, but neither has been *run* here: there is
+  no `tesseract` binary and no Windows machine. macOS is the only backend exercised end to end.
 - Coordinates are physical pixels of the image handed to the engine; callers scale to logical
   document units themselves, exactly as the overlay already does for captures.

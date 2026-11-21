@@ -98,6 +98,7 @@ pub struct OcrLine {
 /// Vision reports a rect normalized to 0..=1 with the origin at the
 /// **bottom-left**; every other surface in this workspace is top-left pixels.
 /// The rect is clamped to the image so a caller can draw it as-is.
+#[cfg_attr(not(any(test, target_os = "macos")), allow(dead_code))]
 pub(crate) fn px_rect_from_normalized(
     x: f64,
     y: f64,
