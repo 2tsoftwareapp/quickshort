@@ -55,3 +55,30 @@
 3. **P3 — High-Value Snagit Image Tools:** Cutout tool (horizontal/vertical strip splice with jagged/clean seam), Image Resize (resample), and Page Curl / Reflection / Color Filters.
 4. **P4 — Templates (Combine Images) & Unified Share/Export:** Multi-image step templates + Share destination menu + Print.
 5. **P5 — Capture Profiles & Smart Tools:** Saved capture presets in `qs-app` and Simplify (auto UI block redaction).
+
+---
+
+## 4. Trạng thái sau (2026-11-22)
+
+Mục 1–3 ở trên là biên bản ngày 2026-11-19 và **được giữ nguyên** để còn dấu vết. Bảng dưới ghi
+cái gì đã đóng sau đó, để lần sau đọc không tưởng là còn phải làm.
+
+| Khoảng trống trong audit | Đóng bởi | Commit |
+|---|---|---|
+| **Critical** — Library (search theo ngày/app/tag/loại file) | `specs/002-capture-library` (crate `qs-library`, view Library, tag/favourite, trash, provenance) | `45ff742` |
+| **High** — Cutout, Image Resize, Combine Templates, Share/Export | spec 001, Phase 3–4 | `9e599df`, `b14edef`, `acd3464` |
+| **Medium** — Page Curl, Reflection, Color Filters | spec 001, T015 | `acd3464` |
+| **Medium** — Capture Profiles | spec 001, T018 | `9e599df` |
+| Filmstrip tray + multi-doc tabs | spec 001, T009–T011 | `9050d7e` |
+| **Medium** — Colorize / Color Replacement | `specs/003-annotation-parity` T013–T016 | `7e89780` |
+| **High** — Smart Move (OCR/object move) | `specs/003-annotation-parity` T007–T012 (kéo tay) + `specs/004-ocr-line-boxes` Phase 2 (đề xuất khung từ OCR) | `7e89780`, `64fa98b` |
+| **Fill / Flood** | `specs/003-annotation-parity` T001–T006 | `7e89780` |
+| **Low** — Quick Style Favorites/Search | `specs/003-annotation-parity` T017–T021 | `7e89780` |
+
+**Còn thật sự mở:** không còn mục nào trong ma trận parity ở mục 2. Nợ kỹ thuật đã biết, không phải
+tính năng thiếu:
+
+- Geometry OCR của Linux/Windows mới được **compile-verify**, chưa chạy thật (thiếu `tesseract`;
+  không có máy Windows) — xem `specs/004-ocr-line-boxes/tasks.md`.
+- Hover của Smart Move (đề xuất khung) chưa được UAT ở mức con trỏ, vì harness headless chưa dựng
+  được cửa sổ `EditorApp` để bắn sự kiện chuột — phần vẽ thì đã nằm trong UAT viewport.

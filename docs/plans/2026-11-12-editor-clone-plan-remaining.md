@@ -15,7 +15,7 @@
   - **P6:** ĐÃ HOÀN THÀNH (Quick Styles: 8 preset/tool, `~/.config/quickshort/styles.json`, thanh chip dưới toolbar, lưu/xoá preset).
   - **P7:** ĐÃ HOÀN THÀNH (italic shear, underline, strikethrough, outline, font family Sans/Serif/Mono nhúng kèm DejaVu, `TextStyle` mở rộng nhưng vẫn load được file cũ).
   - **P8:** ĐÃ HOÀN THÀNH (Ctrl+C copy vùng chọn qua `render_region`, Flatten All có hộp thoại xác nhận).
-  - **Còn lại:** ngoài phạm vi kế hoạch (Library/tray, share target, print, Page Curl/Reflection/Color Replacement).
+  - **Còn lại (cập nhật 2026-11-22):** không còn. Library/tray, share target, print, Page Curl/Reflection/Color Replacement đã xong sau đó — Library ở `specs/002-capture-library`, phần còn lại ở `specs/001-snagit-ui-parity`; Color Replacement và Fill/Smart Move ở `specs/003-annotation-parity`, và geometry OCR cho Smart Move ở `specs/004-ocr-line-boxes`.
   - **Ghi chú kiểm chứng:** `cargo check --workspace --all-targets` và `cargo test --workspace` đều xanh (2026-11-17).
 
 ---
