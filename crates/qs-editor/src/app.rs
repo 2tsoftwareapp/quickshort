@@ -1339,6 +1339,7 @@ impl EditorApp {
 
             if i.consume_key(Modifiers::COMMAND, Key::F) || i.consume_key(Modifiers::CTRL, Key::F) {
                 self.find.open = true;
+                self.find.focus_pending = true;
             }
 
             if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::S)

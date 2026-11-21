@@ -14,6 +14,9 @@ pub struct FindState {
     pub query: String,
     /// Index into the current match list; clamped by the caller.
     pub index: usize,
+    /// Set when the window opens so the field takes the keyboard immediately —
+    /// a find bar you have to click into is a find bar that feels broken.
+    pub focus_pending: bool,
 }
 
 /// What the user asked for this frame.
@@ -50,6 +53,10 @@ pub fn render(
                         .hint_text("text in this capture")
                         .desired_width(220.0),
                 );
+                if state.focus_pending {
+                    resp.request_focus();
+                    state.focus_pending = false;
+                }
                 if resp.changed() {
                     // A new query starts from the first match.
                     state.index = 0;
@@ -124,6 +131,7 @@ mod tests {
             open: true,
             query: "settings".into(),
             index: 1,
+            focus_pending: false,
         };
         assert_eq!(frame(&mut state, 3, false), FindAction::None);
         assert_eq!(state.index, 1, "rendering must not move the selection");

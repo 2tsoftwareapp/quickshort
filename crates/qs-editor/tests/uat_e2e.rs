@@ -202,6 +202,7 @@ fn uat_find_window_and_highlights_across_viewports_and_themes() {
                     open: true,
                     query: "settings".into(),
                     index,
+                    focus_pending: false,
                 };
                 let raw = egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(

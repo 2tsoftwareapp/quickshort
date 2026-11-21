@@ -548,11 +548,10 @@ fn chip(ui: &mut Ui, quick: &QuickStyle) -> egui::Response {
     let painter = ui.painter();
     theme::paint_pill_button(painter, rect, 7.0, hovered, hovered, true, false);
     if quick.favorite {
-        painter.text(
-            Pos2::new(rect.left() + 9.0, rect.center().y),
-            egui::Align2::CENTER_CENTER,
-            "★",
-            egui::FontId::proportional(10.0),
+        // A dot, not a star glyph: the bundled fonts have no U+2605.
+        painter.circle_filled(
+            Pos2::new(rect.left() + 8.0, rect.center().y),
+            3.0,
             theme::amber_orange(),
         );
     }

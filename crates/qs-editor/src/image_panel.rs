@@ -43,15 +43,23 @@ pub fn render(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
     if fill_active {
         components::card(ui, |ui| {
             section(ui, "Paint bucket");
+            // A full-width slider overflows this 236 px panel and pushed the
+            // whole inspector out of the window, so the knob is a compact row.
             let mut tolerance = editor.style.fill_tolerance as i32;
-            if ui
-                .add(egui::Slider::new(&mut tolerance, 0..=255).text("Tolerance"))
-                .on_hover_text("How far a colour may differ from the pixel you clicked and still fill")
-                .changed()
-            {
-                editor.style.fill_tolerance = tolerance.clamp(0, 255) as u8;
-                changed = true;
-            }
+            ui.horizontal(|ui| {
+                ui.label("Tolerance");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let resp = ui
+                        .add(egui::DragValue::new(&mut tolerance).range(0..=255))
+                        .on_hover_text(
+                            "How far a colour may differ from the pixel you clicked and still fill",
+                        );
+                    if resp.changed() {
+                        editor.style.fill_tolerance = tolerance.clamp(0, 255) as u8;
+                        changed = true;
+                    }
+                });
+            });
         });
         ui.add_space(space::MD as f32);
     }

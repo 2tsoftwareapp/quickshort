@@ -20,7 +20,9 @@ use std::sync::mpsc::{self, Receiver, Sender};
 /// Decoded thumbnail box. Matches the filmstrip so the two surfaces agree.
 const THUMB_W: u32 = 132;
 const THUMB_H: u32 = 84;
-const ROW_H: f32 = 68.0;
+/// Tall enough to hold the 84 px thumbnail with breathing room; a shorter
+/// row let the thumbnail bleed into the next one.
+const ROW_H: f32 = 92.0;
 /// Thumbnails requested but not yet returned; keeps the worker from being
 /// flooded when a 10k-entry folder is filtered to everything.
 const MAX_INFLIGHT: usize = 12;
@@ -519,7 +521,7 @@ impl Library {
             ui.separator();
             if components::status_pill(
                 ui,
-                "★ Favourites",
+                "Favourites",
                 self.filter.favorites_only,
                 "Only favourites",
             ) {
@@ -614,15 +616,10 @@ impl Library {
         let star_color = if entry.favorite {
             theme::amber_orange()
         } else {
-            theme::text_tertiary()
+            // Tertiary was nearly invisible on the card fill.
+            theme::text_secondary()
         };
-        painter.text(
-            star_center,
-            Align2::CENTER_CENTER,
-            if entry.favorite { "★" } else { "☆" },
-            FontId::proportional(15.0),
-            star_color,
-        );
+        paint_star(painter, star_center, 6.0, star_color, entry.favorite);
 
         // Thumbnail.
         let thumb_rect = Rect::from_min_size(
@@ -882,6 +879,34 @@ impl Library {
             Some(false) => self.confirm_delete = false,
             None => {}
         }
+    }
+}
+
+/// Five-point star drawn as a path.
+///
+/// The bundled fonts have no U+2605/U+2606, so a text star rendered as nothing at
+/// all — the favourite marker was invisible until this.
+fn paint_star(
+    painter: &egui::Painter,
+    centre: Pos2,
+    radius: f32,
+    color: Color32,
+    filled: bool,
+) {
+    let mut points = Vec::with_capacity(10);
+    for i in 0..10 {
+        let angle = -std::f32::consts::FRAC_PI_2 + i as f32 * std::f32::consts::PI / 5.0;
+        let r = if i % 2 == 0 { radius } else { radius * 0.45 };
+        points.push(Pos2::new(
+            centre.x + angle.cos() * r,
+            centre.y + angle.sin() * r,
+        ));
+    }
+    let stroke = egui::Stroke::new(1.2, color);
+    if filled {
+        painter.add(egui::Shape::convex_polygon(points, color, egui::Stroke::NONE));
+    } else {
+        painter.add(egui::Shape::closed_line(points, stroke));
     }
 }
 
