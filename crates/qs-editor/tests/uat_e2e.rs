@@ -187,3 +187,49 @@ fn uat_library_browses_a_real_folder_across_viewports_and_themes() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn uat_find_window_and_highlights_across_viewports_and_themes() {
+    for &theme_name in &["dark", "light"] {
+        qs_theme::set_theme(theme_name);
+        for &(w, h) in &[(720.0, 600.0), (1000.0, 700.0), (1280.0, 800.0), (1600.0, 1000.0)] {
+            // Three states the dialog has to survive: still reading, nothing
+            // matched, and several matches with a middle one current.
+            for (matches, scanning, index) in [(0usize, true, 0usize), (0, false, 0), (3, false, 1)] {
+                let ctx = egui::Context::default();
+                theme::apply_macos_visuals(&ctx);
+                let mut state = qs_editor::find::FindState {
+                    open: true,
+                    query: "settings".into(),
+                    index,
+                };
+                let raw = egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::Vec2::new(w, h),
+                    )),
+                    ..Default::default()
+                };
+                let mut out = ctx.run_ui(raw, |ui| {
+                    let _ = qs_editor::find::render(&ctx, &mut state, matches, scanning);
+                    let rects = [
+                        egui::Rect::from_min_size(
+                            egui::Pos2::new(20.0, 40.0),
+                            egui::Vec2::new(120.0, 18.0),
+                        ),
+                        egui::Rect::from_min_size(
+                            egui::Pos2::new(30.0, 90.0),
+                            egui::Vec2::new(90.0, 18.0),
+                        ),
+                    ];
+                    qs_editor::canvas::paint_find_hits(ui.painter(), &rects, 1);
+                });
+                out.textures_delta.clear();
+                assert!(
+                    !out.shapes.is_empty(),
+                    "nothing drawn for {theme_name} at {w}x{h} (matches={matches}, scanning={scanning})"
+                );
+            }
+        }
+    }
+}

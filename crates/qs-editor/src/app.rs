@@ -121,9 +121,10 @@ pub struct EditorApp {
     style_filter: String,
     /// OCR line hints for the Smart Move tool, region copy and Find.
     ocr_hints: crate::ocr_hint::OcrHints,
-    find_open: bool,
-    find_query: String,
-    find_index: usize,
+    /// Find in capture: window state, plus the focus we last panned to so the
+    /// canvas is not re-centred every frame (which would fight panning).
+    find: crate::find::FindState,
+    last_find_focus: Option<(String, usize)>,
     /// Capture library browser (search, tags, favourites, pruning).
     library: crate::library::Library,
 }
@@ -211,9 +212,8 @@ impl EditorApp {
             library: crate::library::Library::default(),
             style_filter: String::new(),
             ocr_hints: crate::ocr_hint::OcrHints::default(),
-            find_open: false,
-            find_query: String::new(),
-            find_index: 0,
+            find: crate::find::FindState::default(),
+            last_find_focus: None,
         };
         app.update_texture(&cc.egui_ctx);
         app
@@ -1080,78 +1080,50 @@ impl EditorApp {
         self.settings_open = open;
     }
 
-    /// Find in capture: search the recognized lines, highlight every match and
-    /// pan the canvas to the current one.
+    /// Find in capture: the window paints, this owns the matching and panning.
     fn find_dialog(&mut self, ctx: &egui::Context) {
-        if !self.find_open {
+        if !self.find.open {
             return;
         }
-        let mut open = self.find_open;
-        let mut changed = false;
-        let mut step = 0i32;
-        egui::Window::new("Find in capture")
-            .frame(theme::modal_frame())
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_TOP, Vec2::new(0.0, 72.0))
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    let resp = ui.add(
-                        egui::TextEdit::singleline(&mut self.find_query)
-                            .hint_text("text in this capture")
-                            .desired_width(220.0),
-                    );
-                    if resp.changed() {
-                        changed = true;
-                    }
-                    if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                        step = if ui.input(|i| i.modifiers.shift) { -1 } else { 1 };
-                    }
-                    if ui.button("Prev").clicked() {
-                        step = -1;
-                    }
-                    if ui.button("Next").clicked() {
-                        step = 1;
-                    }
-                });
-                let hits = self.ocr_hints.find(&self.find_query);
-                ui.add_space(qs_theme::space::XS as f32);
-                let note = if self.ocr_hints.is_scanning() {
-                    "Reading the text in this capture…".to_string()
-                } else if self.find_query.trim().is_empty() {
-                    "Type to search the text recognized in this capture".to_string()
-                } else if hits.is_empty() {
-                    format!("No match for “{}”", self.find_query.trim())
-                } else {
-                    format!("{} of {} matches", self.find_index.min(hits.len() - 1) + 1, hits.len())
-                };
-                ui.label(
-                    egui::RichText::new(note)
-                        .size(qs_theme::font::SMALL as f32)
-                        .color(theme::text_tertiary()),
-                );
-            });
-
-        let hits = self.ocr_hints.find(&self.find_query);
-        if changed {
-            self.find_index = 0;
-        }
-        if !hits.is_empty() {
-            let count = hits.len();
-            let current = self.find_index.min(count - 1);
-            if step != 0 || changed {
-                self.find_index = ((current as i32 + step).rem_euclid(count as i32)) as usize;
+        let hits = self.ocr_hints.find(&self.find.query);
+        match crate::find::render(
+            ctx,
+            &mut self.find,
+            hits.len(),
+            self.ocr_hints.is_scanning(),
+        ) {
+            crate::find::FindAction::None => {}
+            crate::find::FindAction::Close => {
+                self.find.open = false;
+                self.last_find_focus = None;
             }
-            let idx = self.find_index.min(count - 1);
-            let line = &self.ocr_hints.lines()[hits[idx]];
-            let centre = PointF::new(
-                line.rect.x + line.rect.w / 2.0,
-                line.rect.y + line.rect.h / 2.0,
-            );
-            self.view.center = self.view.map.to_display(centre);
+            crate::find::FindAction::Step(step) => {
+                if !hits.is_empty() {
+                    let count = hits.len() as i32;
+                    let current = self.find.index.min(hits.len() - 1) as i32;
+                    self.find.index = (current + step).rem_euclid(count) as usize;
+                }
+            }
         }
-        self.find_open = open;
+
+        // Centre the current match once per change. Re-centring every frame
+        // would make the canvas impossible to pan while the dialog is open.
+        let hits = self.ocr_hints.find(&self.find.query);
+        if hits.is_empty() {
+            return;
+        }
+        let idx = self.find.index.min(hits.len() - 1);
+        let focus = (self.find.query.clone(), idx);
+        if self.last_find_focus.as_ref() == Some(&focus) {
+            return;
+        }
+        self.last_find_focus = Some(focus);
+        let line = &self.ocr_hints.lines()[hits[idx]];
+        let centre = PointF::new(
+            line.rect.x + line.rect.w / 2.0,
+            line.rect.y + line.rect.h / 2.0,
+        );
+        self.view.center = self.view.map.to_display(centre);
     }
 
     /// Copy the recognized text inside the selection region.
@@ -1336,8 +1308,8 @@ impl EditorApp {
         let mut ungroup = false;
 
         ctx.input_mut(|i| {
-            if self.find_open && i.consume_key(Modifiers::NONE, Key::Escape) {
-                self.find_open = false;
+            if self.find.open && i.consume_key(Modifiers::NONE, Key::Escape) {
+                self.find.open = false;
             }
             if self.editor.edit().is_some() {
                 return;
@@ -1366,7 +1338,7 @@ impl EditorApp {
             }
 
             if i.consume_key(Modifiers::COMMAND, Key::F) || i.consume_key(Modifiers::CTRL, Key::F) {
-                self.find_open = true;
+                self.find.open = true;
             }
 
             if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::S)
@@ -2349,7 +2321,7 @@ impl eframe::App for EditorApp {
                 // the text inside the selection region.
                 let wants_hints = self.editor.tool() == Tool::SmartMove
                     || self.editor.region().is_some()
-                    || self.find_open;
+                    || self.find.open;
                 if wants_hints {
                     self.ocr_hints.ensure(
                         self.editor.doc(),
@@ -2491,8 +2463,8 @@ impl eframe::App for EditorApp {
                 canvas::paint_document_frame(&painter, img_screen_rect);
 
                 // 5a. Find in capture: every match dimly, the current one framed
-                if self.find_open {
-                    let hits = self.ocr_hints.find(&self.find_query);
+                if self.find.open {
+                    let hits = self.ocr_hints.find(&self.find.query);
                     if !hits.is_empty() {
                         let rects: Vec<Rect> = hits
                             .iter()
@@ -2501,7 +2473,7 @@ impl eframe::App for EditorApp {
                                 self.view.doc_rect_to_screen(r, screen_rect)
                             })
                             .collect();
-                        let current = self.find_index.min(rects.len() - 1);
+                        let current = self.find.index.min(rects.len() - 1);
                         canvas::paint_find_hits(&painter, &rects, current);
                     }
                 }
@@ -2751,9 +2723,8 @@ mod tests {
             library: crate::library::Library::default(),
             style_filter: String::new(),
             ocr_hints: crate::ocr_hint::OcrHints::default(),
-            find_open: false,
-            find_query: String::new(),
-            find_index: 0,
+            find: crate::find::FindState::default(),
+            last_find_focus: None,
         };
         app.editor.preview_effects(qs_doc::Effects {
             border: Some(qs_doc::BorderEffect::default()),

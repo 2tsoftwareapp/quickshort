@@ -1,0 +1,131 @@
+//! Find in capture: the small search window over the recognized OCR lines.
+//!
+//! Kept free of recognition so it can be rendered headlessly in the UAT harness:
+//! the caller passes how many lines matched and whether the engine is still
+//! working, and gets back what the user asked for this frame.
+
+use crate::theme;
+use eframe::egui::{self, Vec2};
+use qs_theme::{font, space};
+
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
+pub struct FindState {
+    pub open: bool,
+    pub query: String,
+    /// Index into the current match list; clamped by the caller.
+    pub index: usize,
+}
+
+/// What the user asked for this frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FindAction {
+    None,
+    /// Move through the matches: `-1` previous, `1` next.
+    Step(i32),
+    Close,
+}
+
+/// Draw the window and report the requested action.
+pub fn render(
+    ctx: &egui::Context,
+    state: &mut FindState,
+    matches: usize,
+    scanning: bool,
+) -> FindAction {
+    if !state.open {
+        return FindAction::None;
+    }
+    let mut action = FindAction::None;
+    let mut open = state.open;
+    egui::Window::new("Find in capture")
+        .frame(theme::modal_frame())
+        .open(&mut open)
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_TOP, Vec2::new(0.0, 72.0))
+        .show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                let resp = ui.add(
+                    egui::TextEdit::singleline(&mut state.query)
+                        .hint_text("text in this capture")
+                        .desired_width(220.0),
+                );
+                if resp.changed() {
+                    // A new query starts from the first match.
+                    state.index = 0;
+                }
+                if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    action = FindAction::Step(if ui.input(|i| i.modifiers.shift) {
+                        -1
+                    } else {
+                        1
+                    });
+                }
+                if ui.button("Prev").clicked() {
+                    action = FindAction::Step(-1);
+                }
+                if ui.button("Next").clicked() {
+                    action = FindAction::Step(1);
+                }
+            });
+            ui.add_space(space::XS as f32);
+            // Three distinct states: still reading, nothing to search yet, and
+            // a real result count. "No match" while the worker runs would be a
+            // lie the user cannot tell apart from a wrong query.
+            let note = if scanning {
+                "Reading the text in this capture…".to_string()
+            } else if state.query.trim().is_empty() {
+                "Type to search the text recognized in this capture".to_string()
+            } else if matches == 0 {
+                format!("No match for “{}”", state.query.trim())
+            } else {
+                format!("{} of {} matches", state.index.min(matches - 1) + 1, matches)
+            };
+            ui.label(
+                egui::RichText::new(note)
+                    .size(font::SMALL as f32)
+                    .color(theme::text_tertiary()),
+            );
+        });
+    if !open {
+        return FindAction::Close;
+    }
+    action
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use eframe::egui::{Pos2, Rect};
+
+    fn frame(state: &mut FindState, matches: usize, scanning: bool) -> FindAction {
+        let ctx = egui::Context::default();
+        let raw = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(900.0, 700.0))),
+            ..Default::default()
+        };
+        let mut action = FindAction::None;
+        let mut out = ctx.run_ui(raw, |_| {
+            action = render(&ctx, state, matches, scanning);
+        });
+        out.textures_delta.clear();
+        action
+    }
+
+    #[test]
+    fn a_closed_state_renders_nothing_and_asks_for_nothing() {
+        let mut state = FindState::default();
+        assert_eq!(frame(&mut state, 0, false), FindAction::None);
+    }
+
+    #[test]
+    fn an_open_window_reports_no_action_until_the_user_acts() {
+        let mut state = FindState {
+            open: true,
+            query: "settings".into(),
+            index: 1,
+        };
+        assert_eq!(frame(&mut state, 3, false), FindAction::None);
+        assert_eq!(state.index, 1, "rendering must not move the selection");
+    }
+}

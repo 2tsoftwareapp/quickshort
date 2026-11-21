@@ -77,7 +77,8 @@ lines, and asserts that hovering the centre of every line offers exactly that li
 
 Honest gap: **T011** is proven at the geometry level, not through the UI at the four viewports —
 driving a real hover needs a full `EditorApp` window, which the headless UAT harness does not
-build. The proposal paint itself is the same `canvas::paint_move_overlay` already exercised by the
+build. The Find window's UAT (Phase 4) is the closest the harness gets: same `paint_*` helpers,
+same viewports, but no pointer events. The proposal paint itself is the same `canvas::paint_move_overlay` already exercised by the
 viewport UAT, so the untested part is the wiring, not the drawing.
 
 ## Phase 3 Completion Notes
@@ -117,7 +118,12 @@ that line.
 
 ### Verification
 
-- `cargo test --workspace` — **291 passed / 0 failed** (3 new).
+- `cargo test --workspace` — **294 passed / 0 failed**.
+- UAT (local, headless): `uat_find_window_and_highlights_across_viewports_and_themes` renders the
+  find window in three states (reading / no match / 3 matches with the second current) plus the
+  highlight painter, at 720×600, 1000×700, 1280×800 and 1600×1000 in Dark and Light.
+- To make that possible the window moved to `qs-editor/src/find.rs` (`FindState` + `render` →
+  `FindAction`), which owns no recognition and no viewport, so it renders headlessly.
 - `cargo check --workspace --all-targets` — clean.
 - Integration test on `docs/shots/settings-general.png`: searching `settings` returns only lines that
   actually contain it, an absent word returns nothing, and an empty query highlights nothing.
