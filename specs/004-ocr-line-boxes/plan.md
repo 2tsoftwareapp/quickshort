@@ -71,5 +71,7 @@ say "no text here" when the truth is "this build cannot tell you".
 3. **Phase 3** — copy-text-in-region.
 4. **Phase 4 (this change)** — find-in-capture: `OcrHints::find`, a small dialog (⌘F), highlights and
    panning, plus integration tests on the repo screenshot.
-5. **Phase 5 (blocked)** — geometry for the Linux and Windows backends, on a machine that can build
-   those targets.
+5. **Phase 5 (done)** — geometry for the Linux and Windows backends. The "blocked" assumption was
+   wrong: `rustup target add x86_64-pc-windows-msvc` makes the WinRT path compile-checkable from
+   macOS, and the tesseract TSV parser is a pure function that tests here. Both are
+   compile-verified, neither has been run on its own OS.

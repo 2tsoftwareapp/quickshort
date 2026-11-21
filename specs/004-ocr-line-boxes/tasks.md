@@ -19,7 +19,7 @@
 - [x] **T010** Click on a proposal arms it as the source rect; clicking elsewhere keeps today's manual drag.
 - [x] **T011** UAT: proposal box matches the OCR rect within a pixel at the four viewports.
 
-## Phase 3: Copy text by region (done) and the other engines (blocked)
+## Phase 3: Copy text by region and the other engines (done)
 
 - [x] **T012** Drag a region with the text tool to copy the lines inside it, in reading order.
 - [x] **T013** Empty-region feedback distinct from "engine unavailable".
