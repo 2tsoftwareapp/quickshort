@@ -33,6 +33,28 @@ fn section(ui: &mut egui::Ui, title: &str) {
 /// Draw the panel contents; returns true when the document changed.
 pub fn render(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
     let mut changed = false;
+    // Paint bucket tolerance only makes sense while that tool (or one of its
+    // fills) is in play, and it is a style knob, not a document change.
+    let fill_active = editor.tool() == qs_edit::Tool::Fill
+        || matches!(
+            editor.selected_object().map(|o| &o.kind),
+            Some(qs_doc::ObjectKind::Fill { .. })
+        );
+    if fill_active {
+        components::card(ui, |ui| {
+            section(ui, "Paint bucket");
+            let mut tolerance = editor.style.fill_tolerance as i32;
+            if ui
+                .add(egui::Slider::new(&mut tolerance, 0..=255).text("Tolerance"))
+                .on_hover_text("How far a colour may differ from the pixel you clicked and still fill")
+                .changed()
+            {
+                editor.style.fill_tolerance = tolerance.clamp(0, 255) as u8;
+                changed = true;
+            }
+        });
+        ui.add_space(space::MD as f32);
+    }
     if !editor.selection().is_empty() {
         components::card(ui, |ui| {
             changed |= object_ui(ui, editor);
