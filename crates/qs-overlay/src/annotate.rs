@@ -30,6 +30,9 @@ pub const TEXT_SIZES: [(f64, &str); 6] = [
 /// Index into `TEXT_SIZES` armed by default — 14 px.
 pub const TEXT_SIZE_DEFAULT: usize = 1;
 pub const PIX_BLOCK: i32 = 8; // pixelate block, logical px
+/// Step badge radius, logical px.
+pub const STEP_R: i32 = 12;
+const STEP_PX: f64 = 13.0;
 // pixelate drag-preview outline reads dynamic `qs_theme::accent()` at draw time
 
 #[derive(Clone)]
@@ -71,6 +74,8 @@ pub enum Annotation {
         bold: bool,
         rgb: u32,
     },
+    /// Numbered badge centred on `c`.
+    Step { c: Point, n: u32, rgb: u32 },
 }
 
 impl Annotation {
@@ -88,7 +93,7 @@ impl Annotation {
             return false;
         }
         match self {
-            Self::Text { .. } => {
+            Self::Text { .. } | Self::Step { .. } => {
                 let b = self.bbox();
                 p.x >= b.x && p.x < b.right() && p.y >= b.y && p.y < b.bottom()
             }
@@ -151,7 +156,7 @@ impl Annotation {
                 r.x += dx;
                 r.y += dy;
             }
-            Self::Text { pos, .. } => {
+            Self::Text { pos, .. } | Self::Step { c: pos, .. } => {
                 pos.x += dx;
                 pos.y += dy;
             }
@@ -166,7 +171,7 @@ impl Annotation {
             Self::Arrow { w, rgb, .. }
             | Self::Rect { w, rgb, .. }
             | Self::Ellipse { w, rgb, .. } => (*w, *rgb, 1.0),
-            Self::Pixelate(_) | Self::Text { .. } => return None,
+            Self::Pixelate(_) | Self::Text { .. } | Self::Step { .. } => return None,
         })
     }
 
@@ -192,7 +197,7 @@ impl Annotation {
                 r.w as f64 / 2.0,
                 r.h as f64 / 2.0,
             ),
-            Self::Pixelate(_) | Self::Text { .. } => f64::INFINITY,
+            Self::Pixelate(_) | Self::Text { .. } | Self::Step { .. } => f64::INFINITY,
         }
     }
 
@@ -215,6 +220,12 @@ impl Annotation {
                 })
             }
             Self::Arrow { a, b, .. } => Rect::from_drag(*a, *b),
+            Self::Step { c, .. } => Rect::new(
+                c.x - STEP_R,
+                c.y - STEP_R,
+                (STEP_R * 2) as u32,
+                (STEP_R * 2) as u32,
+            ),
             Self::Rect { r, .. } | Self::Ellipse { r, .. } | Self::Pixelate(r) => *r,
             Self::Text {
                 pos,
@@ -282,6 +293,31 @@ impl Annotation {
                 t.blend(x0, y, qs_theme::accent(), 0.9);
                 t.blend(x1 - 1, y, qs_theme::accent(), 0.9);
             }
+            return;
+        }
+        if let Self::Step { c, n, rgb } = self {
+            let (cx, cy) = (
+                (c.x - vrect.x) as f64 * scale,
+                (c.y - vrect.y) as f64 * scale,
+            );
+            let r = STEP_R as f64 * scale;
+            for py in (cy - r - 2.0) as i32..=(cy + r + 2.0) as i32 {
+                for px in (cx - r - 2.0) as i32..=(cx + r + 2.0) as i32 {
+                    let d = (px as f64 + 0.5 - cx).hypot(py as f64 + 0.5 - cy) / scale
+                        - STEP_R as f64;
+                    let a = crate::sdf::fill_cov(d, scale);
+                    if a > 0.0 {
+                        t.blend(px, py, *rgb, a);
+                    }
+                }
+            }
+            let label = n.to_string();
+            let (w, h) = text_extent(&label, STEP_PX, true);
+            let pos = Point::new(
+                (c.x as f64 - w / 2.0).round() as i32,
+                (c.y as f64 - h / 2.0).round() as i32,
+            );
+            render_text(t, pos, &label, STEP_PX, true, 0xFFFFFF, vrect, scale);
             return;
         }
         if let Self::Text {
@@ -647,6 +683,7 @@ pub(crate) fn label_mask(label: &'static str, bold: bool) -> &'static [f32] {
         let mut m = HashMap::new();
         m.insert(("T", false), raster_label("T", false));
         m.insert(("B", true), raster_label("B", true));
+        m.insert(("1", true), raster_label("1", true));
         for (_, lbl) in TEXT_SIZES {
             m.insert((lbl, false), raster_label(lbl, false));
         }
