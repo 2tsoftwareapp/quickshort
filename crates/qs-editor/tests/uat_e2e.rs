@@ -37,7 +37,7 @@ fn uat_responsive_toolbar_and_inspector_across_viewports_and_themes() {
 
     for &theme_name in &["dark", "light"] {
         qs_theme::set_theme(theme_name);
-        for &(w, h) in &[(720.0, 600.0), (1000.0, 700.0), (1280.0, 800.0), (1600.0, 1000.0)] {
+        for &(w, h) in &[(720.0, 600.0), (900.0, 700.0), (1000.0, 700.0), (1280.0, 800.0), (1600.0, 1000.0)] {
             let ctx = egui::Context::default();
             theme::apply_macos_visuals(&ctx);
             let raw = egui::RawInput {
@@ -145,7 +145,7 @@ fn uat_library_browses_a_real_folder_across_viewports_and_themes() {
 
     for &theme_name in &["dark", "light"] {
         qs_theme::set_theme(theme_name);
-        for &(w, h) in &[(720.0, 600.0), (1000.0, 700.0), (1280.0, 800.0), (1600.0, 1000.0)] {
+        for &(w, h) in &[(720.0, 600.0), (900.0, 700.0), (1000.0, 700.0), (1280.0, 800.0), (1600.0, 1000.0)] {
             let ctx = egui::Context::default();
             theme::apply_macos_visuals(&ctx);
             let mut library = qs_editor::library::Library::default();
@@ -192,7 +192,7 @@ fn uat_library_browses_a_real_folder_across_viewports_and_themes() {
 fn uat_find_window_and_highlights_across_viewports_and_themes() {
     for &theme_name in &["dark", "light"] {
         qs_theme::set_theme(theme_name);
-        for &(w, h) in &[(720.0, 600.0), (1000.0, 700.0), (1280.0, 800.0), (1600.0, 1000.0)] {
+        for &(w, h) in &[(720.0, 600.0), (900.0, 700.0), (1000.0, 700.0), (1280.0, 800.0), (1600.0, 1000.0)] {
             // Three states the dialog has to survive: still reading, nothing
             // matched, and several matches with a middle one current.
             for (matches, scanning, index) in [(0usize, true, 0usize), (0, false, 0), (3, false, 1)] {
