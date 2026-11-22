@@ -164,8 +164,7 @@ impl ApplicationHandler<Ev> for Run {
                     Ok(l) => {
                         actions::copy_text(&l.url, true);
                         c.notify(&format!(
-                            "Link copied — expires in {}d",
-                            l.expires_s / 86400
+                            "Link copied — {}", l.note()
                         ));
                     }
                     Err(e) => c.notify(&format!("Share failed: {e}")),
@@ -353,8 +352,7 @@ impl Run {
                 self.notify(
                     el,
                     &format!(
-                        "shared — link copied (expires in {}d)\n{}",
-                        l.expires_s / 86400,
+                        "shared — link copied ({})\n{}", l.note(),
                         l.url
                     ),
                     true,
