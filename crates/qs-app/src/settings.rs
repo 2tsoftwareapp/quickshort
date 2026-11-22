@@ -1523,7 +1523,7 @@ fn draw_appearance(p: &Painter, cv: &mut Canvas, v: &View, hits: &mut Vec<(LRect
     row_label(
         p,
         cv,
-        c,
+        (c.0, c.1, c.2, ROW),
         Glyph::Drop,
         "Accent color",
         "Used for selections and highlights",
@@ -1550,7 +1550,7 @@ fn draw_appearance(p: &Painter, cv: &mut Canvas, v: &View, hits: &mut Vec<(LRect
         (c.0, c.1 + ROW, c.2, ROW),
         Glyph::Display,
         "Mode",
-        "Light Glass or Dark Glass surfaces",
+        "Light or Dark appearance",
     );
     let tb = slot(c.1 + ROW, 160.0);
     let label = THEMES
