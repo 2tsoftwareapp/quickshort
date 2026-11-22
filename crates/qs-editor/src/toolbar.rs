@@ -51,6 +51,15 @@ pub fn rgb_to_color32(rgb: u32) -> Color32 {
 // Tier 1: Unified Header Toolbar (46px)
 // ---------------------------------------------------------------------------
 
+/// Shared control height so the width capsule matches chips and buttons.
+const CONTROL_H: f32 = crate::components::CONTROL_H;
+/// Colour swatch geometry: the swatch is a control, its step adds a hairline.
+const SWATCH: f32 = 20.0;
+const SPACE_XS: f32 = qs_theme::space::XS as f32;
+const SPACE_SM: f32 = qs_theme::space::SM as f32;
+/// Inner padding of a segmented track, matching the tool capsule.
+const TRACK_PAD: f32 = 3.0;
+
 pub fn render_top_bar(
     ui: &mut Ui,
     editor: &mut Editor,
@@ -501,26 +510,39 @@ pub fn render_top_bar(
             tx += 28.0;
         }
         let more_rect = Rect::from_min_size(Pos2::new(tx + 2.0, ty), Vec2::new(more_w, tool_h));
-        let overflow_active = overflow_tools.iter().any(|&(t, _)| t == cur_tool);
+        // When the active tool lives in the overflow, the button shows that
+        // tool's icon instead of dots: otherwise the toolbar gives no hint of
+        // what is selected once the tool list collapses.
+        let active_overflow = overflow_tools.iter().find(|(t, _)| *t == cur_tool);
+        let overflow_active = active_overflow.is_some();
         let more_id = ui.scope_id().with("tb_more_tools");
+        let more_tip = match active_overflow {
+            Some((_, tip)) => format!("Current tool: {tip} — open for more"),
+            None => "More tools (Line, Ellipse, Magnify, Spotlight, Stamp, Eraser)".to_owned(),
+        };
         let more_resp = ui
             .interact(more_rect, more_id, Sense::click())
-            .on_hover_text("More tools (Line, Ellipse, Magnify, Spotlight, Stamp, Eraser)");
+            .on_hover_text(more_tip);
         paint_tool_segment(ui.painter(), more_rect, overflow_active, more_resp.hovered());
-        let more_col = if overflow_active {
-            Color32::WHITE
-        } else if more_resp.hovered() {
-            text_primary()
-        } else {
-            text_secondary()
-        };
-        ui.painter().text(
-            more_rect.center(),
-            egui::Align2::CENTER_CENTER,
-            "•••",
-            FontId::proportional(12.0),
-            more_col,
-        );
+        match active_overflow {
+            Some((tool, _)) => {
+                icons::draw_tool_icon(ui.painter(), more_rect.center(), *tool, Color32::WHITE);
+            }
+            None => {
+                let more_col = if more_resp.hovered() {
+                    text_primary()
+                } else {
+                    text_secondary()
+                };
+                ui.painter().text(
+                    more_rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    "•••",
+                    FontId::proportional(12.0),
+                    more_col,
+                );
+            }
+        }
         let popup_id = ui.scope_id().with("tb_more_popup");
         if more_resp.clicked() {
             egui::Popup::toggle_id(ui.ctx(), popup_id);
@@ -1020,7 +1042,10 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
     // 1. Color Swatches (for everything except Blur)
     if ctx_kind != ContextKind::Blur {
         for (idx, &rgb) in PALETTE.iter().enumerate() {
-            let sw_r = Rect::from_center_size(Pos2::new(x + 9.0, cy), Vec2::splat(20.0));
+            let sw_r = Rect::from_center_size(
+                Pos2::new(x + SWATCH * 0.5, cy),
+                Vec2::splat(SWATCH),
+            );
             if sw_r.right() > max_x {
                 break;
             }
@@ -1031,7 +1056,7 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
             paint_color_swatch(
                 ui.painter(),
                 sw_r.center(),
-                6.8,
+                SWATCH * 0.34,
                 rgb_to_color32(rgb),
                 eff_rgb == rgb,
                 resp.hovered(),
@@ -1040,7 +1065,7 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
                 editor.set_color(rgb);
                 mutated = true;
             }
-            x += 22.0;
+            x += SWATCH + SPACE_XS;
         }
     }
 
@@ -1054,17 +1079,23 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
             | ContextKind::Callout
     ) {
         if x > inner.left() {
-            x = draw_ins_divider(ui.painter(), x + 4.0, cy) + 6.0;
+            x = draw_ins_divider(ui.painter(), x + SPACE_XS, cy) + SPACE_SM;
         }
-        let seg_w = 26.0;
-        let track_w = 6.0 + SIZES.len() as f32 * seg_w;
+        let seg_w = CONTROL_H;
+        let track_w = 2.0 * TRACK_PAD + SIZES.len() as f32 * seg_w;
         if x + track_w <= max_x {
-            let track_r = Rect::from_min_size(Pos2::new(x, cy - 13.0), Vec2::new(track_w, 26.0));
+            let track_r = Rect::from_min_size(
+                Pos2::new(x, cy - CONTROL_H * 0.5),
+                Vec2::new(track_w, CONTROL_H),
+            );
             paint_segmented_track(ui.painter(), track_r, RADIUS_TRACK);
             for (i, &w) in SIZES.iter().enumerate() {
                 let sr = Rect::from_min_size(
-                    Pos2::new(track_r.left() + 3.0 + i as f32 * seg_w, track_r.top() + 3.0),
-                    Vec2::new(seg_w, 20.0),
+                    Pos2::new(
+                        track_r.left() + TRACK_PAD + i as f32 * seg_w,
+                        track_r.top() + TRACK_PAD,
+                    ),
+                    Vec2::new(seg_w, CONTROL_H - 2.0 * TRACK_PAD),
                 );
                 let active = (eff_width - w).abs() < 0.35;
                 let tip = match i {

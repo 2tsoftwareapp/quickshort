@@ -167,3 +167,10 @@ rm "$HOME/Library/Application Support/quickshort/config.toml"
   trên nền sáng. Chip dùng chung ngôn ngữ với `pill_button` (nền, viền, hover), cao 26, bo 6.
 - Ở chế độ compact, nút Copy rộng 64 thay vì 54 — 54 làm chữ "Copy" bị cắt ở 720px.
 - Hàng selected ở dark dùng accent alpha 72 (light giữ 36) để không chìm vào nền card.
+
+- Properties bar: swatch và width capsule dùng hằng số có tên (`SWATCH`, `TRACK_PAD`,
+  `components::CONTROL_H`) thay cho 20/22/26/6.8 rải rác; chiều cao control thống nhất 26 px ở chip,
+  nút Library, Open và capsule width.
+- Ở chế độ compact, khi tool đang chọn nằm trong menu "•••", nút đó hiện icon của tool (nền accent)
+  kèm tooltip "Current tool: …" thay vì ba dấu chấm — trước đây toolbar không cho biết đang chọn gì.
+- Dialog xoá có hairline trên hàng nút, cùng cấu trúc với footer Library.

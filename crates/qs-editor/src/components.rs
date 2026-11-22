@@ -456,6 +456,9 @@ pub fn status_pill(ui: &mut egui::Ui, label: &str, active: bool, tip: &str) -> b
 ///
 /// `status_pill` is a *toggle* — inactive it draws text only, which is wrong
 /// for an action. Actions use this instead.
+/// One control height for row-level actions (chips, Library buttons, Open).
+pub const CONTROL_H: f32 = 26.0;
+
 pub fn pill_button(ui: &mut egui::Ui, label: &str, tip: &str) -> bool {
     pill_button_colored(ui, label, tip, theme::text_primary())
 }
@@ -472,7 +475,7 @@ pub fn pill_button_colored(
         egui::FontId::proportional(fs(font::SMALL)),
         color,
     );
-    let size = Vec2::new(galley.size().x + sp(space::LG), sp(space::XL));
+    let size = Vec2::new(galley.size().x + sp(space::LG), CONTROL_H);
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
     let hovered = resp.hovered();
     let painter = ui.painter();

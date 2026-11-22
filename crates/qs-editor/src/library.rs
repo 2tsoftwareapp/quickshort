@@ -950,7 +950,10 @@ impl Library {
                         .size(qs_theme::font::SMALL as f32)
                         .color(theme::text_tertiary()),
                 );
-                ui.add_space(qs_theme::space::MD as f32);
+                // Same structure as the Library footer: hairline, then actions.
+                ui.add_space(qs_theme::space::SM as f32);
+                ui.separator();
+                ui.add_space(qs_theme::space::XS as f32);
                 // `components::button` stretches to the full width, which in a
                 // horizontal row pushed the destructive button outside the
                 // window and clipped the question text with it.
