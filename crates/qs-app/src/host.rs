@@ -297,12 +297,23 @@ impl Host {
         }
     }
 
+    /// Our own toast and notifications must not end up in the next shot.
+    fn clear_own_popups(&mut self) {
+        self.toast = None;
+        #[cfg(target_os = "linux")]
+        if crate::linux_notify::dismiss_all() {
+            // give the notification server a frame to unmap the popup
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+    }
+
     /// Capture every monitor and spawn the overlay session.
     fn trigger(&mut self, el: &ActiveEventLoop) {
         if self.overlay.is_some() {
             return; // a selection is already in progress
         }
         self.card = None; // a stale card owns the previous capture's image
+        self.clear_own_popups();
         let Some(frames) = self.capture_frames(el) else {
             return;
         };
@@ -325,6 +336,7 @@ impl Host {
             return; // a selection is already in progress
         }
         self.card = None;
+        self.clear_own_popups();
         let Some(frames) = self.capture_frames(el) else {
             return;
         };
@@ -1152,20 +1164,27 @@ impl ApplicationHandler<HostEvent> for Host {
                             self.toast = None;
                             self.rebuild_menu();
                             actions::open_editor(&doc);
-                            let name = p
-                                .file_name()
-                                .map(|n| n.to_string_lossy().into_owned())
-                                .unwrap_or_default();
-                            self.land_shot(
-                                el,
-                                Some(d.sel),
-                                d.img,
-                                ShotKind::Saved,
-                                Some(p),
-                                None,
-                                None,
-                                &format!("Saved {name}"),
-                            );
+                            // the editor window is the confirmation on
+                            // Linux — a "Saved" popup beside it is noise
+                            #[cfg(target_os = "linux")]
+                            let _ = (p, d.sel, d.img);
+                            #[cfg(not(target_os = "linux"))]
+                            {
+                                let name = p
+                                    .file_name()
+                                    .map(|n| n.to_string_lossy().into_owned())
+                                    .unwrap_or_default();
+                                self.land_shot(
+                                    el,
+                                    Some(d.sel),
+                                    d.img,
+                                    ShotKind::Saved,
+                                    Some(p),
+                                    None,
+                                    None,
+                                    &format!("Saved {name}"),
+                                );
+                            }
                         }
                         Outcome::Saved(p) => self.land_saved(el, d.sel, d.img, p, false),
                         // Done saved the file too, so it lands like a Save
