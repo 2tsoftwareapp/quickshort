@@ -119,6 +119,17 @@ pub fn round_window(win: &winit::window::Window, radius: f64) {
     }
 }
 
+/// Corner radius a borderless popup can show. macOS and Windows clip the
+/// window to it; elsewhere softbuffer has no alpha, so the corners outside
+/// the card stay opaque and must stay small.
+pub fn popup_radius(r: f64) -> f64 {
+    if cfg!(any(target_os = "macos", target_os = "windows")) {
+        r
+    } else {
+        r.min(6.0)
+    }
+}
+
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub fn round_window(_win: &winit::window::Window, _radius: f64) {}
 
