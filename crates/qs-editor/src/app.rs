@@ -92,14 +92,18 @@ pub struct EditorApp {
     saw_drag_press: bool,
     toast: Option<(String, std::time::Instant)>,
     canvas_dialog_open: bool,
-    /// "Flatten all" confirmation is on screen.
-    confirm_flatten: bool,
+    /// Document and base image before "Flatten all", so undo can bring
+    /// the layers back.
+    pre_flatten: Option<(Document, RgbaImage)>,
     canvas_insets: [f32; 4],
     canvas_background: u32,
     resize_w: u32,
     resize_h: u32,
     resize_lock: bool,
-    export_dialog_open: bool,
+    export_menu_open: bool,
+    export_anchor: Option<Rect>,
+    app_menu_open: bool,
+    app_menu_anchor: Option<Rect>,
     export_format: ExportFormat,
     export_quality: u8,
     combine_dialog_open: bool,
@@ -116,7 +120,6 @@ pub struct EditorApp {
     canvas_anchor: (usize, usize),
     layer_drag_id: Option<ObjectId>,
     alignment_open: bool,
-    settings_open: bool,
     prefs: crate::prefs::AppPrefs,
     /// Quick Styles: built-in presets + the user's saved ones.
     styles: styles::Library,
@@ -189,13 +192,16 @@ impl EditorApp {
             saw_drag_press: false,
             toast: None,
             canvas_dialog_open: false,
-            confirm_flatten: false,
+            pre_flatten: None,
             canvas_insets: [0.0; 4],
             canvas_background,
             resize_w: init_w,
             resize_h: init_h,
             resize_lock: true,
-            export_dialog_open: false,
+            export_menu_open: false,
+            export_anchor: None,
+            app_menu_open: false,
+            app_menu_anchor: None,
             export_format: ExportFormat::Png,
             export_quality: 90,
             combine_dialog_open: false,
@@ -211,7 +217,6 @@ impl EditorApp {
             session_cache: std::collections::HashMap::new(),
             layer_drag_id: None,
             alignment_open: false,
-            settings_open: false,
             prefs: crate::prefs::AppPrefs::load(),
             styles: styles::Library::load(),
             library: crate::library::Library::default(),
@@ -255,6 +260,7 @@ impl EditorApp {
             .clamp(0.2, 1.0);
         self.base = base;
         self.editor = Editor::new(doc);
+        self.pre_flatten = None;
         // A different document can share the previous one's size, scale and
         // view; the hint cache is keyed on those, so it has to be dropped
         // explicitly rather than waiting for a key mismatch.
@@ -388,13 +394,16 @@ impl EditorApp {
             session_cache: std::collections::HashMap::new(),
             toast: None,
             canvas_dialog_open: false,
-            confirm_flatten: false,
+            pre_flatten: None,
             canvas_insets: [0.0; 4],
             canvas_background: 0,
             resize_w: w,
             resize_h: h,
             resize_lock: true,
-            export_dialog_open: false,
+            export_menu_open: false,
+            export_anchor: None,
+            app_menu_open: false,
+            app_menu_anchor: None,
             export_format: ExportFormat::Png,
             export_quality: 90,
             combine_dialog_open: false,
@@ -403,7 +412,6 @@ impl EditorApp {
             canvas_anchor: (1, 1),
             layer_drag_id: None,
             alignment_open: false,
-            settings_open: false,
             prefs: crate::prefs::AppPrefs::default(),
             styles: styles::Library::default(),
             library: crate::library::Library::default(),
@@ -561,81 +569,15 @@ impl EditorApp {
         }
     }
 
-    /// "Flatten all" confirmation: baking annotations cannot be undone.
-    fn flatten_dialog(&mut self, ctx: &egui::Context) {
-        if !self.confirm_flatten {
-            return;
-        }
-        let mut open = self.confirm_flatten;
-        let mut go = false;
-        egui::Window::new("Flatten all annotations")
-            .frame(theme::modal_frame())
-            .collapsible(false)
-            .resizable(false)
-            .open(&mut open)
-            .show(ctx, |ui| {
-                ui.label(
-                    egui::RichText::new("Every annotation is baked into the image.")
-                        .size(qs_theme::font::SMALL as f32)
-                        .color(theme::text_secondary()),
-                );
-                ui.label(
-                    egui::RichText::new("The layers and the undo history are removed.")
-                        .size(qs_theme::font::SMALL as f32)
-                        .color(theme::text_tertiary()),
-                );
-                ui.add_space(qs_theme::space::MD as f32);
-                ui.separator();
-                ui.add_space(qs_theme::space::XS as f32);
-                ui.horizontal(|ui| {
-                    if crate::components::pill_button(ui, "Cancel", "") {
-                        self.confirm_flatten = false;
-                    }
-                    if crate::components::pill_button_colored(
-                        ui,
-                        "Flatten",
-                        "Bake every annotation into the image",
-                        theme::danger_red(),
-                    ) {
-                        go = true;
-                    }
-                });
-            });
-        self.confirm_flatten = open;
-        if go {
-            self.confirm_flatten = false;
-            if let Err(e) = self.flatten_all() {
-                self.show_toast(format!("Flatten failed: {e}"));
-            }
-        }
-    }
-
-    fn canvas_dialog(&mut self, ctx: &egui::Context) {
-        if !self.canvas_dialog_open {
-            return;
-        }
-
-        let mut open = self.canvas_dialog_open;
+    /// Canvas settings, drawn as a card at the top of the Inspector.
+    fn canvas_section(&mut self, ui: &mut egui::Ui) {
         let mut apply = false;
         let mut fit_to_image = false;
         let mut fit_to_objects = false;
         let mut trim = false;
         let mut resample = false;
-        egui::Window::new("Canvas")
-            .frame(theme::modal_frame())
-            .collapsible(false)
-            // Fixed body height + resizable: without it the window grows to the
-            // content and then clips against the screen, with no scrollbar.
-            .default_size(egui::vec2(
-                360.0,
-                (ctx.content_rect().height() - 120.0).clamp(320.0, 560.0),
-            ))
-            .resizable(true)
-            .open(&mut open)
-            .show(ctx, |ui| {
-                egui::ScrollArea::vertical()
-                    .max_height(ui.available_height())
-                    .show(ui, |ui| {
+        {
+            {
                 ui.label("Canvas insets (px)");
                 egui::Grid::new("canvas_insets")
                     .num_columns(2)
@@ -717,7 +659,7 @@ impl EditorApp {
                 });
                 let [r, g, b, a] = color.to_srgba_unmultiplied();
                 self.canvas_background = u32::from_be_bytes([a, r, g, b]);
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     if crate::components::pill_button(ui, "Transparent", "") {
                         self.canvas_background = 0;
                     }
@@ -753,7 +695,7 @@ impl EditorApp {
                 ui.add_space(qs_theme::space::SM as f32);
                 ui.separator();
                 ui.label("Resample image (px)");
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     let (bw, bh) = (self.base.width().max(1), self.base.height().max(1));
                     let aspect = bw as f32 / bh as f32;
                     let w_resp = ui.add(
@@ -777,9 +719,8 @@ impl EditorApp {
                         resample = true;
                     }
                 });
-                });
-            });
-        self.canvas_dialog_open = open;
+            }
+        }
 
         if resample {
             let nw = self.resize_w.clamp(1, 16384);
@@ -1015,6 +956,7 @@ impl EditorApp {
             .and_then(|s| s.to_str())
             .unwrap_or("export");
         self.show_toast(format!("Exported {name}"));
+        self.export_format = fmt;
         Ok(())
     }
 
@@ -1044,204 +986,202 @@ impl EditorApp {
         Ok(())
     }
 
-    fn export_dialog(&mut self, ctx: &egui::Context) {
-        if !self.export_dialog_open {
-            return;
-        }
-        let mut open = self.export_dialog_open;
-        let mut do_export = false;
-        let mut do_copy = false;
-        let mut do_save = false;
-        let mut do_print = false;
-
-        egui::Window::new("Export & Share")
-            .frame(theme::modal_frame())
-            .collapsible(false)
-            .resizable(false)
-            .open(&mut open)
-            .show(ctx, |ui| {
-                ui.set_min_width(280.0);
-                theme::section_header(ui, "Format");
-                ui.horizontal(|ui| {
-                    for fmt in [ExportFormat::Png, ExportFormat::Jpeg, ExportFormat::Webp] {
-                        ui.selectable_value(&mut self.export_format, fmt, fmt.label());
-                    }
-                });
-                if self.export_format == ExportFormat::Jpeg {
-                    ui.add_space(qs_theme::space::XS as f32);
-                    ui.add(
-                        egui::Slider::new(&mut self.export_quality, 40..=100)
-                            .suffix("%")
-                            .text("Quality"),
-                    );
-                }
-                ui.add_space(qs_theme::space::MD as f32);
-                theme::section_header(ui, "Destination");
-                ui.horizontal_wrapped(|ui| {
-                    if crate::components::pill_button(ui, "Save Image As…", "") {
-                        do_export = true;
-                    }
-                    if crate::components::pill_button(ui, "Copy Flattened", "") {
-                        do_copy = true;
-                    }
-                    if crate::components::pill_button(ui, "Save .qsdoc", "") {
-                        do_save = true;
-                    }
-                    if crate::components::pill_button(ui, "Print…", "") {
-                        do_print = true;
-                    }
-                });
-            });
-        self.export_dialog_open = open;
-
-        if do_export {
-            if let Err(e) = self.export_with_dialog(self.export_format, self.export_quality) {
-                self.show_toast(format!("Export failed: {e}"));
-            }
-            self.export_dialog_open = false;
-        } else if do_copy {
-            let _ = self.copy_to_clipboard();
-            self.export_dialog_open = false;
-        } else if do_save {
-            let _ = self.save();
-            self.export_dialog_open = false;
-        } else if do_print {
-            if let Err(e) = self.print_image() {
-                self.show_toast(format!("Print failed: {e}"));
-            }
-            self.export_dialog_open = false;
-        }
+    /// Align & distribute, drawn as a card in the Inspector while two or
+    /// more objects are selected.
+    fn align_section(&mut self, ui: &mut egui::Ui) {
+                    // One row per axis: wrapping all six mixed them up at 720.
+                    ui.horizontal_wrapped(|ui| {
+                        for (label, a) in [
+                            ("Left", Alignment::Left),
+                            ("Center X", Alignment::HCenter),
+                            ("Right", Alignment::Right),
+                        ] {
+                            if crate::components::pill_button(ui, label, "") {
+                                if self.editor.align_selected(a) {
+                                    self.touch();
+                                }
+                            }
+                        }
+                    });
+                    ui.horizontal_wrapped(|ui| {
+                        for (label, a) in [
+                            ("Top", Alignment::Top),
+                            ("Center Y", Alignment::VCenter),
+                            ("Bottom", Alignment::Bottom),
+                        ] {
+                            if crate::components::pill_button(ui, label, "") {
+                                if self.editor.align_selected(a) {
+                                    self.touch();
+                                }
+                            }
+                        }
+                    });
+                    ui.separator();
+                    ui.horizontal_wrapped(|ui| {
+                        let enabled = self.editor.selection().len() >= 3;
+                        ui.add_enabled_ui(enabled, |ui| {
+                            if crate::components::pill_button(ui, "Distribute horizontally", "")
+                                && self.editor.distribute_selected(Axis::Horizontal)
+                            {
+                                self.touch();
+                            }
+                            if crate::components::pill_button(ui, "Distribute vertically", "")
+                                && self.editor.distribute_selected(Axis::Vertical)
+                            {
+                                self.touch();
+                            }
+                        });
+                    });
     }
 
-    fn settings_dialog(&mut self, ctx: &egui::Context) {
-        if !self.settings_open {
+    /// App menu at the left of the top bar: the actions that used to crowd
+    /// the status bar, which now only reports.
+    fn app_menu(&mut self, ctx: &egui::Context) {
+        if !self.app_menu_open {
             return;
         }
-        let mut open = self.settings_open;
-        let mut close_clicked = false;
-        let mut dirty = false;
-        egui::Window::new("Settings")
-            .frame(theme::modal_frame())
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
-            .default_width(360.0)
-            .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
+        let anchor = self.app_menu_anchor.unwrap_or_else(|| {
+            let r = ctx.content_rect();
+            Rect::from_min_size(r.min, Vec2::new(1.0, 36.0))
+        });
+        let is_dark = qs_theme::pal().dark;
+        let has_region = self.editor.region().is_some();
+        let (mut capture, mut library, mut copy_text, mut settings, mut flip_theme) =
+            (false, false, false, false, false);
+        let area = egui::Area::new(egui::Id::unique("app_menu"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(anchor.left_bottom() + Vec2::new(0.0, qs_theme::space::XS as f32))
             .show(ctx, |ui| {
-                ui.set_min_width(340.0);
-                crate::components::card(ui, |ui| {
-                    crate::components::section_header(ui, "Appearance");
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            egui::RichText::new("Theme")
-                                .size(qs_theme::font::BODY as f32 - 0.5)
-                                .color(theme::text_primary()),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            for (key, label) in qs_theme::THEMES.iter().rev() {
-                                let active = self.prefs.theme == *key;
-                                let tip = format!("Zoom to {label}");
-                            if crate::components::status_pill(ui, label, active, &tip) {
-                                    self.prefs.theme = (*key).into();
-                                    dirty = true;
-                                }
-                            }
-                        });
+                egui::Frame::menu(ui.style()).show(ui, |ui| {
+                    ui.set_min_width(220.0);
+                    ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
+                        capture = ui
+                            .add(egui::Button::new("New capture").shortcut_text("Ctrl+N").frame(false))
+                            .clicked();
+                        library = ui
+                            .add(egui::Button::new("Library").shortcut_text("Ctrl+L").frame(false))
+                            .clicked();
+                        copy_text = ui
+                            .add_enabled(
+                                has_region,
+                                egui::Button::new("Copy text in selection").frame(false),
+                            )
+                            .on_disabled_hover_text("Select a region first")
+                            .clicked();
+                        ui.separator();
+                        settings = ui
+                            .add(egui::Button::new("Settings\u{2026}").shortcut_text("Ctrl+,").frame(false))
+                            .clicked();
+                        let theme_label = if is_dark {
+                            "Switch to Light theme"
+                        } else {
+                            "Switch to Dark theme"
+                        };
+                        flip_theme = ui
+                            .add(egui::Button::new(theme_label).frame(false))
+                            .clicked();
                     });
-                    ui.add_space(qs_theme::space::SM as f32);
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            egui::RichText::new("Accent")
-                                .size(qs_theme::font::BODY as f32 - 0.5)
-                                .color(theme::text_primary()),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            for (name, rgb) in qs_theme::ACCENTS.iter().rev() {
-                                let (rect, resp) =
-                                    ui.allocate_exact_size(Vec2::splat(22.0), egui::Sense::click());
-                                let selected = self.prefs.accent == *name;
-                                theme::paint_color_swatch(
-                                    ui.painter(),
-                                    rect.center(),
-                                    7.0,
-                                    toolbar::rgb_to_color32(*rgb),
-                                    selected,
-                                    resp.hovered(),
-                                );
-                                if resp.on_hover_text(*name).clicked() {
-                                    self.prefs.accent = (*name).into();
-                                    dirty = true;
-                                }
-                            }
-                        });
-                    });
-                });
-
-                ui.add_space(qs_theme::space::MD as f32);
-                crate::components::card(ui, |ui| {
-                    crate::components::section_header(ui, "Capture Workflow");
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            egui::RichText::new("After capture")
-                                .size(qs_theme::font::BODY as f32 - 0.5)
-                                .color(theme::text_primary()),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let cur_label = crate::prefs::AFTER_CAPTURE_OPTIONS
-                                .iter()
-                                .find(|(k, _)| *k == self.prefs.after_capture)
-                                .map(|(_, l)| *l)
-                                .unwrap_or("Show Shelf");
-                            egui::ComboBox::from_id_salt("prefs_after_capture")
-                                .width(152.0)
-                                .selected_text(cur_label)
-                                .show_ui(ui, |ui| {
-                                    for (key, label) in crate::prefs::AFTER_CAPTURE_OPTIONS {
-                                        if ui
-                                            .selectable_value(
-                                                &mut self.prefs.after_capture,
-                                                (*key).to_owned(),
-                                                *label,
-                                            )
-                                            .changed()
-                                        {
-                                            dirty = true;
-                                        }
-                                    }
-                                });
-                        });
-                    });
-                    ui.add_space(qs_theme::space::XS as f32);
-                    if crate::components::switch_row(
-                        ui,
-                        &mut self.prefs.copy_after_save,
-                        "Copy captures after saving",
-                    ) {
-                        dirty = true;
-                    }
-                });
-
-                // Footer like the other dialogs: hairline, then one primary pill.
-                ui.add_space(qs_theme::space::SM as f32);
-                ui.separator();
-                ui.add_space(qs_theme::space::XS as f32);
-                crate::components::dialog_actions(ui, |ui| {
-                    if crate::components::pill_button_primary(ui, "Done", "Save and close") {
-                        close_clicked = true;
-                    }
                 });
             });
-
-        if close_clicked {
-            open = false;
+        let menu_rect = area.response.rect;
+        let clicked_outside = ctx.input(|i| {
+            i.pointer.any_pressed()
+                && i
+                    .pointer
+                    .interact_pos()
+                    .is_some_and(|p| !menu_rect.contains(p) && !anchor.contains(p))
+        });
+        if capture || library || copy_text || settings || flip_theme || clicked_outside {
+            self.app_menu_open = false;
         }
-        if dirty {
+        if capture {
+            spawn_app("--capture");
+        }
+        if library && !self.library.open {
+            self.library.toggle();
+        }
+        if copy_text {
+            self.copy_text_in_region();
+        }
+        if settings {
+            spawn_app("--settings");
+        }
+        if flip_theme {
+            self.prefs.theme = if is_dark { "light" } else { "dark" }.into();
             self.prefs.apply_live();
             self.prefs.save();
             theme::sync_egui_visuals(ctx);
-            self.show_toast("Preferences saved");
         }
-        self.settings_open = open;
+    }
+
+    /// Export is a dropdown under the Export button: one click picks the
+    /// format and the OS save dialog is the only window that follows.
+    fn export_menu(&mut self, ctx: &egui::Context) {
+        if !self.export_menu_open {
+            return;
+        }
+        let anchor = self.export_anchor.unwrap_or_else(|| {
+            let r = ctx.content_rect();
+            Rect::from_min_size(egui::pos2(r.right() - 220.0, r.top()), Vec2::new(1.0, 36.0))
+        });
+        let mut pick: Option<ExportFormat> = None;
+        let (mut copy, mut print) = (false, false);
+        let area = egui::Area::new(egui::Id::unique("export_menu"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(anchor.left_bottom() + Vec2::new(0.0, qs_theme::space::XS as f32))
+            .show(ctx, |ui| {
+                egui::Frame::menu(ui.style()).show(ui, |ui| {
+                    ui.set_min_width(200.0);
+                    ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
+                        for fmt in [ExportFormat::Png, ExportFormat::Jpeg, ExportFormat::Webp] {
+                            let mut label = egui::RichText::new(format!(
+                                "Save as {}\u{2026}",
+                                fmt.label()
+                            ));
+                            // the bundled font has no check mark glyph, so the
+                            // last-used format is marked by weight and accent
+                            if fmt == self.export_format {
+                                label = label.strong().color(theme::accent_blue());
+                            }
+                            if ui.add(egui::Button::new(label).frame(false)).clicked() {
+                                pick = Some(fmt);
+                            }
+                        }
+                        ui.separator();
+                        if ui
+                            .add(egui::Button::new("Copy image").shortcut_text("Ctrl+C").frame(false))
+                            .clicked()
+                        {
+                            copy = true;
+                        }
+                        if ui.add(egui::Button::new("Print\u{2026}").frame(false)).clicked() {
+                            print = true;
+                        }
+                    });
+                });
+            });
+        let menu_rect = area.response.rect;
+        let clicked_outside = ctx.input(|i| {
+            i.pointer.any_pressed()
+                && i
+                    .pointer
+                    .interact_pos()
+                    .is_some_and(|p| !menu_rect.contains(p) && !anchor.contains(p))
+        });
+        if pick.is_some() || copy || print || clicked_outside {
+            self.export_menu_open = false;
+        }
+        if let Some(fmt) = pick {
+            if let Err(e) = self.export_with_dialog(fmt, self.export_quality) {
+                self.show_toast(format!("Export failed: {e}"));
+            }
+        } else if copy {
+            let _ = self.copy_to_clipboard();
+        } else if print {
+            if let Err(e) = self.print_image() {
+                self.show_toast(format!("Print failed: {e}"));
+            }
+        }
     }
 
     /// Find in capture: the window paints, this owns the matching and panning.
@@ -1332,12 +1272,9 @@ impl EditorApp {
 
     /// Library view: keep it pointed at the capture folder and apply the one
     /// action it can request (open, or reveal in the file manager).
-    fn library_dialog(&mut self, ctx: &egui::Context) {
-        if !self.library.open {
-            return;
-        }
+    fn library_view(&mut self, ui: &mut egui::Ui) {
         self.library.set_dir(self.prefs.capture_dir());
-        match self.library.show(ctx) {
+        match self.library.show(ui) {
             Some(crate::library::LibraryAction::Open(path)) => {
                 if let Err(e) = self.switch_to_path(&path) {
                     self.show_toast(format!("Failed to open: {e}"));
@@ -1424,10 +1361,12 @@ impl EditorApp {
         let mut doc = Document::new(flat.width(), flat.height(), old.scale);
         doc.meta = old.meta.clone();
         doc.background = old.background;
+        let before = (old, self.base.clone());
         self.apply_document(doc, flat);
+        self.pre_flatten = Some(before);
         self.editor.mark_modified();
         self.touch();
-        self.show_toast("Flattened annotations into the image");
+        self.show_toast("Flattened into the image \u{00b7} Ctrl+Z to undo");
         Ok(())
     }
 
@@ -1471,6 +1410,7 @@ impl EditorApp {
     pub fn handle_dialog_keys(&mut self, ctx: &egui::Context) {
         // `send_viewport_cmd` needs the context outside the input lock.
         let mut close_requested = false;
+        let mut flatten_now = false;
         ctx.input_mut(|i| {
             // macOS close chord: same guard as the window's red button.
             if i.consume_key(Modifiers::COMMAND, Key::W) {
@@ -1479,18 +1419,21 @@ impl EditorApp {
             // Escape closes whichever dialog is on top. Without this the panels
             // could only be dismissed by hitting their small close button.
             if i.consume_key(Modifiers::NONE, Key::Escape) {
-                if self.confirm_flatten {
-                    self.confirm_flatten = false;
-                } else if self.export_dialog_open {
-                    self.export_dialog_open = false;
+                if self.app_menu_open {
+                    self.app_menu_open = false;
+                } else if self.export_menu_open {
+                    self.export_menu_open = false;
                 } else if self.canvas_dialog_open {
                     self.canvas_dialog_open = false;
                 } else if self.combine_dialog_open {
                     self.combine_dialog_open = false;
                 } else if self.alignment_open {
                     self.alignment_open = false;
-                } else if self.settings_open {
-                    self.settings_open = false;
+                } else if self.library.open {
+                    self.library.open = false;
+                } else if self.find.open {
+                    self.find.open = false;
+                    self.last_find_focus = None;
                 }
             }
             // Settings has the standard macOS shortcut; Align needs a panel that
@@ -1502,33 +1445,31 @@ impl EditorApp {
             }
             if i.consume_key(Modifiers::COMMAND, Key::Comma) {
                 self.canvas_dialog_open = false;
-                self.export_dialog_open = false;
-                self.confirm_flatten = false;
+                self.export_menu_open = false;
                 self.alignment_open = false;
-                self.settings_open = true;
+                spawn_app("--settings");
             }
             if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::A)
                 || i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::A)
             {
                 self.canvas_dialog_open = false;
-                self.export_dialog_open = false;
-                self.confirm_flatten = false;
+                self.export_menu_open = false;
                 self.alignment_open = true;
+                self.show_inspector = true;
             }
             // Dialog shortcuts: these panels were only reachable by mouse.
             if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::C)
                 || i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::C)
             {
-                self.export_dialog_open = false;
-                self.confirm_flatten = false;
+                self.export_menu_open = false;
                 self.canvas_dialog_open = true;
+                self.show_inspector = true;
             }
             if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::E)
                 || i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::E)
             {
                 self.canvas_dialog_open = false;
-                self.confirm_flatten = false;
-                self.export_dialog_open = true;
+                self.export_menu_open = true;
             }
             // cmd+shift+F never reached us (macOS swallows it), so the
             // destructive flatten confirmation uses option+cmd+F.
@@ -1536,24 +1477,27 @@ impl EditorApp {
                 || i.consume_key(Modifiers::CTRL | Modifiers::ALT, Key::F)
             {
                 self.canvas_dialog_open = false;
-                self.export_dialog_open = false;
-                self.confirm_flatten = true;
+                self.export_menu_open = false;
+                flatten_now = true;
             }
         });
+        if flatten_now {
+            if let Err(e) = self.flatten_all() {
+                self.show_toast(format!("Flatten failed: {e}"));
+            }
+        }
         if close_requested {
             self.request_close(ctx);
         }
     }
 
-    /// Which dialogs are open: canvas, export, flatten, align, settings.
+    /// Which panels are open: canvas, export menu, align.
     #[doc(hidden)]
-    pub fn open_dialogs(&self) -> (bool, bool, bool, bool, bool) {
+    pub fn open_dialogs(&self) -> (bool, bool, bool) {
         (
             self.canvas_dialog_open,
-            self.export_dialog_open,
-            self.confirm_flatten,
+            self.export_menu_open,
             self.alignment_open,
-            self.settings_open,
         )
     }
 
@@ -1621,7 +1565,7 @@ impl EditorApp {
             }
 
             if i.consume_key(Modifiers::COMMAND, Key::N) || i.consume_key(Modifiers::CTRL, Key::N) {
-                spawn_capture();
+                spawn_app("--capture");
             }
 
             if i.consume_key(Modifiers::COMMAND, Key::F) || i.consume_key(Modifiers::CTRL, Key::F) {
@@ -1769,7 +1713,13 @@ impl EditorApp {
         });
 
         if undo {
-            self.editor.undo();
+            if !self.editor.undo() {
+                if let Some((doc, base)) = self.pre_flatten.take() {
+                    self.apply_document(doc, base);
+                    self.editor.mark_modified();
+                    self.show_toast("Flatten undone");
+                }
+            }
             self.touch();
         }
         if redo {
@@ -1988,11 +1938,25 @@ impl eframe::App for EditorApp {
         if top_res.open {
             let _ = self.open_dialog();
         }
+        if top_res.export_rect.is_some() {
+            self.export_anchor = top_res.export_rect;
+        }
         if top_res.export {
-            self.export_dialog_open = !self.export_dialog_open;
+            self.export_menu_open = !self.export_menu_open;
+            self.app_menu_open = false;
+        }
+        if top_res.menu_rect.is_some() {
+            self.app_menu_anchor = top_res.menu_rect;
+        }
+        if top_res.menu {
+            self.app_menu_open = !self.app_menu_open;
+            self.export_menu_open = false;
         }
         if top_res.canvas {
             self.canvas_dialog_open = !self.canvas_dialog_open;
+            if self.canvas_dialog_open {
+                self.show_inspector = true;
+            }
             self.canvas_background = self.editor.doc().background;
             self.resize_w = self.base.width().max(1);
             self.resize_h = self.base.height().max(1);
@@ -2000,12 +1964,9 @@ impl eframe::App for EditorApp {
         if top_res.zoom != ZoomCmd::None {
             self.apply_zoom_cmd(top_res.zoom);
         }
-        self.canvas_dialog(&ctx);
-        self.flatten_dialog(&ctx);
-        self.export_dialog(&ctx);
+        self.export_menu(&ctx);
+        self.app_menu(&ctx);
         self.combine_dialog(&ctx);
-        self.settings_dialog(&ctx);
-        self.library_dialog(&ctx);
         self.find_dialog(&ctx);
 
         // Bottom Studio Status Bar (32px = 4px + 24px hit target + 4px, single top hairline)
@@ -2041,9 +2002,9 @@ impl eframe::App for EditorApp {
                     }
                     if crate::components::status_pill(
                         ui,
-                        "Tray",
+                        "Recent",
                         self.show_filmstrip,
-                        "Toggle Recent Captures filmstrip",
+                        "Toggle the recent captures strip (Ctrl+Shift+T)",
                     ) {
                         self.show_filmstrip = !self.show_filmstrip;
                     }
@@ -2093,57 +2054,6 @@ impl eframe::App for EditorApp {
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if crate::components::status_pill(
-                            ui,
-                            "New capture",
-                            false,
-                            "Capture a new screenshot (\u{2318}N)",
-                        ) {
-                            spawn_capture();
-                        }
-                        if self.editor.region().is_some()
-                            && crate::components::status_pill(
-                                ui,
-                                "Copy text",
-                                false,
-                                "Copy the recognized text inside the selection",
-                            )
-                        {
-                            self.copy_text_in_region();
-                        }
-                        if crate::components::status_pill(
-                            ui,
-                            "Library",
-                            self.library.open,
-                            "Browse, search and tag captures (\u{2318}L)",
-                        ) {
-                            self.library.toggle();
-                        }
-                        if crate::components::status_pill(
-                            ui,
-                            "Settings",
-                            self.settings_open,
-                            "Appearance & capture preferences (config.toml)",
-                        ) {
-                            if !self.settings_open {
-                                self.prefs = crate::prefs::AppPrefs::load();
-                            }
-                            self.settings_open = !self.settings_open;
-                        }
-                        let is_dark = qs_theme::pal().dark;
-                        let (theme_lbl, theme_tip) = if is_dark {
-                            ("Dark", "Theme: Dark \u{2014} click for Light")
-                        } else {
-                            ("Light", "Theme: Light \u{2014} click for Dark")
-                        };
-                        if crate::components::status_pill(ui, theme_lbl, false, theme_tip) {
-                            let next = if is_dark { "light" } else { "dark" };
-                            self.prefs.theme = next.into();
-                            self.prefs.apply_live();
-                            self.prefs.save();
-                            theme::sync_egui_visuals(&ctx);
-                        }
-                        status_divider(ui);
                         for (label, target_zoom) in [("200%", 2.0f32), ("100%", 1.0), ("50%", 0.5)]
                         {
                             let active = (self.view.zoom - target_zoom).abs() < 0.01;
@@ -2239,7 +2149,7 @@ impl eframe::App for EditorApp {
                             ui.set_width(104.0);
                             ui.label(
                                 egui::RichText::new("RECENT")
-                                    .size(10.0)
+                                    .size(qs_theme::font::CAPTION as f32)
                                     .strong()
                                     .color(theme::text_tertiary()),
                             );
@@ -2277,7 +2187,7 @@ impl eframe::App for EditorApp {
                                 };
                                 ui.label(
                                     egui::RichText::new(msg)
-                                        .size(11.5)
+                                        .size(qs_theme::font::SMALL as f32)
                                         .color(theme::text_tertiary()),
                                 );
                             });
@@ -2369,7 +2279,7 @@ impl eframe::App for EditorApp {
                                                 Pos2::new(rect.center().x, rect.bottom() - 9.0),
                                                 egui::Align2::CENTER_CENTER,
                                                 &name,
-                                                FontId::proportional(10.0),
+                                                FontId::proportional(qs_theme::font::CAPTION as f32),
                                                 if is_active {
                                                     theme::text_primary()
                                                 } else {
@@ -2420,7 +2330,7 @@ impl eframe::App for EditorApp {
             }
         }
 
-        let layers_mutated = if self.show_layers {
+        let layers_mutated = if self.show_layers && !self.library.open {
             let layers_resp = egui::Panel::left("layers_panel")
             .resizable(true)
             .default_size(204.0)
@@ -2445,11 +2355,14 @@ impl eframe::App for EditorApp {
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if self.editor.selection().len() >= 2 {
-                            self.alignment_open = crate::components::pill_button(
+                            if crate::components::pill_button(
                                 ui,
                                 "Align",
-                                "Align & distribute",
-                            ) || self.alignment_open;
+                                "Align & distribute in the Inspector",
+                            ) {
+                                self.alignment_open = true;
+                                self.show_inspector = true;
+                            }
                         }
                         if self.editor.selection_grouped()
                             && crate::components::pill_button(
@@ -2644,62 +2557,8 @@ impl eframe::App for EditorApp {
         if layers_mutated {
             self.touch();
         }
-        if self.alignment_open {
-            let mut open = self.alignment_open;
-            egui::Window::new("Align & Distribute")
-                .frame(theme::modal_frame())
-                .open(&mut open)
-                .collapsible(false)
-                .resizable(false)
-                .show(&ctx, |ui| {
-                    // One row per axis: wrapping all six mixed them up at 720.
-                    ui.horizontal(|ui| {
-                        for (label, a) in [
-                            ("Left", Alignment::Left),
-                            ("Center X", Alignment::HCenter),
-                            ("Right", Alignment::Right),
-                        ] {
-                            if crate::components::pill_button(ui, label, "") {
-                                if self.editor.align_selected(a) {
-                                    self.touch();
-                                }
-                            }
-                        }
-                    });
-                    ui.horizontal(|ui| {
-                        for (label, a) in [
-                            ("Top", Alignment::Top),
-                            ("Center Y", Alignment::VCenter),
-                            ("Bottom", Alignment::Bottom),
-                        ] {
-                            if crate::components::pill_button(ui, label, "") {
-                                if self.editor.align_selected(a) {
-                                    self.touch();
-                                }
-                            }
-                        }
-                    });
-                    ui.separator();
-                    ui.horizontal(|ui| {
-                        let enabled = self.editor.selection().len() >= 3;
-                        ui.add_enabled_ui(enabled, |ui| {
-                            if crate::components::pill_button(ui, "Distribute horizontally", "")
-                                && self.editor.distribute_selected(Axis::Horizontal)
-                            {
-                                self.touch();
-                            }
-                            if crate::components::pill_button(ui, "Distribute vertically", "")
-                                && self.editor.distribute_selected(Axis::Vertical)
-                            {
-                                self.touch();
-                            }
-                        });
-                    });
-                });
-            self.alignment_open = open;
-        }
 
-        let panel_mutated = if self.show_inspector {
+        let panel_mutated = if self.show_inspector && !self.library.open {
             let panel_resp = egui::Panel::right("image_panel")
                 .resizable(false)
                 .exact_size(256.0)
@@ -2711,6 +2570,33 @@ impl eframe::App for EditorApp {
                 .show(ui, |ui| {
                     egui::ScrollArea::vertical()
                         .show(ui, |ui| {
+                            if self.canvas_dialog_open {
+                                crate::components::card(ui, |ui| {
+                                    if inspector_card_header(ui, "CANVAS", true) {
+                                        self.canvas_dialog_open = false;
+                                    }
+                                    self.canvas_section(ui);
+                                });
+                                ui.add_space(qs_theme::space::MD as f32);
+                            }
+                            let selected = self.editor.selection().len();
+                            if selected >= 2 || self.alignment_open {
+                                crate::components::card(ui, |ui| {
+                                    if inspector_card_header(ui, "ALIGN", self.alignment_open) {
+                                        self.alignment_open = false;
+                                    }
+                                    if selected >= 2 {
+                                        self.align_section(ui);
+                                    } else {
+                                        ui.label(
+                                            egui::RichText::new("Select two or more objects to align them.")
+                                                .size(qs_theme::font::SMALL as f32)
+                                                .color(theme::text_tertiary()),
+                                        );
+                                    }
+                                });
+                                ui.add_space(qs_theme::space::MD as f32);
+                            }
                             let changed = image_panel::render(ui, &mut self.editor);
                             ui.add_space(qs_theme::space::MD as f32);
                             crate::components::card(ui, |ui| {
@@ -2734,13 +2620,15 @@ impl eframe::App for EditorApp {
                                 ui.add_space(qs_theme::space::SM as f32);
                                 if crate::components::button(
                                     ui,
-                                    "Flatten all…",
+                                    "Flatten all",
                                     crate::components::ButtonVariant::Secondary,
-                                    "Bake every annotation into the image",
+                                    "Bake every annotation into the image (undo with Ctrl+Z)",
                                 )
                                 .clicked()
                                 {
-                                    self.confirm_flatten = true;
+                                    if let Err(e) = self.flatten_all() {
+                                        self.show_toast(format!("Flatten failed: {e}"));
+                                    }
                                 }
                             });
                             changed
@@ -2763,6 +2651,10 @@ impl eframe::App for EditorApp {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ui, |ui| {
+                if self.library.open {
+                    self.library_view(ui);
+                    return;
+                }
                 let (screen_rect, response) =
                     ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
                 self.last_canvas_rect = Some(screen_rect);
@@ -3173,13 +3065,16 @@ mod tests {
             session_cache: std::collections::HashMap::new(),
             toast: None,
             canvas_dialog_open: false,
-            confirm_flatten: false,
+            pre_flatten: None,
             canvas_insets: [0.0; 4],
             canvas_background: 0,
             resize_w: 20,
             resize_h: 10,
             resize_lock: true,
-            export_dialog_open: false,
+            export_menu_open: false,
+            export_anchor: None,
+            app_menu_open: false,
+            app_menu_anchor: None,
             export_format: ExportFormat::Png,
             export_quality: 90,
             combine_dialog_open: false,
@@ -3188,7 +3083,6 @@ mod tests {
             canvas_anchor: (1, 1),
             layer_drag_id: None,
             alignment_open: false,
-            settings_open: false,
             prefs: crate::prefs::AppPrefs::default(),
             styles: styles::Library::default(),
             library: crate::library::Library::default(),
@@ -3296,9 +3190,31 @@ fn load_document(p: &Path) -> anyhow::Result<(Document, RgbaImage, PathBuf)> {
     }
 }
 
-/// Starts a fresh region capture through the sibling `quickshort` binary, so
-/// the editor loops straight back to Capture without a trip to the tray.
-fn spawn_capture() {
+/// Caption header of an Inspector card; `closable` adds a Done pill and the
+/// return value reports a click on it.
+fn inspector_card_header(ui: &mut egui::Ui, title: &str, closable: bool) -> bool {
+    let mut close = false;
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new(title)
+                .size(qs_theme::font::CAPTION as f32)
+                .strong()
+                .color(theme::text_tertiary()),
+        );
+        if closable {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                close = crate::components::pill_button(ui, "Done", "Close (Esc)");
+            });
+        }
+    });
+    ui.add_space(qs_theme::space::XS as f32);
+    close
+}
+
+/// Runs the sibling `quickshort` binary with `arg` (`--capture`,
+/// `--settings`), so the editor reaches Capture and the one Settings window
+/// without a trip to the tray.
+fn spawn_app(arg: &str) {
     let name = if cfg!(windows) {
         "quickshort.exe"
     } else {
@@ -3309,7 +3225,7 @@ fn spawn_capture() {
         .and_then(|e| Some(e.parent()?.join(name)))
         .filter(|p| p.exists())
         .unwrap_or_else(|| name.into());
-    if let Err(e) = std::process::Command::new(&exe).arg("--capture").spawn() {
-        eprintln!("new capture: failed to launch {}: {e}", exe.display());
+    if let Err(e) = std::process::Command::new(&exe).arg(arg).spawn() {
+        eprintln!("{arg}: failed to launch {}: {e}", exe.display());
     }
 }

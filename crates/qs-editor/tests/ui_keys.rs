@@ -45,8 +45,8 @@ fn frame(
         ..Default::default()
     };
     let mut action = None;
-    let mut full = ctx.run_ui(raw, |_| {
-        action = library.show(ctx);
+    let mut full = ctx.run_ui(raw, |ui| {
+        action = library.show(ui);
     });
     full.textures_delta.clear();
     action
@@ -152,48 +152,6 @@ fn typing_in_find_reaches_the_field() {
     assert!(!state.focus_pending, "focus is requested once");
 }
 
-#[test]
-fn command_backspace_opens_the_delete_confirmation_and_escape_cancels() {
-    let dir = sample_dir("del");
-    let (ctx, mut library) = scanned(&dir);
-
-    frame(&ctx, &mut library, 900.0, 700.0, vec![key_event(Key::ArrowDown)]);
-    let selected = library.selected_names();
-    assert_eq!(selected.len(), 1);
-
-    let cmd_backspace = Event::Key {
-        key: Key::Backspace,
-        physical_key: None,
-        pressed: true,
-        repeat: false,
-        modifiers: Modifiers::COMMAND,
-    };
-    // `InputState::modifiers` only changes through ModifiersChanged, so the
-    // chord needs both events in the same frame, in this order.
-    frame(
-        &ctx,
-        &mut library,
-        900.0,
-        700.0,
-        vec![
-            Event::ModifiersChanged(Modifiers::COMMAND),
-            cmd_backspace,
-        ],
-    );
-    assert!(
-        library.is_confirming_delete(),
-        "cmd+backspace must ask before deleting"
-    );
-
-    frame(&ctx, &mut library, 900.0, 700.0, vec![key_event(Key::Escape)]);
-    assert!(!library.is_confirming_delete(), "escape cancels the dialog");
-    assert!(
-        dir.join(&selected[0]).exists(),
-        "cancelling keeps the file on disk"
-    );
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
 /// Remove the test file from the OS trash so a test run leaves no litter.
 fn clean_trash(name: &str) {
     let Ok(home) = std::env::var("HOME") else { return };
@@ -210,7 +168,7 @@ fn clean_trash(name: &str) {
 }
 
 #[test]
-fn confirming_the_delete_moves_the_file_to_the_trash() {
+fn command_backspace_moves_the_file_to_the_trash_without_a_dialog() {
     let dir = sample_dir("trash");
     let (ctx, mut library) = scanned(&dir);
 
@@ -236,20 +194,9 @@ fn confirming_the_delete_moves_the_file_to_the_trash() {
             },
         ],
     );
-    assert!(library.is_confirming_delete());
-
-    // Enter confirms; the row disappears and the file leaves the folder.
-    frame(
-        &ctx,
-        &mut library,
-        900.0,
-        700.0,
-        vec![Event::ModifiersChanged(Modifiers::NONE), key_event(Key::Enter)],
-    );
-    assert!(!library.is_confirming_delete(), "dialog closes after deleting");
     assert!(
         !victim.exists(),
-        "the confirmed file must leave the capture folder"
+        "cmd+backspace trashes the file immediately"
     );
     assert_eq!(library.len(), 2, "the row is gone from the list");
 

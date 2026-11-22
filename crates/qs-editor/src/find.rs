@@ -1,4 +1,4 @@
-//! Find in capture: the small search window over the recognized OCR lines.
+//! Find in capture: the small search bar over the recognized OCR lines.
 //!
 //! Kept free of recognition so it can be rendered headlessly in the UAT harness:
 //! the caller passes how many lines matched and whether the engine is still
@@ -40,14 +40,19 @@ pub fn render(
     }
     let mut action = FindAction::None;
     let mut open = state.open;
-    egui::Window::new("Find in capture")
-        .frame(theme::modal_frame())
-        .open(&mut open)
-        .collapsible(false)
-        .resizable(false)
+    // A bar pinned over the canvas, not a window: it does not move, stack or
+    // take a title bar, and Esc / Close dismiss it.
+    egui::Area::new(egui::Id::unique("find_bar"))
+        .order(egui::Order::Foreground)
         // Clear of the toolbar and the properties bar, which are 96 px tall.
         .anchor(egui::Align2::CENTER_TOP, Vec2::new(0.0, 132.0))
         .show(ctx, |ui| {
+            egui::Frame::NONE
+                .fill(theme::bg_card())
+                .stroke(egui::Stroke::new(1.0, theme::border_subtle()))
+                .corner_radius(qs_theme::radius::LG as u8)
+                .inner_margin(egui::Margin::symmetric(space::MD as i8, space::SM as i8))
+                .show(ui, |ui| {
             ui.horizontal(|ui| {
                 let resp = ui.add(
                     egui::TextEdit::singleline(&mut state.query)
@@ -75,6 +80,9 @@ pub fn render(
                 if crate::components::pill_button(ui, "Next", "Next match") {
                     action = FindAction::Step(1);
                 }
+                if crate::components::pill_button(ui, "Close", "Close find (Esc)") {
+                    open = false;
+                }
             });
             ui.add_space(space::SM as f32);
             // Three distinct states: still reading, nothing to search yet, and
@@ -94,6 +102,7 @@ pub fn render(
                     .size(font::SMALL as f32)
                     .color(theme::text_tertiary()),
             );
+                });
         });
     if !open {
         return FindAction::Close;
