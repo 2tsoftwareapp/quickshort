@@ -856,7 +856,9 @@ pub(crate) fn pill(
             );
             if d <= 0.0 {
                 cv.blend(px, py, bg, fill_cov(d, scale) * alpha);
-                let rim = stroke_cov(d, 0.7, scale);
+                // the card fills its window, so a rim centred on the edge
+                // would lose its outer half — keep the whole 1px inside
+                let rim = stroke_cov(d + 0.5, 1.0, scale);
                 if rim > 0.0 {
                     cv.blend(px, py, border, rim);
                 }
