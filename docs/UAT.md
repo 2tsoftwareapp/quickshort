@@ -174,3 +174,8 @@ rm "$HOME/Library/Application Support/quickshort/config.toml"
 - Ở chế độ compact, khi tool đang chọn nằm trong menu "•••", nút đó hiện icon của tool (nền accent)
   kèm tooltip "Current tool: …" thay vì ba dấu chấm — trước đây toolbar không cho biết đang chọn gì.
 - Dialog xoá có hairline trên hàng nút, cùng cấu trúc với footer Library.
+
+- Status bar cao 34 px (26 px control + 4 px padding hai chiều), pill dùng `CONTROL_H` thay vì 24;
+  divider nhóm là hairline 1×16 px màu `divider_vertical` với gap `space::XS`, không dùng
+  `ui.separator()` (vốn kế thừa stroke của widget và nặng hơn phần còn lại).
+- `switch_row` cao `CONTROL_H + space::XS` (30) và label/toggle cách mép `space::XS` thay vì 2 px.

@@ -198,7 +198,8 @@ pub fn button(
 
 /// Standardized Apple toggle switch row (`28px` hit target >= 24px, aligned label + capsule switch).
 pub fn switch_row(ui: &mut egui::Ui, on: &mut bool, label: &str) -> bool {
-    let row_h = sp(space::XL + space::XS); // 28px
+    // 26 px control plus a hair of breathing room, matching the pill scale.
+    let row_h = CONTROL_H + sp(space::XS);
     let width = ui.available_width().max(120.0);
     let (row_rect, resp) = ui.allocate_exact_size(Vec2::new(width, row_h), Sense::click());
     let mut changed = false;
@@ -213,7 +214,7 @@ pub fn switch_row(ui: &mut egui::Ui, on: &mut bool, label: &str) -> bool {
     }
 
     painter.text(
-        Pos2::new(row_rect.left() + sp(space::HAIR), row_rect.center().y),
+        Pos2::new(row_rect.left() + sp(space::XS), row_rect.center().y),
         egui::Align2::LEFT_CENTER,
         label,
         egui::FontId::proportional(fs(font::BODY) - 0.5),
@@ -228,7 +229,7 @@ pub fn switch_row(ui: &mut egui::Ui, on: &mut bool, label: &str) -> bool {
     let sw_h = 18.0;
     let sw_rect = Rect::from_min_size(
         Pos2::new(
-            row_rect.right() - sw_w - sp(space::HAIR),
+            row_rect.right() - sw_w - sp(space::XS),
             row_rect.center().y - sw_h * 0.5,
         ),
         Vec2::new(sw_w, sw_h),
@@ -402,7 +403,7 @@ pub fn status_pill(ui: &mut egui::Ui, label: &str, active: bool, tip: &str) -> b
         egui::FontId::proportional(fs(font::SMALL)),
         theme::text_primary(),
     );
-    let size = Vec2::new(galley.size().x + sp(space::LG), sp(space::XL)); // 24px high
+    let size = Vec2::new(galley.size().x + sp(space::LG), CONTROL_H);
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
     let hovered = resp.hovered();
     let painter = ui.painter();

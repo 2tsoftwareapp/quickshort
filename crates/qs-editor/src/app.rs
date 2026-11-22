@@ -1728,7 +1728,8 @@ impl eframe::App for EditorApp {
 
         // Bottom Studio Status Bar (32px = 4px + 24px hit target + 4px, single top hairline)
         let status_resp = egui::Panel::bottom("status_bar")
-            .exact_size(32.0)
+            // 26 px controls + 4 px padding top and bottom.
+            .exact_size(crate::components::CONTROL_H + 2.0 * qs_theme::space::XS as f32)
             .frame(
                 egui::Frame::NONE
                     .fill(theme::bg_status())
@@ -1764,7 +1765,7 @@ impl eframe::App for EditorApp {
                     ) {
                         self.show_filmstrip = !self.show_filmstrip;
                     }
-                    ui.separator();
+                    status_divider(ui);
 
                     let view_r = self.view.display_rect();
                     ui.label(
@@ -1778,7 +1779,7 @@ impl eframe::App for EditorApp {
                     );
 
                     if let Some(p) = self.last_cursor_doc {
-                        ui.separator();
+                        status_divider(ui);
                         ui.label(
                             egui::RichText::new(format!(
                                 "X: {}  Y: {}",
@@ -1791,7 +1792,7 @@ impl eframe::App for EditorApp {
                     }
 
                     if let Some(b) = self.editor.selection_bounds() {
-                        ui.separator();
+                        status_divider(ui);
                         let count = self.editor.selection().len();
                         let label = if count > 1 {
                             format!(
@@ -1853,7 +1854,7 @@ impl eframe::App for EditorApp {
                             self.prefs.save();
                             theme::sync_egui_visuals(&ctx);
                         }
-                        ui.separator();
+                        status_divider(ui);
                         for (label, target_zoom) in [("200%", 2.0f32), ("100%", 1.0), ("50%", 0.5)]
                         {
                             let active = (self.view.zoom - target_zoom).abs() < 0.01;
@@ -1901,7 +1902,7 @@ impl eframe::App for EditorApp {
                                     .strong()
                                     .color(theme::text_tertiary()),
                             );
-                            ui.add_space(3.0);
+                            ui.add_space(qs_theme::space::XS as f32);
                             if ui
                                 .small_button("Refresh")
                                 .on_hover_text("Rescan recent captures (Shift+Click to multi-select)")
@@ -1925,7 +1926,7 @@ impl eframe::App for EditorApp {
                                 self.combine_dialog_open = true;
                             }
                         });
-                        ui.separator();
+                        status_divider(ui);
                         if self.filmstrip.items.is_empty() {
                             ui.centered_and_justified(|ui| {
                                 let msg = if self.filmstrip.scanning {
@@ -2115,7 +2116,7 @@ impl eframe::App for EditorApp {
                         }
                     });
                 });
-                ui.add_space(6.0);
+                ui.add_space(qs_theme::space::SM as f32);
                 ui.separator();
                 let mut changed = false;
                 let rows: Vec<_> = self
@@ -2785,6 +2786,21 @@ mod tests {
 }
 
 /// Reads `.qsdoc`, an image beside its `.qsdoc`, or a bare image.
+/// Hairline group divider for the status bar.
+///
+/// `ui.separator()` inside a dense bar inherits the widget stroke and the
+/// surrounding item spacing, which made the bar's dividers heavier than the
+/// ones elsewhere. This draws a short token-coloured line with token gaps.
+fn status_divider(ui: &mut egui::Ui) {
+    ui.add_space(qs_theme::space::XS as f32);
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(1.0, qs_theme::space::LG as f32),
+        egui::Sense::hover(),
+    );
+    ui.painter().rect_filled(rect, 0.0, theme::divider_vertical());
+    ui.add_space(qs_theme::space::XS as f32);
+}
+
 /// Reveal a capture in the platform's file manager, selecting it where the
 /// platform supports it.
 fn reveal_in_file_manager(path: &Path) -> std::io::Result<()> {
