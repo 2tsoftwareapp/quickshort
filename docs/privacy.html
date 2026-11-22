@@ -43,12 +43,13 @@
 
 <main class="policy">
   <h1>Privacy Policy</h1>
-  <p class="updated">Last updated: October 2026 · Tiếng Việt bên dưới</p>
+  <p class="updated">Last updated: November 2026 · Tiếng Việt bên dưới</p>
 
   <h2>The short version</h2>
   <p>Quickshort runs on your machine. Screenshots, annotations, OCR results, and
-  settings stay local. Three kinds of traffic exist: an image you share, a bug
-  report you send, and a daily update check against GitHub Releases. The app has
+  settings stay local. Three kinds of traffic exist: an image you share (to our
+  share worker, or to your own Google Drive if you opt in), a bug report you
+  send, and a daily update check against GitHub Releases. The app has
   no analytics, no tracking, and no accounts.</p>
 
   <h2>What stays on your device</h2>
@@ -81,6 +82,20 @@
   treat a share link as public: fine for a screenshot you would post anyway,
   wrong for secrets.</p>
 
+  <h3>Share via your Google Drive (optional)</h3>
+  <p>If you turn on <strong>Share Links via Google Drive</strong> in the tray,
+  Share signs you in with your own Google account (OAuth with PKCE, in your
+  browser) and uploads the image to a <code>Quickshort</code> folder in
+  <em>your</em> Drive, shared as "anyone with the link". The app asks only for
+  the <code>drive.file</code> scope, so it can see and change only the files it
+  created. The image counts against your Drive storage and stays until you
+  delete it; sharing the same capture again revokes it by deleting the file.
+  The refresh token is stored on your device in <code>gdrive.json</code> next
+  to <code>config.toml</code> (readable only by your user). <strong>Disconnect
+  Google Drive</strong> revokes it with Google and deletes the file. Google's
+  privacy policy applies to data in your Drive; nothing passes through
+  Quickshort servers.</p>
+
   <h3>Bug report</h3>
   <p>The report form sends your app version, OS and architecture, a diagnostics
   bundle, and your note to the <code>quickshort-report</code> worker, which
@@ -98,6 +113,7 @@
   <h2>Third parties</h2>
   <ul>
     <li>Cloudflare runs the share and report workers and stores shared images. Its standard edge request logs apply.</li>
+    <li>Google stores images you share through your own Drive, if you opt in.</li>
     <li>GitHub serves release downloads, update checks, public issues, and this site (GitHub Pages).</li>
     <li>This website loads fonts from Google Fonts. The app itself loads no remote resources.</li>
   </ul>
@@ -121,6 +137,7 @@
   gì.</p>
   <ul>
     <li>Ảnh Share được nén WebP rồi up lên Cloudflare Worker, nằm trong Workers KV và <strong>tự xoá sau 3 ngày</strong>. Link là một ID ngẫu nhiên 128-bit: ai có link đều xem được, nên đừng share thứ cần giữ kín. IP của bạn được ghi vào một khoá rate-limit sống 2 ngày, dùng để chặn quá 30 share mỗi ngày.</li>
+    <li>Nếu bật <strong>Share Links via Google Drive</strong>: bạn đăng nhập Google của chính mình, ảnh được tải vào thư mục <code>Quickshort</code> trong Drive của bạn (ai có link đều xem được), tốn dung lượng Drive của bạn và nằm đó tới khi bạn xoá. App chỉ xin quyền <code>drive.file</code>, chỉ thấy file do app tạo. Token lưu trên máy trong <code>gdrive.json</code>; <strong>Disconnect Google Drive</strong> thu hồi token và xoá file này.</li>
     <li>Báo lỗi gồm version, OS, diagnostics và ghi chú bạn nhập, đăng thành một <strong>GitHub issue công khai</strong>. Đừng dán mật khẩu hay token vào đó.</li>
     <li>Kiểm tra cập nhật là một request tới GitHub Releases; GitHub thấy IP của bạn. Muốn tắt thì đặt <code>auto_update = false</code> trong <code>config.toml</code>.</li>
     <li>OCR chạy ngay trên máy (Vision trên macOS, Windows.Media.Ocr trên Windows, Tesseract trên Linux). Ảnh và chữ không đi đâu cả.</li>

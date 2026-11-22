@@ -156,6 +156,9 @@ rm "$HOME/Library/Application Support/quickshort/config.toml"
 
 ## 7. Ghi chú thiết kế sau vòng polish
 
+> Lưu ý: các ghi chú bên dưới viết trước PR #22/#23. Từ đó Editor không còn dialog Settings,
+> Export/Share, Library, Canvas, Align hay Find — xem mục 8 cho hành vi hiện tại.
+
 - Mọi hành động dùng chung `components::pill_button` (nền + viền + hover). `status_pill` chỉ dùng cho
   toggle/filter — trước đây dùng nó cho nút hành động nên nút trông như chữ trơn.
 - Hàng filter Library chia hai hàng cố định, không dùng `separator` trong hàng wrap (separator bị
@@ -267,3 +270,58 @@ rm "$HOME/Library/Application Support/quickshort/config.toml"
   trả 0 tool (đã thử 2 truy vấn), và `orca-computer-use` bị cấm dùng.
 
 - Phím tắt mới: **⌘W** đóng cửa sổ qua `close_guard` (cùng quy tắc với nút đỏ), tránh mất edit.
+
+## 8. Luồng chụp một bước & giao diện macOS 26 (PR #16–#27)
+
+### 8.1 Chụp → Done / Edit
+
+1. Bấm hotkey chụp. Trước khi kéo, màn hình hiện dòng *Drag to select an area · Esc to cancel*.
+2. Kéo chọn vùng. Hàng chính của thanh công cụ: Rect, Arrow, Step (①②③), Text, Blur · Undo, Redo ·
+   **⋯**, **Edit**, **Done**. Phím: `R` `A` `N` `T` `B`; trong **⋯**: `V` `P` `O` `H`, Scroll, Record,
+   OCR, Share (`⌘K`).
+3. **Enter / Done** → file PNG được lưu *và* copy vào clipboard, thông báo "Copied · saved …".
+4. **E / Edit** → mở Editor, các hình vẽ là layer sửa được (Step thành `Step #1`, `#2`…). Trên Linux
+   không hiện thêm thông báo "Saved".
+5. Chụp lần sau: công cụ dùng lần trước được chọn sẵn. Trên Linux, thông báo cũ của Quickshort bị
+   đóng trước khi overlay mở nên không dính vào ảnh.
+
+### 8.2 Editor
+
+- Nút **☰** góc trái: New capture (`⌘N`), Library (`⌘L`), Copy text, Settings (`⌘,` — mở cửa sổ
+  Settings chung của app), đổi Light/Dark.
+- **Export** là menu thả xuống: Save as PNG/JPEG/WebP…, Copy image, Print….
+- **Library** chiếm vùng canvas; "Back to image" hoặc `Esc` để quay lại.
+- **Canvas** và **Align** là thẻ trong Inspector (Align tự hiện khi chọn ≥ 2 đối tượng).
+- **Find** (`⌘F`) là thanh cố định trên canvas với Prev/Next/Close.
+- Xoá file → vào Thùng rác hệ thống, không hỏi lại. Flatten (`⌥⌘F`) không hỏi lại, `⌘Z` để hoàn tác.
+- Phóng to cửa sổ → ảnh tự canh lại cho tới khi bạn tự zoom hoặc kéo.
+
+### 8.3 Phiên Evidence (cho tester)
+
+1. Tray → **Start Evidence Session**, rồi chụp và bấm Done như bình thường.
+2. Mỗi lần Done lưu `TC-001_01.png`, `TC-001_02.png`… trong thư mục `evidence-<ts>` (vẫn copy).
+3. **Next Test Case** → ghép thành `TC-001_all.png` và chuyển sang TC-002.
+4. **End Evidence Session** → ghép case đang làm và mở thư mục phiên.
+
+### 8.4 Share qua Google Drive
+
+- Cần build với `QS_GDRIVE_CLIENT_ID` và `QS_GDRIVE_CLIENT_SECRET`; thiếu thì 2 mục Drive trên tray
+  bị mờ.
+- Tick **Share Links via Google Drive** (`share_to_drive = true`) → Share mở trình duyệt đăng nhập
+  Google lần đầu, ảnh vào thư mục `Quickshort` trong Drive của user, link nằm trong clipboard.
+- Share lần nữa → xoá file đó trên Drive. **Disconnect Google Drive** → thu hồi token, xoá `gdrive.json`.
+- Chưa UAT với OAuth client thật.
+
+### 8.5 Giao diện macOS 26 — kiểm cả Light và Dark
+
+- Editor: các cụm nút toolbar hình viên thuốc nổi trên vùng làm việc; Layers/Inspector là panel nổi
+  bo 18 px, cách mép 8 px; chọn đối tượng thì Inspector không bị đẩy sát mép; menu Export canh phải
+  dưới nút, thấy đủ bóng đổ.
+- Overlay: nút tròn, thanh một hàng hình viên thuốc, Done bo tròn hai đầu; thanh dọc khi vùng chọn
+  gần kín chiều cao màn hình.
+- Toast (OCR, chụp cuộn, Share, Record — chạy thử bằng `quickshort --toast`): ô icon nền nhạt theo
+  trạng thái, vòng xoay khi đang chạy, dòng "Quickshort" đậm + nội dung, viền 1 px thấy rõ.
+- Toast, thẻ kết quả, chỉ báo REC: bo góc trên macOS/Windows; **góc vuông trên Linux** (softbuffer
+  không cắt được góc cửa sổ, bo góc sẽ lộ góc đen) — không phải bug.
+- Trên Linux, thông báo sau khi chụp là thông báo của desktop (D-Bus), không phải toast của app.
+- Chưa kiểm trên macOS (font SF Pro, bo góc popup) và Windows.
