@@ -104,3 +104,30 @@ fn an_unreadable_folder_reports_the_reason() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_broken_image_still_lists_and_does_not_break_the_view() {
+    let dir = sample_dir("broken");
+    // A .png that is not a PNG: the scan must keep it, the thumbnail decode
+    // must fail quietly, and the row must fall back to a placeholder.
+    std::fs::write(dir.join("broken.png"), b"not a png at all").unwrap();
+
+    let (ctx, mut library) = scan(&dir);
+    assert_eq!(library.len(), 4, "the broken file is still an entry");
+
+    // Drive several frames so the thumbnail worker reports back.
+    for _ in 0..30 {
+        let raw = egui::RawInput {
+            screen_rect: Some(screen(720.0, 600.0)),
+            ..Default::default()
+        };
+        let mut full = ctx.run_ui(raw, |_| {
+            let _ = library.show(&ctx);
+        });
+        full.textures_delta.clear();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert_eq!(library.len(), 4, "the broken row did not disappear");
+    assert!(library.error().is_none(), "one bad file is not a folder error");
+    let _ = std::fs::remove_dir_all(&dir);
+}

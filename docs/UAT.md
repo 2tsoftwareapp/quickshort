@@ -233,3 +233,8 @@ rm "$HOME/Library/Application Support/quickshort/config.toml"
   Esc đóng; gõ vào Find tới được ô nhập mà không cần click (chứng minh bản sửa auto-focus).
 - Test trạng thái lỗi (`tests/ui_states.rs`): index hỏng → notice "corrupt" + vẫn duyệt được 3 ảnh;
   index version mới hơn → read-only + notice "newer"; thư mục không đọc được → lỗi nêu tên thư mục.
+
+- Test thêm: ⌘⌫ mở hộp xác nhận xoá, Esc huỷ và file vẫn còn trên đĩa; ảnh hỏng (`broken.png`) vẫn
+  hiện thành hàng, thumbnail rơi về placeholder và view không sập.
+- Lưu ý khi viết test bàn phím: `InputState::modifiers` chỉ đổi qua `Event::ModifiersChanged`, nên
+  một tổ hợp phím phải gửi kèm event đó **trước** `Event::Key` trong cùng frame.

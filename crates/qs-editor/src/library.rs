@@ -227,6 +227,11 @@ impl Library {
         self.error.as_deref()
     }
 
+    /// True while the "Move to Trash" confirmation is on screen.
+    pub fn is_confirming_delete(&self) -> bool {
+        self.confirm_delete
+    }
+
     pub fn refresh(&mut self) {
         let dir = self.dir.clone();
         if dir.as_os_str().is_empty() {

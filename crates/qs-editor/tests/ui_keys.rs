@@ -106,7 +106,16 @@ fn escape_closes_the_library() {
     let dir = sample_dir("esc");
     let (ctx, mut library) = scanned(&dir);
     assert!(library.open);
-    frame(&ctx, &mut library, 900.0, 700.0, vec![key_event(Key::Escape)]);
+    frame(
+        &ctx,
+        &mut library,
+        900.0,
+        700.0,
+        vec![
+            Event::ModifiersChanged(Modifiers::NONE),
+            key_event(Key::Escape),
+        ],
+    );
     assert!(!library.open, "escape closes the view");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -141,4 +150,46 @@ fn typing_in_find_reaches_the_field() {
         "the find field must take the keyboard without a click"
     );
     assert!(!state.focus_pending, "focus is requested once");
+}
+
+#[test]
+fn command_backspace_opens_the_delete_confirmation_and_escape_cancels() {
+    let dir = sample_dir("del");
+    let (ctx, mut library) = scanned(&dir);
+
+    frame(&ctx, &mut library, 900.0, 700.0, vec![key_event(Key::ArrowDown)]);
+    let selected = library.selected_names();
+    assert_eq!(selected.len(), 1);
+
+    let cmd_backspace = Event::Key {
+        key: Key::Backspace,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::COMMAND,
+    };
+    // `InputState::modifiers` only changes through ModifiersChanged, so the
+    // chord needs both events in the same frame, in this order.
+    frame(
+        &ctx,
+        &mut library,
+        900.0,
+        700.0,
+        vec![
+            Event::ModifiersChanged(Modifiers::COMMAND),
+            cmd_backspace,
+        ],
+    );
+    assert!(
+        library.is_confirming_delete(),
+        "cmd+backspace must ask before deleting"
+    );
+
+    frame(&ctx, &mut library, 900.0, 700.0, vec![key_event(Key::Escape)]);
+    assert!(!library.is_confirming_delete(), "escape cancels the dialog");
+    assert!(
+        dir.join(&selected[0]).exists(),
+        "cancelling keeps the file on disk"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }
