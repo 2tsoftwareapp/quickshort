@@ -116,116 +116,116 @@ pub struct Palette {
     pub shadow: u32,
 }
 
-/// Dark Glass — refined obsidian-zinc dark mode matching macOS Liquid Glass.
+/// Dark — neutral greys after the macOS 26 system palette.
 pub const DARK: Palette = Palette {
-    bg_top: 0x16171C,
-    bg_bottom: 0x111216,
-    sidebar: 0x15161B,
-    surface: 0x1D1F26,
-    surface_hover: 0x262933,
-    popover: 0x1C1E25,
-    fringe: 0x090A0D,
-    control: 0x252832,
-    control_hot: 0x313543,
-    tile: 0x242731,
-    tile_glyph: 0xA6AAB8,
-    keycap: 0x2A2D38,
-    keycap_edge: 0x14161C,
-    switch_off: 0x343846,
-    border: 0x2B2E3A,
-    border_strong: 0x3E4354,
-    popover_border: 0x333746,
-    fg: 0xF5F6FA,
-    fg_dim: 0xB6BAC8,
-    fg_faint: 0x8F94A6,
+    bg_top: 0x171717,
+    bg_bottom: 0x121212,
+    sidebar: 0x161616,
+    surface: 0x1F1F1F,
+    surface_hover: 0x292929,
+    popover: 0x1E1E1E,
+    fringe: 0x0A0A0A,
+    control: 0x282828,
+    control_hot: 0x353535,
+    tile: 0x272727,
+    tile_glyph: 0xAAAAAA,
+    keycap: 0x2D2D2D,
+    keycap_edge: 0x161616,
+    switch_off: 0x383838,
+    border: 0x2E2E2E,
+    border_strong: 0x434343,
+    popover_border: 0x373737,
+    fg: 0xF6F6F6,
+    fg_dim: 0xBABABA,
+    fg_faint: 0x949494,
     on_accent: 0xFFFFFF,
     success: 0x30D158,
     danger: 0xFF453A,
     warning: 0xFF9F0A,
     dark: true,
-    ws_top: 0x121318,
-    ws_bottom: 0x0E0F13,
-    bar_top: 0x1C1E24,
-    bar_bottom: 0x181A20,
-    panel_top: 0x17181E,
-    panel_bottom: 0x14151A,
-    track: 0x131419,
-    pill_top: 0x2E323E,
-    pill_bottom: 0x262934,
+    ws_top: 0x131313,
+    ws_bottom: 0x0F0F0F,
+    bar_top: 0x1E1E1E,
+    bar_bottom: 0x1A1A1A,
+    panel_top: 0x181818,
+    panel_bottom: 0x151515,
+    track: 0x141414,
+    pill_top: 0x323232,
+    pill_bottom: 0x292929,
     tool_active_top: 0x1A8CFF,
     tool_active_bot: 0x006AE6,
-    card_bg: 0x1E2028,
-    status_bg: 0x15161B,
-    btn_top: 0x272A34,
-    btn_bottom: 0x21242D,
-    btn_hot_top: 0x323644,
-    btn_hot_bottom: 0x2B2E3B,
-    hairline: 0x272A34,
-    border_soft: 0x2E323F,
-    border_hot: 0x43485A,
+    card_bg: 0x202020,
+    status_bg: 0x161616,
+    btn_top: 0x2A2A2A,
+    btn_bottom: 0x242424,
+    btn_hot_top: 0x363636,
+    btn_hot_bottom: 0x2E2E2E,
+    hairline: 0x2A2A2A,
+    border_soft: 0x323232,
+    border_hot: 0x484848,
     danger_top: 0x5A1C1F,
     danger_bottom: 0x461518,
     danger_edge: 0xC83A35,
     wash: 0xFFFFFF,
-    hud: 0x1E2028,
-    hud_hover: 0x343846,
+    hud: 0x202020,
+    hud_hover: 0x383838,
     on_hud: 0xFFFFFF,
     shadow: 0x000000,
 };
 
 /// Light Glass — the default: airy Apple Liquid Glass / Sonoma light surfaces.
 pub const LIGHT: Palette = Palette {
-    bg_top: 0xF7F8FB,
-    bg_bottom: 0xEEF0F5,
-    sidebar: 0xF2F3F7,
+    bg_top: 0xF8F8F8,
+    bg_bottom: 0xF0F0F0,
+    sidebar: 0xF3F3F3,
     surface: 0xFFFFFF,
-    surface_hover: 0xF3F5F9,
+    surface_hover: 0xF5F5F5,
     popover: 0xFFFFFF,
-    fringe: 0x9CA2B0,
-    control: 0xEFF1F6,
-    control_hot: 0xE3E6EE,
-    tile: 0xEFF1F6,
-    tile_glyph: 0x595E6D,
+    fringe: 0xA2A2A2,
+    control: 0xF1F1F1,
+    control_hot: 0xE6E6E6,
+    tile: 0xF1F1F1,
+    tile_glyph: 0x5E5E5E,
     keycap: 0xFFFFFF,
-    keycap_edge: 0xCDD1DC,
-    switch_off: 0xCED2DC,
-    border: 0xDFE2EA,
-    border_strong: 0xBDC2CF,
-    popover_border: 0xD8DCE6,
-    fg: 0x16181D,
-    fg_dim: 0x4A4F5C,
-    fg_faint: 0x676D7E,
+    keycap_edge: 0xD1D1D1,
+    switch_off: 0xD2D2D2,
+    border: 0xE2E2E2,
+    border_strong: 0xC2C2C2,
+    popover_border: 0xDCDCDC,
+    fg: 0x181818,
+    fg_dim: 0x4F4F4F,
+    fg_faint: 0x6D6D6D,
     on_accent: 0xFFFFFF,
     success: 0x1E7E38,
     danger: 0xD70015,
     warning: 0xB25000,
     dark: false,
-    ws_top: 0xECEEF3,
-    ws_bottom: 0xE5E8EF,
+    ws_top: 0xEEEEEE,
+    ws_bottom: 0xE8E8E8,
     bar_top: 0xFFFFFF,
-    bar_bottom: 0xF7F8FB,
-    panel_top: 0xF7F8FB,
-    panel_bottom: 0xF2F4F8,
-    track: 0xE6E9F0,
+    bar_bottom: 0xF8F8F8,
+    panel_top: 0xF8F8F8,
+    panel_bottom: 0xF4F4F4,
+    track: 0xE9E9E9,
     pill_top: 0xFFFFFF,
-    pill_bottom: 0xF7F8FB,
+    pill_bottom: 0xF8F8F8,
     tool_active_top: 0x1A8CFF,
     tool_active_bot: 0x006CE6,
     card_bg: 0xFFFFFF,
-    status_bg: 0xF5F6FA,
+    status_bg: 0xF6F6F6,
     btn_top: 0xFFFFFF,
-    btn_bottom: 0xF5F6FA,
-    btn_hot_top: 0xF9FAFD,
-    btn_hot_bottom: 0xECEEF4,
-    hairline: 0xDCE0E9,
-    border_soft: 0xDFE3EC,
-    border_hot: 0xBFC5D4,
+    btn_bottom: 0xF6F6F6,
+    btn_hot_top: 0xFAFAFA,
+    btn_hot_bottom: 0xEEEEEE,
+    hairline: 0xE0E0E0,
+    border_soft: 0xE3E3E3,
+    border_hot: 0xC5C5C5,
     danger_top: 0xFFE8E6,
     danger_bottom: 0xFFD8D4,
     danger_edge: 0xE05A50,
     wash: 0x000000,
-    hud: 0x1E2028,
-    hud_hover: 0x343846,
+    hud: 0x202020,
+    hud_hover: 0x383838,
     on_hud: 0xFFFFFF,
     shadow: 0x000000,
 };
@@ -251,7 +251,28 @@ fn shift_rgb(rgb: u32, delta: i16) -> u32 {
 
 /// Active runtime accent colour (`0xRRGGBB`), shared by `qs-app` and `qs-editor`.
 pub fn accent() -> u32 {
-    CURRENT_ACCENT.load(Ordering::Relaxed)
+    let rgb = CURRENT_ACCENT.load(Ordering::Relaxed);
+    if pal().dark {
+        dark_variant(rgb)
+    } else {
+        rgb
+    }
+}
+
+/// Apple's dark-appearance variant of a system colour (systemBlue
+/// `#007AFF` → `#0A84FF` …); custom colours pass through unchanged.
+pub fn dark_variant(rgb: u32) -> u32 {
+    match rgb {
+        0x007AFF => 0x0A84FF,
+        0xAF52DE => 0xBF5AF2,
+        0xFF2D55 => 0xFF375F,
+        0xFF3B30 => 0xFF453A,
+        0xFF9500 => 0xFF9F0A,
+        0xFFCC00 => 0xFFD60A,
+        0x34C759 => 0x30D158,
+        0x8E8E93 => 0x98989D,
+        other => other,
+    }
 }
 
 pub fn accent_top() -> u32 {
@@ -337,23 +358,25 @@ pub mod space {
     pub const XXL: f64 = 32.0;
 }
 
-/// Corner radii, logical px.
+/// Corner radii, logical px — concentric steps after macOS 26: a control
+/// inside a card inside a panel each step up by the padding between them.
 pub mod radius {
     pub const XS: f64 = 4.0;
-    pub const SM: f64 = 6.0;
-    pub const MD: f64 = 8.0;
-    pub const LG: f64 = 10.0;
-    pub const XL: f64 = 14.0;
+    pub const SM: f64 = 8.0;
+    pub const MD: f64 = 10.0;
+    pub const LG: f64 = 12.0;
+    pub const XL: f64 = 18.0;
     pub const PILL: f64 = 999.0;
 }
 
-/// Type scale, logical px.
+/// Type scale, logical px — macOS HIG text styles: Subheadline 11,
+/// Callout 12, Body 13, Title 3 15, Title 1 22. Nothing below 11.
 pub mod font {
-    pub const CAPTION: f64 = 10.5;
-    pub const SMALL: f64 = 11.5;
+    pub const CAPTION: f64 = 11.0;
+    pub const SMALL: f64 = 12.0;
     pub const BODY: f64 = 13.0;
-    pub const TITLE: f64 = 13.5;
-    pub const HEADING: f64 = 24.0;
+    pub const TITLE: f64 = 15.0;
+    pub const HEADING: f64 = 22.0;
 }
 
 /// Motion durations, milliseconds.
