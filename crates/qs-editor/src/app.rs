@@ -102,6 +102,8 @@ pub struct EditorApp {
     resize_lock: bool,
     export_menu_open: bool,
     export_anchor: Option<Rect>,
+    app_menu_open: bool,
+    app_menu_anchor: Option<Rect>,
     export_format: ExportFormat,
     export_quality: u8,
     combine_dialog_open: bool,
@@ -198,6 +200,8 @@ impl EditorApp {
             resize_lock: true,
             export_menu_open: false,
             export_anchor: None,
+            app_menu_open: false,
+            app_menu_anchor: None,
             export_format: ExportFormat::Png,
             export_quality: 90,
             combine_dialog_open: false,
@@ -398,6 +402,8 @@ impl EditorApp {
             resize_lock: true,
             export_menu_open: false,
             export_anchor: None,
+            app_menu_open: false,
+            app_menu_anchor: None,
             export_format: ExportFormat::Png,
             export_quality: 90,
             combine_dialog_open: false,
@@ -563,32 +569,15 @@ impl EditorApp {
         }
     }
 
-    fn canvas_dialog(&mut self, ctx: &egui::Context) {
-        if !self.canvas_dialog_open {
-            return;
-        }
-
-        let mut open = self.canvas_dialog_open;
+    /// Canvas settings, drawn as a card at the top of the Inspector.
+    fn canvas_section(&mut self, ui: &mut egui::Ui) {
         let mut apply = false;
         let mut fit_to_image = false;
         let mut fit_to_objects = false;
         let mut trim = false;
         let mut resample = false;
-        egui::Window::new("Canvas")
-            .frame(theme::modal_frame())
-            .collapsible(false)
-            // Fixed body height + resizable: without it the window grows to the
-            // content and then clips against the screen, with no scrollbar.
-            .default_size(egui::vec2(
-                360.0,
-                (ctx.content_rect().height() - 120.0).clamp(320.0, 560.0),
-            ))
-            .resizable(true)
-            .open(&mut open)
-            .show(ctx, |ui| {
-                egui::ScrollArea::vertical()
-                    .max_height(ui.available_height())
-                    .show(ui, |ui| {
+        {
+            {
                 ui.label("Canvas insets (px)");
                 egui::Grid::new("canvas_insets")
                     .num_columns(2)
@@ -670,7 +659,7 @@ impl EditorApp {
                 });
                 let [r, g, b, a] = color.to_srgba_unmultiplied();
                 self.canvas_background = u32::from_be_bytes([a, r, g, b]);
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     if crate::components::pill_button(ui, "Transparent", "") {
                         self.canvas_background = 0;
                     }
@@ -706,7 +695,7 @@ impl EditorApp {
                 ui.add_space(qs_theme::space::SM as f32);
                 ui.separator();
                 ui.label("Resample image (px)");
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     let (bw, bh) = (self.base.width().max(1), self.base.height().max(1));
                     let aspect = bw as f32 / bh as f32;
                     let w_resp = ui.add(
@@ -730,9 +719,8 @@ impl EditorApp {
                         resample = true;
                     }
                 });
-                });
-            });
-        self.canvas_dialog_open = open;
+            }
+        }
 
         if resample {
             let nw = self.resize_w.clamp(1, 16384);
@@ -996,6 +984,134 @@ impl EditorApp {
         }
         self.show_toast("Opened in system print viewer");
         Ok(())
+    }
+
+    /// Align & distribute, drawn as a card in the Inspector while two or
+    /// more objects are selected.
+    fn align_section(&mut self, ui: &mut egui::Ui) {
+                    // One row per axis: wrapping all six mixed them up at 720.
+                    ui.horizontal_wrapped(|ui| {
+                        for (label, a) in [
+                            ("Left", Alignment::Left),
+                            ("Center X", Alignment::HCenter),
+                            ("Right", Alignment::Right),
+                        ] {
+                            if crate::components::pill_button(ui, label, "") {
+                                if self.editor.align_selected(a) {
+                                    self.touch();
+                                }
+                            }
+                        }
+                    });
+                    ui.horizontal_wrapped(|ui| {
+                        for (label, a) in [
+                            ("Top", Alignment::Top),
+                            ("Center Y", Alignment::VCenter),
+                            ("Bottom", Alignment::Bottom),
+                        ] {
+                            if crate::components::pill_button(ui, label, "") {
+                                if self.editor.align_selected(a) {
+                                    self.touch();
+                                }
+                            }
+                        }
+                    });
+                    ui.separator();
+                    ui.horizontal_wrapped(|ui| {
+                        let enabled = self.editor.selection().len() >= 3;
+                        ui.add_enabled_ui(enabled, |ui| {
+                            if crate::components::pill_button(ui, "Distribute horizontally", "")
+                                && self.editor.distribute_selected(Axis::Horizontal)
+                            {
+                                self.touch();
+                            }
+                            if crate::components::pill_button(ui, "Distribute vertically", "")
+                                && self.editor.distribute_selected(Axis::Vertical)
+                            {
+                                self.touch();
+                            }
+                        });
+                    });
+    }
+
+    /// App menu at the left of the top bar: the actions that used to crowd
+    /// the status bar, which now only reports.
+    fn app_menu(&mut self, ctx: &egui::Context) {
+        if !self.app_menu_open {
+            return;
+        }
+        let anchor = self.app_menu_anchor.unwrap_or_else(|| {
+            let r = ctx.content_rect();
+            Rect::from_min_size(r.min, Vec2::new(1.0, 36.0))
+        });
+        let is_dark = qs_theme::pal().dark;
+        let has_region = self.editor.region().is_some();
+        let (mut capture, mut library, mut copy_text, mut settings, mut flip_theme) =
+            (false, false, false, false, false);
+        let area = egui::Area::new(egui::Id::unique("app_menu"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(anchor.left_bottom() + Vec2::new(0.0, qs_theme::space::XS as f32))
+            .show(ctx, |ui| {
+                egui::Frame::menu(ui.style()).show(ui, |ui| {
+                    ui.set_min_width(220.0);
+                    ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
+                        capture = ui
+                            .add(egui::Button::new("New capture").shortcut_text("Ctrl+N").frame(false))
+                            .clicked();
+                        library = ui
+                            .add(egui::Button::new("Library").shortcut_text("Ctrl+L").frame(false))
+                            .clicked();
+                        copy_text = ui
+                            .add_enabled(
+                                has_region,
+                                egui::Button::new("Copy text in selection").frame(false),
+                            )
+                            .on_disabled_hover_text("Select a region first")
+                            .clicked();
+                        ui.separator();
+                        settings = ui
+                            .add(egui::Button::new("Settings\u{2026}").shortcut_text("Ctrl+,").frame(false))
+                            .clicked();
+                        let theme_label = if is_dark {
+                            "Switch to Light theme"
+                        } else {
+                            "Switch to Dark theme"
+                        };
+                        flip_theme = ui
+                            .add(egui::Button::new(theme_label).frame(false))
+                            .clicked();
+                    });
+                });
+            });
+        let menu_rect = area.response.rect;
+        let clicked_outside = ctx.input(|i| {
+            i.pointer.any_pressed()
+                && i
+                    .pointer
+                    .interact_pos()
+                    .is_some_and(|p| !menu_rect.contains(p) && !anchor.contains(p))
+        });
+        if capture || library || copy_text || settings || flip_theme || clicked_outside {
+            self.app_menu_open = false;
+        }
+        if capture {
+            spawn_app("--capture");
+        }
+        if library && !self.library.open {
+            self.library.toggle();
+        }
+        if copy_text {
+            self.copy_text_in_region();
+        }
+        if settings {
+            spawn_app("--settings");
+        }
+        if flip_theme {
+            self.prefs.theme = if is_dark { "light" } else { "dark" }.into();
+            self.prefs.apply_live();
+            self.prefs.save();
+            theme::sync_egui_visuals(ctx);
+        }
     }
 
     /// Export is a dropdown under the Export button: one click picks the
@@ -1303,7 +1419,9 @@ impl EditorApp {
             // Escape closes whichever dialog is on top. Without this the panels
             // could only be dismissed by hitting their small close button.
             if i.consume_key(Modifiers::NONE, Key::Escape) {
-                if self.export_menu_open {
+                if self.app_menu_open {
+                    self.app_menu_open = false;
+                } else if self.export_menu_open {
                     self.export_menu_open = false;
                 } else if self.canvas_dialog_open {
                     self.canvas_dialog_open = false;
@@ -1313,6 +1431,9 @@ impl EditorApp {
                     self.alignment_open = false;
                 } else if self.library.open {
                     self.library.open = false;
+                } else if self.find.open {
+                    self.find.open = false;
+                    self.last_find_focus = None;
                 }
             }
             // Settings has the standard macOS shortcut; Align needs a panel that
@@ -1334,6 +1455,7 @@ impl EditorApp {
                 self.canvas_dialog_open = false;
                 self.export_menu_open = false;
                 self.alignment_open = true;
+                self.show_inspector = true;
             }
             // Dialog shortcuts: these panels were only reachable by mouse.
             if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::C)
@@ -1341,6 +1463,7 @@ impl EditorApp {
             {
                 self.export_menu_open = false;
                 self.canvas_dialog_open = true;
+                self.show_inspector = true;
             }
             if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::E)
                 || i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::E)
@@ -1820,9 +1943,20 @@ impl eframe::App for EditorApp {
         }
         if top_res.export {
             self.export_menu_open = !self.export_menu_open;
+            self.app_menu_open = false;
+        }
+        if top_res.menu_rect.is_some() {
+            self.app_menu_anchor = top_res.menu_rect;
+        }
+        if top_res.menu {
+            self.app_menu_open = !self.app_menu_open;
+            self.export_menu_open = false;
         }
         if top_res.canvas {
             self.canvas_dialog_open = !self.canvas_dialog_open;
+            if self.canvas_dialog_open {
+                self.show_inspector = true;
+            }
             self.canvas_background = self.editor.doc().background;
             self.resize_w = self.base.width().max(1);
             self.resize_h = self.base.height().max(1);
@@ -1830,8 +1964,8 @@ impl eframe::App for EditorApp {
         if top_res.zoom != ZoomCmd::None {
             self.apply_zoom_cmd(top_res.zoom);
         }
-        self.canvas_dialog(&ctx);
         self.export_menu(&ctx);
+        self.app_menu(&ctx);
         self.combine_dialog(&ctx);
         self.find_dialog(&ctx);
 
@@ -1920,54 +2054,6 @@ impl eframe::App for EditorApp {
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if crate::components::status_pill(
-                            ui,
-                            "New capture",
-                            false,
-                            "Capture a new screenshot (\u{2318}N)",
-                        ) {
-                            spawn_app("--capture");
-                        }
-                        if self.editor.region().is_some()
-                            && crate::components::status_pill(
-                                ui,
-                                "Copy text",
-                                false,
-                                "Copy the recognized text inside the selection",
-                            )
-                        {
-                            self.copy_text_in_region();
-                        }
-                        if crate::components::status_pill(
-                            ui,
-                            "Library",
-                            self.library.open,
-                            "Browse, search and tag captures (\u{2318}L)",
-                        ) {
-                            self.library.toggle();
-                        }
-                        if crate::components::status_pill(
-                            ui,
-                            "Settings",
-                            false,
-                            "Open Quickshort Settings (\u{2318},)",
-                        ) {
-                            spawn_app("--settings");
-                        }
-                        let is_dark = qs_theme::pal().dark;
-                        let (theme_lbl, theme_tip) = if is_dark {
-                            ("Dark", "Theme: Dark \u{2014} click for Light")
-                        } else {
-                            ("Light", "Theme: Light \u{2014} click for Dark")
-                        };
-                        if crate::components::status_pill(ui, theme_lbl, false, theme_tip) {
-                            let next = if is_dark { "light" } else { "dark" };
-                            self.prefs.theme = next.into();
-                            self.prefs.apply_live();
-                            self.prefs.save();
-                            theme::sync_egui_visuals(&ctx);
-                        }
-                        status_divider(ui);
                         for (label, target_zoom) in [("200%", 2.0f32), ("100%", 1.0), ("50%", 0.5)]
                         {
                             let active = (self.view.zoom - target_zoom).abs() < 0.01;
@@ -2063,7 +2149,7 @@ impl eframe::App for EditorApp {
                             ui.set_width(104.0);
                             ui.label(
                                 egui::RichText::new("RECENT")
-                                    .size(10.0)
+                                    .size(qs_theme::font::CAPTION as f32)
                                     .strong()
                                     .color(theme::text_tertiary()),
                             );
@@ -2101,7 +2187,7 @@ impl eframe::App for EditorApp {
                                 };
                                 ui.label(
                                     egui::RichText::new(msg)
-                                        .size(11.5)
+                                        .size(qs_theme::font::SMALL as f32)
                                         .color(theme::text_tertiary()),
                                 );
                             });
@@ -2193,7 +2279,7 @@ impl eframe::App for EditorApp {
                                                 Pos2::new(rect.center().x, rect.bottom() - 9.0),
                                                 egui::Align2::CENTER_CENTER,
                                                 &name,
-                                                FontId::proportional(10.0),
+                                                FontId::proportional(qs_theme::font::CAPTION as f32),
                                                 if is_active {
                                                     theme::text_primary()
                                                 } else {
@@ -2269,11 +2355,14 @@ impl eframe::App for EditorApp {
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if self.editor.selection().len() >= 2 {
-                            self.alignment_open = crate::components::pill_button(
+                            if crate::components::pill_button(
                                 ui,
                                 "Align",
-                                "Align & distribute",
-                            ) || self.alignment_open;
+                                "Align & distribute in the Inspector",
+                            ) {
+                                self.alignment_open = true;
+                                self.show_inspector = true;
+                            }
                         }
                         if self.editor.selection_grouped()
                             && crate::components::pill_button(
@@ -2468,60 +2557,6 @@ impl eframe::App for EditorApp {
         if layers_mutated {
             self.touch();
         }
-        if self.alignment_open {
-            let mut open = self.alignment_open;
-            egui::Window::new("Align & Distribute")
-                .frame(theme::modal_frame())
-                .open(&mut open)
-                .collapsible(false)
-                .resizable(false)
-                .show(&ctx, |ui| {
-                    // One row per axis: wrapping all six mixed them up at 720.
-                    ui.horizontal(|ui| {
-                        for (label, a) in [
-                            ("Left", Alignment::Left),
-                            ("Center X", Alignment::HCenter),
-                            ("Right", Alignment::Right),
-                        ] {
-                            if crate::components::pill_button(ui, label, "") {
-                                if self.editor.align_selected(a) {
-                                    self.touch();
-                                }
-                            }
-                        }
-                    });
-                    ui.horizontal(|ui| {
-                        for (label, a) in [
-                            ("Top", Alignment::Top),
-                            ("Center Y", Alignment::VCenter),
-                            ("Bottom", Alignment::Bottom),
-                        ] {
-                            if crate::components::pill_button(ui, label, "") {
-                                if self.editor.align_selected(a) {
-                                    self.touch();
-                                }
-                            }
-                        }
-                    });
-                    ui.separator();
-                    ui.horizontal(|ui| {
-                        let enabled = self.editor.selection().len() >= 3;
-                        ui.add_enabled_ui(enabled, |ui| {
-                            if crate::components::pill_button(ui, "Distribute horizontally", "")
-                                && self.editor.distribute_selected(Axis::Horizontal)
-                            {
-                                self.touch();
-                            }
-                            if crate::components::pill_button(ui, "Distribute vertically", "")
-                                && self.editor.distribute_selected(Axis::Vertical)
-                            {
-                                self.touch();
-                            }
-                        });
-                    });
-                });
-            self.alignment_open = open;
-        }
 
         let panel_mutated = if self.show_inspector && !self.library.open {
             let panel_resp = egui::Panel::right("image_panel")
@@ -2535,6 +2570,33 @@ impl eframe::App for EditorApp {
                 .show(ui, |ui| {
                     egui::ScrollArea::vertical()
                         .show(ui, |ui| {
+                            if self.canvas_dialog_open {
+                                crate::components::card(ui, |ui| {
+                                    if inspector_card_header(ui, "CANVAS", true) {
+                                        self.canvas_dialog_open = false;
+                                    }
+                                    self.canvas_section(ui);
+                                });
+                                ui.add_space(qs_theme::space::MD as f32);
+                            }
+                            let selected = self.editor.selection().len();
+                            if selected >= 2 || self.alignment_open {
+                                crate::components::card(ui, |ui| {
+                                    if inspector_card_header(ui, "ALIGN", self.alignment_open) {
+                                        self.alignment_open = false;
+                                    }
+                                    if selected >= 2 {
+                                        self.align_section(ui);
+                                    } else {
+                                        ui.label(
+                                            egui::RichText::new("Select two or more objects to align them.")
+                                                .size(qs_theme::font::SMALL as f32)
+                                                .color(theme::text_tertiary()),
+                                        );
+                                    }
+                                });
+                                ui.add_space(qs_theme::space::MD as f32);
+                            }
                             let changed = image_panel::render(ui, &mut self.editor);
                             ui.add_space(qs_theme::space::MD as f32);
                             crate::components::card(ui, |ui| {
@@ -3011,6 +3073,8 @@ mod tests {
             resize_lock: true,
             export_menu_open: false,
             export_anchor: None,
+            app_menu_open: false,
+            app_menu_anchor: None,
             export_format: ExportFormat::Png,
             export_quality: 90,
             combine_dialog_open: false,
@@ -3124,6 +3188,27 @@ fn load_document(p: &Path) -> anyhow::Result<(Document, RgbaImage, PathBuf)> {
         let doc = Document::new(w, h, 1.0);
         Ok((doc, img, qsdoc::sibling_path(p)))
     }
+}
+
+/// Caption header of an Inspector card; `closable` adds a Done pill and the
+/// return value reports a click on it.
+fn inspector_card_header(ui: &mut egui::Ui, title: &str, closable: bool) -> bool {
+    let mut close = false;
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new(title)
+                .size(qs_theme::font::CAPTION as f32)
+                .strong()
+                .color(theme::text_tertiary()),
+        );
+        if closable {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                close = crate::components::pill_button(ui, "Done", "Close (Esc)");
+            });
+        }
+    });
+    ui.add_space(qs_theme::space::XS as f32);
+    close
 }
 
 /// Runs the sibling `quickshort` binary with `arg` (`--capture`,

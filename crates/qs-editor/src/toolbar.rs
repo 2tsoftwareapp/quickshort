@@ -32,6 +32,9 @@ pub struct TopBarResult {
     /// Where the Export button sits, so its dropdown can hang below it.
     pub export_rect: Option<Rect>,
     pub canvas: bool,
+    /// The app menu (New capture, Library, Settings, theme) was clicked.
+    pub menu: bool,
+    pub menu_rect: Option<Rect>,
     pub zoom: ZoomCmd,
 }
 
@@ -91,6 +94,24 @@ pub fn render_top_bar(
     // so the file buttons appear once there is room for them
     let show_file_buttons = bar_rect.width() > 980.0;
     let mut left_x = inner.left();
+    let menu_track = Rect::from_min_size(
+        Pos2::new(left_x, cy - hist_h * 0.5),
+        Vec2::new(30.0, hist_h),
+    );
+    paint_segmented_track(ui.painter(), menu_track, RADIUS_TRACK);
+    if icon_segment(
+        ui,
+        "tb_menu",
+        menu_track.shrink(3.0),
+        ActionIcon::Menu,
+        false,
+        true,
+        "New capture, Library, Settings, theme",
+    ) {
+        res.menu = true;
+    }
+    res.menu_rect = Some(menu_track);
+    left_x = menu_track.right() + 8.0;
     if show_file_buttons {
         let io_track_w = 60.0;
         let io_track = Rect::from_min_size(
@@ -295,7 +316,7 @@ pub fn render_top_bar(
             z_mid_rect.center(),
             egui::Align2::CENTER_CENTER,
             &zoom_pct,
-            FontId::proportional(11.5),
+            FontId::proportional(qs_theme::font::SMALL as f32),
             if z_mid_resp.hovered() {
                 text_primary()
             } else {
@@ -479,7 +500,7 @@ pub fn render_top_bar(
                     Pos2::new(left_end + 12.0, cy),
                     egui::Align2::LEFT_CENTER,
                     &disp,
-                    FontId::proportional(11.5),
+                    FontId::proportional(qs_theme::font::SMALL as f32),
                     text_tertiary(),
                 );
             }
@@ -1183,7 +1204,7 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
                 Pos2::new(fr.left() + 24.0, cy),
                 egui::Align2::LEFT_CENTER,
                 "Fill",
-                FontId::proportional(11.5),
+                FontId::proportional(qs_theme::font::SMALL as f32),
                 fg,
             );
             if resp.clicked() {
@@ -1366,7 +1387,7 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
                         sr.center(),
                         egui::Align2::CENTER_CENTER,
                         lbl,
-                        FontId::proportional(11.0),
+                        FontId::proportional(qs_theme::font::SMALL as f32),
                         if active || resp.hovered() {
                             text_primary()
                         } else {
@@ -1388,7 +1409,7 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
                     .on_hover_text(format!("Magnification: {zoom}×"));
                 let active = (editor.style.magnify_zoom - zoom).abs() < 0.01;
                 paint_pill_button(ui.painter(), r, RADIUS_PILL, active, resp.hovered(), true, false);
-                ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, format!("{zoom}×"), FontId::proportional(11.0), text_primary());
+                ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, format!("{zoom}×"), FontId::proportional(qs_theme::font::SMALL as f32), text_primary());
                 if resp.clicked() { editor.set_magnify_zoom(zoom); mutated = true; }
                 x += 34.0;
             }
@@ -1399,7 +1420,7 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
                     .on_hover_text(match shape { qs_doc::MagnifyShape::Ellipse => "Circular lens", qs_doc::MagnifyShape::Rect => "Rectangular lens" });
                 let active = editor.style.magnify_shape == shape;
                 paint_pill_button(ui.painter(), r, RADIUS_PILL, active, resp.hovered(), true, false);
-                ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, if shape == qs_doc::MagnifyShape::Ellipse { "Circle" } else { "Rect" }, FontId::proportional(11.0), text_primary());
+                ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, if shape == qs_doc::MagnifyShape::Ellipse { "Circle" } else { "Rect" }, FontId::proportional(qs_theme::font::SMALL as f32), text_primary());
                 if resp.clicked() { editor.set_magnify_shape(shape); mutated = true; }
                 x += 40.0;
             }
@@ -1412,7 +1433,7 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
                     .on_hover_text(format!("Dim outside: {}%", (dim * 100.0) as u32));
                 let active = (editor.style.spot_dim - dim).abs() < 0.01;
                 paint_pill_button(ui.painter(), r, RADIUS_PILL, active, resp.hovered(), true, false);
-                ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, format!("{}%", (dim * 100.0) as u32), FontId::proportional(11.0), text_primary());
+                ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, format!("{}%", (dim * 100.0) as u32), FontId::proportional(qs_theme::font::SMALL as f32), text_primary());
                 if resp.clicked() { editor.set_spotlight(Some(dim), None); mutated = true; }
                 x += 42.0;
             }
@@ -1423,7 +1444,7 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
                     .on_hover_text(format!("Edge softness: {blur}px"));
                 let active = (editor.style.spot_blur - blur).abs() < 0.01;
                 paint_pill_button(ui.painter(), r, RADIUS_PILL, active, resp.hovered(), true, false);
-                ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, label, FontId::proportional(11.0), text_primary());
+                ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, label, FontId::proportional(qs_theme::font::SMALL as f32), text_primary());
                 if resp.clicked() { editor.set_spotlight(None, Some(blur)); mutated = true; }
                 x += 54.0;
             }
@@ -1436,7 +1457,7 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
                     .on_hover_text(format!("{} stamp", kind.label()));
                 let active = editor.style.stamp_kind == kind;
                 paint_pill_button(ui.painter(), r, RADIUS_PILL, active, resp.hovered(), true, false);
-                ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, kind.label(), FontId::proportional(10.5), text_primary());
+                ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, kind.label(), FontId::proportional(qs_theme::font::CAPTION as f32), text_primary());
                 if resp.clicked() { editor.set_stamp_kind(kind); mutated = true; }
                 x += 60.0;
             }
@@ -1449,7 +1470,7 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
                     .on_hover_text(format!("Eraser size: {w}px"));
                 let active = (editor.style.eraser_width - w).abs() < 0.01;
                 paint_pill_button(ui.painter(), r, RADIUS_PILL, active, resp.hovered(), true, false);
-                ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, format!("{w}"), FontId::proportional(11.0), text_primary());
+                ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, format!("{w}"), FontId::proportional(qs_theme::font::SMALL as f32), text_primary());
                 if resp.clicked() { editor.set_eraser_width(w); mutated = true; }
                 x += 32.0;
             }
@@ -1463,7 +1484,7 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
                     Pos2::new(x, cy),
                     egui::Align2::LEFT_CENTER,
                     "Start #",
-                    FontId::proportional(11.5),
+                    FontId::proportional(qs_theme::font::SMALL as f32),
                     text_secondary(),
                 );
                 let sx = x + 46.0;
@@ -1565,7 +1586,7 @@ fn draw_text_controls(
                 sr.center(),
                 egui::Align2::CENTER_CENTER,
                 format!("{:.0}", sz),
-                FontId::proportional(11.0),
+                FontId::proportional(qs_theme::font::SMALL as f32),
                 if active || resp.hovered() {
                     text_primary()
                 } else {
@@ -1639,7 +1660,7 @@ fn draw_text_controls(
                 sr.center(),
                 egui::Align2::CENTER_CENTER,
                 family.label(),
-                FontId::proportional(10.0),
+                FontId::proportional(qs_theme::font::CAPTION as f32),
                 if active || resp.hovered() {
                     text_primary()
                 } else {

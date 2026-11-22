@@ -511,7 +511,7 @@ pub fn render_bar(
                                 ui.label(
                                     RichText::new("Save it as a preset to favourite it")
                                         .color(theme::text_tertiary())
-                                        .size(10.0),
+                                        .size(qs_theme::font::CAPTION as f32),
                                 );
                             }
                         });

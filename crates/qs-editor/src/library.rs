@@ -763,7 +763,7 @@ impl Library {
                     thumb_rect.center(),
                     Align2::CENTER_CENTER,
                     entry.kind.label(),
-                    FontId::proportional(10.0),
+                    FontId::proportional(qs_theme::font::CAPTION as f32),
                     theme::text_tertiary(),
                 );
             }
