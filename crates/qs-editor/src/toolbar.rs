@@ -388,7 +388,7 @@ pub fn render_top_bar(
     ];
     let tools_group2 = [
         (Tool::Pen, "Pen (P)"),
-        (Tool::Highlighter, "Highlighter (H)"),
+        (Tool::Highlighter, "Highlight (H)"),
         (Tool::Arrow, "Arrow (A)"),
         (Tool::Line, "Line (L)"),
         (Tool::Rect, "Rectangle (R)"),
@@ -398,7 +398,7 @@ pub fn render_top_bar(
         (Tool::Text, "Text (T)"),
         (Tool::Callout, "Callout Bubble (C)"),
         (Tool::Step, "Step Counter (S)"),
-        (Tool::Blur, "Blur / Pixelate (B)"),
+        (Tool::Blur, "Blur (B)"),
         (Tool::Magnify, "Magnify Lens (I)"),
         (Tool::Spotlight, "Spotlight (F)"),
         (Tool::Stamp, "Stamp (G)"),
@@ -421,13 +421,13 @@ pub fn render_top_bar(
         (Tool::Select, "Select (V)"),
         (Tool::SelectRegion, "Select Region (M)"),
         (Tool::Pen, "Pen (P)"),
-        (Tool::Highlighter, "Highlighter (H)"),
+        (Tool::Highlighter, "Highlight (H)"),
         (Tool::Arrow, "Arrow (A)"),
         (Tool::Rect, "Rectangle (R)"),
         (Tool::Text, "Text (T)"),
         (Tool::Callout, "Callout Bubble (C)"),
         (Tool::Step, "Step Counter (S)"),
-        (Tool::Blur, "Blur / Pixelate (B)"),
+        (Tool::Blur, "Blur (B)"),
         (Tool::Crop, "Crop / Trim (K)"),
     ];
     let overflow_tools: [(Tool, &str); 9] = [
