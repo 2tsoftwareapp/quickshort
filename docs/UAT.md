@@ -222,3 +222,9 @@ rm "$HOME/Library/Application Support/quickshort/config.toml"
   Khi tray mở, phím mũi tên thuộc tray (nudge tạm nhường). Panel cao 124 px để không cắt thumbnail.
 - `components::dialog_actions`: hàng nút phải canh đúng chiều cao `CONTROL_H` — trước đây
   `with_layout(right_to_left)` chiếm hết chiều cao còn lại, làm Settings/Combine/Canvas cao bất thường.
+
+- Library với **10 captures**: danh sách tự cap theo viewport nên dialog không vượt cửa sổ (kiểm ở
+  720×600 đáy 575/600 và 1100×782 đáy ~712/782), status bar vẫn lộ, danh sách cuộn.
+- Đã thử tự động hoá kiểm tra tràn bằng `Shape::visual_bounding_rect` và `Context::globally_used_rect`:
+  cách đầu trả rect rỗng, cách sau tính cả bóng đổ nên báo sai. Cả hai đã bỏ; bằng chứng tràn hiện
+  dựa vào ảnh chụp.
