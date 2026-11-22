@@ -471,15 +471,30 @@ impl EditorApp {
             .resizable(false)
             .open(&mut open)
             .show(ctx, |ui| {
-                ui.label("Every annotation is baked into the image.");
-                ui.label("The layers and the undo history are removed.");
-                ui.add_space(8.0);
+                ui.label(
+                    egui::RichText::new("Every annotation is baked into the image.")
+                        .size(qs_theme::font::SMALL as f32)
+                        .color(theme::text_secondary()),
+                );
+                ui.label(
+                    egui::RichText::new("The layers and the undo history are removed.")
+                        .size(qs_theme::font::SMALL as f32)
+                        .color(theme::text_tertiary()),
+                );
+                ui.add_space(qs_theme::space::MD as f32);
+                ui.separator();
+                ui.add_space(qs_theme::space::XS as f32);
                 ui.horizontal(|ui| {
-                    if ui.button("Flatten").clicked() {
-                        go = true;
-                    }
-                    if ui.button("Cancel").clicked() {
+                    if crate::components::pill_button(ui, "Cancel", "") {
                         self.confirm_flatten = false;
+                    }
+                    if crate::components::pill_button_colored(
+                        ui,
+                        "Flatten",
+                        "Bake every annotation into the image",
+                        theme::danger_red(),
+                    ) {
+                        go = true;
                     }
                 });
             });
@@ -506,13 +521,25 @@ impl EditorApp {
         egui::Window::new("Canvas")
             .frame(theme::modal_frame())
             .collapsible(false)
-            .resizable(false)
+            // Fixed body height + resizable: without it the window grows to the
+            // content and then clips against the screen, with no scrollbar.
+            .default_size(egui::vec2(
+                360.0,
+                (ctx.content_rect().height() - 120.0).clamp(320.0, 560.0),
+            ))
+            .resizable(true)
             .open(&mut open)
             .show(ctx, |ui| {
+                egui::ScrollArea::vertical()
+                    .max_height(ui.available_height())
+                    .show(ui, |ui| {
                 ui.label("Canvas insets (px)");
                 egui::Grid::new("canvas_insets")
                     .num_columns(2)
-                    .spacing([16.0, 8.0])
+                    .spacing([
+                        qs_theme::space::SM as f32,
+                        qs_theme::space::XS as f32,
+                    ])
                     .show(ui, |ui| {
                         for (label, index) in [("Top", 0), ("Right", 1), ("Bottom", 2), ("Left", 3)]
                         {
@@ -526,27 +553,57 @@ impl EditorApp {
                         }
                     });
                 ui.label("Anchor");
-                egui::Grid::new("canvas_anchor")
-                    .num_columns(3)
-                    .spacing([4.0, 4.0])
-                    .show(ui, |ui| {
-                        let symbols = [["↖", "↑", "↗"], ["←", "•", "→"], ["↙", "↓", "↘"]];
-                        for (row, row_symbols) in symbols.iter().enumerate() {
-                            for (column, symbol) in row_symbols.iter().enumerate() {
-                                if ui
-                                    .selectable_label(self.canvas_anchor == (column, row), *symbol)
-                                    .clicked()
-                                {
-                                    let vertical = self.canvas_insets[0] + self.canvas_insets[2];
-                                    let horizontal = self.canvas_insets[1] + self.canvas_insets[3];
-                                    self.canvas_insets =
-                                        anchored_insets(vertical, horizontal, (column, row));
-                                    self.canvas_anchor = (column, row);
-                                }
+                // Drawn grid: the arrow glyphs (↖ ↑ ↗ …) are absent from the
+                // bundled fonts, so the picker rendered as one empty square.
+                let cell = qs_theme::space::XL as f32;
+                for row in 0..3usize {
+                    ui.horizontal(|ui| {
+                        for column in 0..3usize {
+                            let (r, resp) =
+                                ui.allocate_exact_size(Vec2::splat(cell), egui::Sense::click());
+                            let active = self.canvas_anchor == (column, row);
+                            let painter = ui.painter();
+                            painter.rect_filled(
+                                r,
+                                egui::CornerRadius::same(4),
+                                if active {
+                                    theme::accent_alpha(60)
+                                } else {
+                                    theme::bg_card()
+                                },
+                            );
+                            painter.rect_stroke(
+                                r,
+                                egui::CornerRadius::same(4),
+                                egui::Stroke::new(
+                                    1.0,
+                                    if active || resp.hovered() {
+                                        theme::border_hot()
+                                    } else {
+                                        theme::border_subtle()
+                                    },
+                                ),
+                                egui::StrokeKind::Inside,
+                            );
+                            painter.circle_filled(
+                                r.center(),
+                                2.6,
+                                if active {
+                                    theme::accent_blue()
+                                } else {
+                                    theme::text_disabled()
+                                },
+                            );
+                            if resp.clicked() {
+                                let vertical = self.canvas_insets[0] + self.canvas_insets[2];
+                                let horizontal = self.canvas_insets[1] + self.canvas_insets[3];
+                                self.canvas_insets =
+                                    anchored_insets(vertical, horizontal, (column, row));
+                                self.canvas_anchor = (column, row);
                             }
-                            ui.end_row();
                         }
                     });
+                }
                 ui.label("Negative values crop that edge.");
 
                 let [a, r, g, b] = self.canvas_background.to_be_bytes();
@@ -558,35 +615,39 @@ impl EditorApp {
                 let [r, g, b, a] = color.to_srgba_unmultiplied();
                 self.canvas_background = u32::from_be_bytes([a, r, g, b]);
                 ui.horizontal(|ui| {
-                    if ui.button("Transparent").clicked() {
+                    if crate::components::pill_button(ui, "Transparent", "") {
                         self.canvas_background = 0;
                     }
-                    if ui.button("White").clicked() {
+                    if crate::components::pill_button(ui, "White", "") {
                         self.canvas_background = u32::MAX;
                     }
-                    if ui.button("Black").clicked() {
+                    if crate::components::pill_button(ui, "Black", "") {
                         self.canvas_background = 255 << 24;
                     }
                 });
 
                 ui.separator();
-                ui.horizontal(|ui| {
-                    if ui.button("Trim edges").clicked() {
+                // Right-to-left inside a horizontal row let the left group run
+                // under Apply at narrow widths.
+                ui.horizontal_wrapped(|ui| {
+                    if crate::components::pill_button(ui, "Trim edges", "") {
                         trim = true;
                     }
-                    if ui.button("Fit to image").clicked() {
+                    if crate::components::pill_button(ui, "Fit to image", "") {
                         fit_to_image = true;
                     }
-                    if ui.button("Fit to objects").clicked() {
+                    if crate::components::pill_button(ui, "Fit to objects", "") {
                         fit_to_objects = true;
                     }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("Apply").clicked() {
-                            apply = true;
-                        }
-                    });
                 });
-                ui.add_space(6.0);
+                ui.add_space(qs_theme::space::SM as f32);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if crate::components::pill_button(ui, "Apply", "Apply the canvas insets") {
+                        apply = true;
+                    }
+                });
+                ui.add_space(qs_theme::space::SM as f32);
+                ui.add_space(qs_theme::space::SM as f32);
                 ui.separator();
                 ui.label("Resample image (px)");
                 ui.horizontal(|ui| {
@@ -609,9 +670,10 @@ impl EditorApp {
                         self.resize_w = ((self.resize_h as f32 * aspect).round() as u32).max(1);
                     }
                     ui.checkbox(&mut self.resize_lock, "Lock");
-                    if ui.button("Resize").clicked() {
+                    if crate::components::pill_button(ui, "Resize", "") {
                         resample = true;
                     }
+                });
                 });
             });
         self.canvas_dialog_open = open;
@@ -903,26 +965,26 @@ impl EditorApp {
                     }
                 });
                 if self.export_format == ExportFormat::Jpeg {
-                    ui.add_space(4.0);
+                    ui.add_space(qs_theme::space::XS as f32);
                     ui.add(
                         egui::Slider::new(&mut self.export_quality, 40..=100)
                             .suffix("%")
                             .text("Quality"),
                     );
                 }
-                ui.add_space(10.0);
+                ui.add_space(qs_theme::space::MD as f32);
                 theme::section_header(ui, "Destination");
                 ui.horizontal_wrapped(|ui| {
-                    if ui.button("Save Image As…").clicked() {
+                    if crate::components::pill_button(ui, "Save Image As…", "") {
                         do_export = true;
                     }
-                    if ui.button("Copy Flattened").clicked() {
+                    if crate::components::pill_button(ui, "Copy Flattened", "") {
                         do_copy = true;
                     }
-                    if ui.button("Save .qsdoc").clicked() {
+                    if crate::components::pill_button(ui, "Save .qsdoc", "") {
                         do_save = true;
                     }
-                    if ui.button("Print…").clicked() {
+                    if crate::components::pill_button(ui, "Print…", "") {
                         do_print = true;
                     }
                 });
@@ -1207,7 +1269,7 @@ impl EditorApp {
                     "Combining {} captures with numbered Step badges:",
                     self.tray_selected.len()
                 ));
-                ui.add_space(6.0);
+                ui.add_space(qs_theme::space::SM as f32);
                 for layout in [
                     CombineLayout::SideBySide,
                     CombineLayout::VerticalSteps,
@@ -1215,9 +1277,9 @@ impl EditorApp {
                 ] {
                     ui.radio_value(&mut self.combine_layout, layout, layout.label());
                 }
-                ui.add_space(10.0);
+                ui.add_space(qs_theme::space::MD as f32);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("Create Combined Sheet").clicked() {
+                    if crate::components::pill_button(ui, "Create Combined Sheet", "") {
                         create = true;
                     }
                 });
@@ -1315,6 +1377,28 @@ impl EditorApp {
             if self.find.open && i.consume_key(Modifiers::NONE, Key::Escape) {
                 self.find.open = false;
             }
+            // Dialog shortcuts: these panels were only reachable by mouse.
+            if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::C)
+                || i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::C)
+            {
+                self.export_dialog_open = false;
+                self.confirm_flatten = false;
+                self.canvas_dialog_open = true;
+            }
+            if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::E)
+                || i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::E)
+            {
+                self.canvas_dialog_open = false;
+                self.confirm_flatten = false;
+                self.export_dialog_open = true;
+            }
+            if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::F)
+                || i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::F)
+            {
+                self.canvas_dialog_open = false;
+                self.export_dialog_open = false;
+                self.confirm_flatten = true;
+            }
             if self.editor.edit().is_some() {
                 return;
             }
@@ -1349,6 +1433,7 @@ impl EditorApp {
                 self.find.open = true;
                 self.find.focus_pending = true;
             }
+
 
             if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::S)
                 || i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::S)

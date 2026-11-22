@@ -185,3 +185,8 @@ rm "$HOME/Library/Application Support/quickshort/config.toml"
   ký tự ◉/○/🔒 mà font bundled không có nên nút vô hình. Header dùng pill_button cho Group/Ungroup/Align.
 - Test tự động mới `crates/qs-editor/tests/ui_tokens.rs`: mọi control cao đúng `CONTROL_H`; tương phản
   primary/card ≥ 4.5 và tertiary/card ≥ 3.0 ở cả Light và Dark.
+
+- Dialog Canvas/Export/Flatten: hành động dùng `pill_button` (Flatten màu đỏ), khoảng cách theo token;
+  ⌘⇧C mở Canvas, ⌘⇧E mở Export, ⌘⇧F mở Flatten — ba dialog loại trừ nhau (mở cái này đóng cái kia).
+- Canvas: body cao cố định + `ScrollArea` nên không bị cắt đáy ở 720; hàng Apply tách riêng (trước đây
+  chữ "Fit to objects" chồng lên "Apply"); anchor picker vẽ lưới 3×3 (glyph ↖↑↗ không có trong font).
