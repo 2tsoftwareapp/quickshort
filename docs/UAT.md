@@ -252,8 +252,10 @@ rm "$HOME/Library/Application Support/quickshort/config.toml"
 - Test Combine tạo sheet thật: hai ảnh tạm → `create_combined_sheet()` → tài liệu có thêm object, có
   Step badge, canvas rộng hơn một ảnh, và được đánh dấu chưa lưu. Qua đó sửa luôn việc `unsaved`
   không được cập nhật ngay sau khi tạo sheet.
-- Chưa test được `close_guard`: `ViewportInfo.close_requested` chỉ có getter, test không dựng được
-  trạng thái "người dùng bấm đóng cửa sổ" — cần backend thật.
+- `close_guard` giờ kiểm được bằng phím: **⌘W** đi qua đúng guard đó (thêm `request_close`). Test
+  app-level xác nhận tài liệu sạch → gửi `ViewportCommand::Close`; tài liệu có sửa → mở hộp
+  "Unsaved changes". Trên app thật: ⌘W với tài liệu sạch làm app thoát (0 tiến trình), với tài liệu
+  đã xoay (⌘⇧R) thì hiện hộp Save/Discard/Cancel và app vẫn sống.
 
 - Smart Move hover (đề xuất khung) đã kiểm trên app thật: mở ảnh screenshot, bật **Y**, rê chuột lên
   dòng "General" → khung accent bao đúng dòng đó. Ảnh: `.zwork/uat/147-hover-proposal.png`.
@@ -263,3 +265,5 @@ rm "$HOME/Library/Application Support/quickshort/config.toml"
   cần sự kiện đóng cửa sổ.
 - Trong stack này **không có "agent desktop" của Vercel Labs**: `tool_search` cho desktop/computer-use
   trả 0 tool (đã thử 2 truy vấn), và `orca-computer-use` bị cấm dùng.
+
+- Phím tắt mới: **⌘W** đóng cửa sổ qua `close_guard` (cùng quy tắc với nút đỏ), tránh mất edit.

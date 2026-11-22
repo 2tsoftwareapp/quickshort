@@ -1443,10 +1443,34 @@ impl EditorApp {
         }
     }
 
+    /// Close the window, asking first when edits are pending.
+    ///
+    /// The red button and cmd+W both land here, so there is one rule for
+    /// throwing edits away.
+    pub fn request_close(&mut self, ctx: &egui::Context) {
+        if self.unsaved && !self.close_confirmed {
+            self.confirm_close = true;
+        } else {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+    }
+
+    /// True while the "unsaved changes" dialog is up, for tests.
+    #[doc(hidden)]
+    pub fn is_confirming_close(&self) -> bool {
+        self.confirm_close
+    }
+
     /// Dialog chords and Escape. Split out of `handle_shortcuts` so tests can
     /// drive them without an eframe frame.
     pub fn handle_dialog_keys(&mut self, ctx: &egui::Context) {
+        // `send_viewport_cmd` needs the context outside the input lock.
+        let mut close_requested = false;
         ctx.input_mut(|i| {
+            // macOS close chord: same guard as the window's red button.
+            if i.consume_key(Modifiers::COMMAND, Key::W) {
+                close_requested = true;
+            }
             // Escape closes whichever dialog is on top. Without this the panels
             // could only be dismissed by hitting their small close button.
             if i.consume_key(Modifiers::NONE, Key::Escape) {
@@ -1511,6 +1535,9 @@ impl EditorApp {
                 self.confirm_flatten = true;
             }
         });
+        if close_requested {
+            self.request_close(ctx);
+        }
     }
 
     /// Which dialogs are open: canvas, export, flatten, align, settings.

@@ -139,3 +139,75 @@ fn combine_builds_a_sheet_from_two_captures() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+fn press_full(
+    app: &mut EditorApp,
+    ctx: &egui::Context,
+    key: Key,
+    modifiers: Modifiers,
+) -> egui::FullOutput {
+    let raw = egui::RawInput {
+        screen_rect: Some(screen(900.0, 700.0)),
+        events: vec![
+            Event::ModifiersChanged(modifiers),
+            Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers,
+            },
+        ],
+        ..Default::default()
+    };
+    let mut full = ctx.run_ui(raw, |_| {
+        app.handle_dialog_keys(ctx);
+    });
+    full.textures_delta.clear();
+    full
+}
+
+#[test]
+fn cmd_w_asks_before_closing_an_edited_document() {
+    let dir = std::env::temp_dir().join(format!("qs_cmdw_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut paths = Vec::new();
+    for i in 0..2u32 {
+        let p = dir.join(format!("shot-{i}.png"));
+        image::RgbaImage::from_pixel(60, 40, image::Rgba([250, 251, 253, 255]))
+            .save(&p)
+            .unwrap();
+        paths.push(p);
+    }
+
+    let mut app = app();
+    app.set_tray_selection(paths);
+    app.create_combined_sheet().unwrap();
+    assert!(app.has_unsaved_edits());
+
+    let ctx = egui::Context::default();
+    qs_editor::theme::apply_macos_visuals(&ctx);
+    press_full(&mut app, &ctx, Key::W, Modifiers::COMMAND);
+    assert!(
+        app.is_confirming_close(),
+        "cmd+W must ask before dropping unsaved edits"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn cmd_w_closes_a_clean_document_without_asking() {
+    let mut app = app();
+    let ctx = egui::Context::default();
+    qs_editor::theme::apply_macos_visuals(&ctx);
+    assert!(!app.has_unsaved_edits());
+
+    let full = press_full(&mut app, &ctx, Key::W, Modifiers::COMMAND);
+    assert!(!app.is_confirming_close(), "nothing to ask about");
+    let closes = full
+        .viewport_output
+        .values()
+        .any(|v| v.commands.contains(&egui::ViewportCommand::Close));
+    assert!(closes, "a clean document closes straight away");
+}
