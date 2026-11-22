@@ -31,6 +31,8 @@ pub enum ActionIcon {
     Open,
     SaveAs,
     Canvas,
+    /// App menu: three bars.
+    Menu,
     /// Layer visibility: an eye, with a slash when hidden.
     Eye,
     EyeOff,
@@ -391,6 +393,11 @@ pub fn draw_action_icon(painter: &Painter, c: Pos2, icon: ActionIcon, color: Col
             );
             painter.line_segment([p(c, -6.5, -2.0), p(c, 6.5, -2.0)], thin);
             painter.line_segment([p(c, -6.5, 2.0), p(c, 6.5, 2.0)], thin);
+        }
+        ActionIcon::Menu => {
+            for dy in [-4.0, 0.0, 4.0] {
+                painter.line_segment([p(c, -6.0, dy), p(c, 6.0, dy)], st);
+            }
         }
         ActionIcon::ZoomOut => {
             painter.line_segment([p(c, -4.0, 0.0), p(c, 4.0, 0.0)], Stroke::new(1.5, color));
