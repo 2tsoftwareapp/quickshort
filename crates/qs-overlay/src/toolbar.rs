@@ -705,6 +705,11 @@ fn draw_icon(
             if a > 0.0 {
                 cv.blend(x, y, PALETTE[c], a);
             }
+            // hairline ring so white/black swatches stay visible on either bar
+            let ring = stroke(d, 1.0) * fg_a * 0.35;
+            if ring > 0.0 {
+                cv.blend(x, y, fg_col, ring);
+            }
         }
         Item::Act(Action::Copy) => {
             let d_back = rrect_sdf(lx, ly, -3.5, -3.5, 4.5, 4.5, 1.4);
