@@ -968,6 +968,7 @@ impl EditorApp {
             .and_then(|s| s.to_str())
             .unwrap_or("export");
         self.show_toast(format!("Exported {name}"));
+        self.export_format = fmt;
         Ok(())
     }
 
@@ -1055,7 +1056,6 @@ impl EditorApp {
             self.export_menu_open = false;
         }
         if let Some(fmt) = pick {
-            self.export_format = fmt;
             if let Err(e) = self.export_with_dialog(fmt, self.export_quality) {
                 self.show_toast(format!("Export failed: {e}"));
             }
