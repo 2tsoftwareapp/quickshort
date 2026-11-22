@@ -9,7 +9,7 @@ use fontdue::Font;
 use objc2::rc::Retained;
 #[cfg(target_os = "macos")]
 use objc2_app_kit::{NSAnimatablePropertyContainer, NSAnimationContext, NSView, NSWindow};
-use qs_overlay::sdf::Canvas;
+use qs_overlay::sdf::{fill_cov, rrect_sdf, stroke_cov, Canvas};
 #[cfg(target_os = "macos")]
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use softbuffer::{Context as SbContext, Surface};
@@ -24,11 +24,11 @@ use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowId, WindowLevel};
 
 use crate::settings::system_font;
-use crate::ui::{card_chrome, disc, mark, ring, strip, Mark};
+use crate::ui::{card_chrome, mark, Mark};
 use crate::widgets::Txt;
 
-const W: f64 = 272.0;
-const H: f64 = 58.0;
+const W: f64 = 300.0;
+const H: f64 = 60.0;
 const DONE_TTL: Duration = Duration::from_millis(1800);
 
 #[derive(Clone, Copy, PartialEq)]
@@ -43,6 +43,8 @@ pub struct Toast {
     win: Rc<Window>,
     surf: Surface<Rc<Window>, Rc<Window>>,
     font: Font,
+    /// title weight — the bundled bold face, regular if it fails to load
+    bold: Font,
     msg: String,
     accent: u32,
     state: State,
@@ -81,6 +83,7 @@ impl Toast {
             win,
             surf,
             font: system_font()?,
+            bold: bold_font().or_else(|_| system_font())?,
             msg: msg.to_string(),
             accent,
             state: State::Working,
@@ -226,55 +229,36 @@ impl Toast {
             qs_theme::pal().fringe,
         );
 
-        // state icon: filled circle, glyph inside
-        let (cx, cy, rad) = (28.0, H / 2.0 - 1.5, 11.0);
+        // macOS-style notification: tinted icon tile, app name, message
+        let p = qs_theme::pal();
+        let (cx, cy) = (14.0 + 16.0, H / 2.0);
+        let tint = match self.state {
+            State::Working => self.accent,
+            State::Ok => p.success,
+            State::Err => p.danger,
+        };
+        tile(&mut cv, cx, cy, 16.0, 9.0, tint, if p.dark { 0.24 } else { 0.14 });
         match self.state {
-            State::Working => {
-                let a = 0.45 + 0.55 * self.pulse.sin().abs();
-                disc(&mut cv, cx, cy, rad, self.accent, a);
-                ring(&mut cv, cx, cy, rad + 3.5, 1.0, self.accent, a * 0.35);
-            }
-            State::Ok => {
-                disc(&mut cv, cx, cy, rad, qs_theme::pal().success, 1.0);
-                mark(&mut cv, Mark::Tick, cx, cy, 1.6, qs_theme::pal().on_accent);
-            }
-            State::Err => {
-                disc(&mut cv, cx, cy, rad, qs_theme::pal().danger, 1.0);
-                mark(&mut cv, Mark::Cross, cx, cy, 1.6, qs_theme::pal().on_accent);
-            }
+            State::Working => spinner(&mut cv, cx, cy, 7.0, 2.0, self.pulse, tint),
+            State::Ok => mark(&mut cv, Mark::Tick, cx, cy, 2.2, tint),
+            State::Err => mark(&mut cv, Mark::Cross, cx, cy, 2.2, tint),
         }
 
-        // message — the card is fixed-width, so long text must be
-        // ellipsized or it spills past the right edge
+        let tx = cx + 16.0 + 12.0;
+        let max_w = W - tx - 16.0;
+        let title = Txt {
+            font: &self.bold,
+            scale,
+        };
+        title.draw(&mut cv, tx, 25.0, 12.0, "Quickshort", p.fg);
+        // the card is fixed-width, so long text must be ellipsized or it
+        // spills past the right edge
         let t = Txt {
             font: &self.font,
             scale,
         };
-        let msg = ellipsize(&t, 13.0, &self.msg, W - 50.0 - 14.0);
-        t.draw(
-            &mut cv,
-            50.0,
-            H / 2.0 + 4.0,
-            13.0,
-            &msg,
-            if working {
-                qs_theme::pal().fg_dim
-            } else {
-                qs_theme::pal().fg
-            },
-        );
-
-        // countdown bar: accent strip along the bottom edge while done
-        if let Some(d) = self.deadline {
-            let rem = (d - Instant::now()).as_secs_f64() / DONE_TTL.as_secs_f64();
-            let frac = rem.clamp(0.0, 1.0);
-            let col = if self.state == State::Err {
-                qs_theme::pal().danger
-            } else {
-                qs_theme::pal().success
-            };
-            strip(&mut cv, (12.0, H - 4.0, (W - 24.0) * frac, 2.0), col, 0.85);
-        }
+        let msg = ellipsize(&t, 13.0, &self.msg, max_w);
+        t.draw(&mut cv, tx, 43.0, 13.0, &msg, if working { p.fg_dim } else { p.fg });
 
         let _ = buf.present();
         #[cfg(target_os = "macos")]
@@ -337,6 +321,47 @@ pub fn standalone() -> Result<()> {
 }
 
 // --- tiny SDF helpers (logical coords, self-contained) ----------------------
+
+fn bold_font() -> Result<Font> {
+    const BOLD: &[u8] = include_bytes!("../../qs-render/fonts/BeVietnamPro-Bold.ttf");
+    Font::from_bytes(BOLD, fontdue::FontSettings::default()).map_err(|e| anyhow::anyhow!("{e}"))
+}
+
+/// Rounded-square icon tile, `half` px from centre to edge, tinted `a`.
+fn tile(cv: &mut Canvas, cx: f64, cy: f64, half: f64, r: f64, rgb: u32, a: f64) {
+    let s = cv.scale;
+    for py in ((cy - half - 1.0) * s) as i32..=((cy + half + 1.0) * s) as i32 {
+        for px in ((cx - half - 1.0) * s) as i32..=((cx + half + 1.0) * s) as i32 {
+            let (lx, ly) = ((px as f64 + 0.5) / s, (py as f64 + 0.5) / s);
+            let c = fill_cov(rrect_sdf(lx, ly, cx, cy, half, half, r), s);
+            if c > 0.0 {
+                cv.blend(px, py, rgb, c * a);
+            }
+        }
+    }
+}
+
+/// Activity spinner: a 270° arc rotating with `phase`.
+fn spinner(cv: &mut Canvas, cx: f64, cy: f64, r: f64, w: f64, phase: f64, rgb: u32) {
+    use std::f64::consts::TAU;
+    let s = cv.scale;
+    let start = (phase * 0.9).rem_euclid(TAU);
+    let reach = r + w;
+    for py in ((cy - reach) * s) as i32..=((cy + reach) * s) as i32 {
+        for px in ((cx - reach) * s) as i32..=((cx + reach) * s) as i32 {
+            let (dx, dy) = ((px as f64 + 0.5) / s - cx, (py as f64 + 0.5) / s - cy);
+            let along = (dy.atan2(dx) - start).rem_euclid(TAU) / TAU;
+            if along > 0.75 {
+                continue;
+            }
+            let c = stroke_cov(dx.hypot(dy) - r, w, s);
+            if c > 0.0 {
+                // tail fades in so the arc reads as motion
+                cv.blend(px, py, rgb, c * (0.25 + 0.75 * along / 0.75));
+            }
+        }
+    }
+}
 
 /// Trim `s` with a trailing "…" until it fits `max_w` logical px.
 fn ellipsize(t: &Txt, size: f64, s: &str, max_w: f64) -> String {
