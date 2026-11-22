@@ -1371,6 +1371,9 @@ impl EditorApp {
         // and the Escape-to-deselect path swallow them before the dialog sees
         // them, which made the Library keyboard route dead on arrival.
         let overlay_keys = self.library.open || self.find.open;
+        // A focused text field owns plain keystrokes: typing "e" in Find or in
+        // the tag box used to switch the active tool as well.
+        let typing = ctx.memory(|m| m.focused().is_some());
         ctx.input_mut(|i| {
             if self.find.open && i.consume_key(Modifiers::NONE, Key::Escape) {
                 self.find.open = false;
@@ -1527,7 +1530,7 @@ impl EditorApp {
                 esc = true;
             }
 
-            if i.modifiers.is_none() {
+            if !typing && i.modifiers.is_none() {
                 let pressed_tool = if i.key_pressed(Key::V) {
                     Some(Tool::Select)
                 } else if i.key_pressed(Key::A) {
@@ -1577,22 +1580,22 @@ impl EditorApp {
             }
 
             let nudge_step = if i.modifiers.shift { 10.0 } else { 1.0 };
-            if !overlay_keys && i.consume_key(Modifiers::NONE, Key::ArrowLeft)
+            if !overlay_keys && !typing && i.consume_key(Modifiers::NONE, Key::ArrowLeft)
                 || i.consume_key(Modifiers::SHIFT, Key::ArrowLeft)
             {
                 nudge = Some((-nudge_step, 0.0));
             }
-            if !overlay_keys && i.consume_key(Modifiers::NONE, Key::ArrowRight)
+            if !overlay_keys && !typing && i.consume_key(Modifiers::NONE, Key::ArrowRight)
                 || i.consume_key(Modifiers::SHIFT, Key::ArrowRight)
             {
                 nudge = Some((nudge_step, 0.0));
             }
-            if !overlay_keys && i.consume_key(Modifiers::NONE, Key::ArrowUp)
+            if !overlay_keys && !typing && i.consume_key(Modifiers::NONE, Key::ArrowUp)
                 || i.consume_key(Modifiers::SHIFT, Key::ArrowUp)
             {
                 nudge = Some((0.0, -nudge_step));
             }
-            if !overlay_keys && i.consume_key(Modifiers::NONE, Key::ArrowDown)
+            if !overlay_keys && !typing && i.consume_key(Modifiers::NONE, Key::ArrowDown)
                 || i.consume_key(Modifiers::SHIFT, Key::ArrowDown)
             {
                 nudge = Some((0.0, nudge_step));
