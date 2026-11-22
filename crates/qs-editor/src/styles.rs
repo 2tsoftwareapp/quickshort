@@ -464,16 +464,20 @@ pub fn render_bar(
         ui.label(
             RichText::new("Quick Styles")
                 .color(theme::text_tertiary())
-                .size(11.0),
+                .size(qs_theme::font::CAPTION as f32),
         );
-        ui.add_space(4.0);
+        ui.add_space(qs_theme::space::XS as f32);
         if presets.is_empty() {
             let msg = if filter.trim().is_empty() {
                 "No presets for this tool"
             } else {
                 "No preset matches"
             };
-            ui.label(RichText::new(msg).color(theme::text_disabled()).size(11.0));
+            ui.label(
+                RichText::new(msg)
+                    .color(theme::text_disabled())
+                    .size(qs_theme::font::SMALL as f32),
+            );
         }
         egui::ScrollArea::horizontal()
             .id_salt("quick_styles")
@@ -515,19 +519,18 @@ pub fn render_bar(
                 });
             });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui
-                .button("Save style")
-                .on_hover_text("Save the current style as a custom preset")
-                .clicked()
-            {
+            if crate::components::pill_button(
+                ui,
+                "Save style",
+                "Save the current style as a custom preset",
+            ) {
                 let mut quick = QuickStyle::from_style(&editor.current_style());
                 quick.name = suggested_name(editor);
                 save_as = Some(quick);
             }
-            ui.add(
-                egui::TextEdit::singleline(filter)
-                    .hint_text("Filter")
-                    .desired_width(88.0),
+            ui.add_sized(
+                [96.0, 24.0],
+                egui::TextEdit::singleline(filter).hint_text("Filter"),
             );
         });
     });
@@ -543,10 +546,33 @@ fn chip(ui: &mut Ui, quick: &QuickStyle) -> egui::Response {
     let label_w = (quick.name.chars().count() as f32 * 6.2).clamp(18.0, 96.0);
     let star_w = if quick.favorite { 11.0 } else { 0.0 };
     let (rect, response) =
-        ui.allocate_exact_size(Vec2::new(24.0 + star_w + label_w, 24.0), egui::Sense::click());
+        ui.allocate_exact_size(Vec2::new(24.0 + star_w + label_w, 26.0), egui::Sense::click());
     let hovered = response.hovered();
     let painter = ui.painter();
-    theme::paint_pill_button(painter, rect, 7.0, hovered, hovered, true, false);
+    // Same fill/border language as `components::pill_button`: an inactive chip
+    // used to be invisible until hovered.
+    painter.rect_filled(
+        rect,
+        egui::CornerRadius::same(6),
+        if hovered {
+            theme::bg_btn_secondary_hover_top()
+        } else {
+            theme::bg_btn_secondary_top()
+        },
+    );
+    painter.rect_stroke(
+        rect,
+        egui::CornerRadius::same(6),
+        egui::Stroke::new(
+            1.0,
+            if hovered {
+                theme::border_hot()
+            } else {
+                theme::border_subtle()
+            },
+        ),
+        egui::StrokeKind::Inside,
+    );
     if quick.favorite {
         // A dot, not a star glyph: the bundled fonts have no U+2605.
         painter.circle_filled(
@@ -566,7 +592,7 @@ fn chip(ui: &mut Ui, quick: &QuickStyle) -> egui::Response {
         Pos2::new(dot.x + 10.0, rect.center().y),
         egui::Align2::LEFT_CENTER,
         &quick.name,
-        egui::FontId::proportional(11.0),
+        egui::FontId::proportional(qs_theme::font::SMALL as f32),
         if hovered {
             theme::text_primary()
         } else {

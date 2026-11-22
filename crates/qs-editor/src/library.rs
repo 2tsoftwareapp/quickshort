@@ -670,7 +670,8 @@ impl Library {
         // A solid accent fill made the row name and meta line unreadable; the
         // selected state is a light wash plus an accent edge instead.
         let fill = if selected {
-            theme::accent_alpha(36)
+            // 36/255 disappears on the dark card fill.
+            theme::accent_alpha(if qs_theme::pal().dark { 72 } else { 36 })
         } else if resp.hovered() {
             theme::bg_pill_hover()
         } else {

@@ -1668,7 +1668,17 @@ impl eframe::App for EditorApp {
         }
         let styles_mutated = if !styles::presets_for(&self.editor, &self.styles).is_empty() {
             egui::Panel::top("quick_style_bar")
-                .frame(egui::Frame::NONE)
+                // Without an explicit fill the panel rendered as a black strip
+                // in the light theme.
+                .frame(
+                    egui::Frame::NONE
+                        .fill(theme::bg_inspector_bot())
+                        .stroke(egui::Stroke::new(1.0, theme::border_subtle()))
+                        .inner_margin(egui::Margin::symmetric(
+                            qs_theme::space::MD as i8,
+                            qs_theme::space::XS as i8,
+                        )),
+                )
                 .show(ui, |ui| {
                     styles::render_bar(
                         ui,

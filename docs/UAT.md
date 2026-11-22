@@ -162,3 +162,8 @@ rm "$HOME/Library/Application Support/quickshort/config.toml"
   đẩy xuống đầu dòng mới thành dấu `|` lơ lửng).
 - Dialog cách mép cửa sổ 24 px; ở 720×600 trước đây nó phủ kín và đè status bar.
 - Chỉ một overlay mở tại một thời điểm: ⌘F đóng Library, ⌘L đóng Find.
+
+- Quick-style bar có nền + hairline + padding riêng; trước đây panel không fill nên hiện thành dải đen
+  trên nền sáng. Chip dùng chung ngôn ngữ với `pill_button` (nền, viền, hover), cao 26, bo 6.
+- Ở chế độ compact, nút Copy rộng 64 thay vì 54 — 54 làm chữ "Copy" bị cắt ở 720px.
+- Hàng selected ở dark dùng accent alpha 72 (light giữ 36) để không chìm vào nền card.

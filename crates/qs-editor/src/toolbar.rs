@@ -212,7 +212,9 @@ pub fn render_top_bar(
     let zoom_w = 94.0;
     let save_w = if compact_actions { 30.0 } else { 64.0 };
     let export_w = if compact_actions { 30.0 } else { 72.0 };
-    let copy_w = if compact_actions { 54.0 } else { 68.0 };
+    // 54 clipped the label at compact widths: icon starts at +14 and the
+    // text at +24.5, so "Copy" needs the extra room.
+    let copy_w = if compact_actions { 64.0 } else { 68.0 };
     let btn_h = 30.0;
     let right_gap = 6.0;
 
@@ -228,7 +230,7 @@ pub fn render_top_bar(
         Pos2::new(x_cursor - export_w, cy - btn_h * 0.5),
         Vec2::new(export_w, btn_h),
     );
-    x_cursor = export_rect.left() - 4.0;
+    x_cursor = export_rect.left() - right_gap;
 
     let save_rect = Rect::from_min_size(
         Pos2::new(x_cursor - save_w, cy - btn_h * 0.5),
