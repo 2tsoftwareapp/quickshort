@@ -479,6 +479,33 @@ pub fn pill_button(ui: &mut egui::Ui, label: &str, tip: &str) -> bool {
     pill_button_colored(ui, label, tip, theme::text_primary())
 }
 
+/// Accent-filled pill for the one primary action of a dialog.
+pub fn pill_button_primary(ui: &mut egui::Ui, label: &str, tip: &str) -> bool {
+    let size = pill_size(ui, label);
+    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+    theme::paint_pill_button(
+        ui.painter(),
+        rect,
+        rad(radius::SM),
+        false,
+        resp.hovered(),
+        true,
+        true,
+    );
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        label,
+        egui::FontId::proportional(fs(font::SMALL)),
+        theme::on_accent(),
+    );
+    if tip.is_empty() {
+        resp.clicked()
+    } else {
+        resp.on_hover_text(tip).clicked()
+    }
+}
+
 /// Same pill with a custom label colour, for destructive actions.
 pub fn pill_button_colored(
     ui: &mut egui::Ui,

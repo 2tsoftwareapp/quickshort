@@ -190,3 +190,7 @@ rm "$HOME/Library/Application Support/quickshort/config.toml"
   ⌘⇧C mở Canvas, ⌘⇧E mở Export, ⌘⇧F mở Flatten — ba dialog loại trừ nhau (mở cái này đóng cái kia).
 - Canvas: body cao cố định + `ScrollArea` nên không bị cắt đáy ở 720; hàng Apply tách riêng (trước đây
   chữ "Fit to objects" chồng lên "Apply"); anchor picker vẽ lưới 3×3 (glyph ↖↑↗ không có trong font).
+
+- Phím tắt dialog: ⌘⇧C Canvas, ⌘⇧E Export/Share, ⌥⌘F Flatten, ⌘⇧A Align & Distribute, ⌘, Settings.
+  ⌘⇧F không dùng được (macOS nuốt) nên Flatten chuyển sang ⌥⌘F. **Esc** đóng dialog đang mở trên cùng.
+- Settings: footer có hairline + pill xanh "Done" thay nút full-width; dialog dùng `pill_button_primary`.

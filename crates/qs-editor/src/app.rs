@@ -1117,17 +1117,15 @@ impl EditorApp {
                     }
                 });
 
-                ui.add_space(qs_theme::space::MD as f32);
-                if crate::components::button(
-                    ui,
-                    "Done",
-                    crate::components::ButtonVariant::Primary,
-                    "",
-                )
-                .clicked()
-                {
-                    close_clicked = true;
-                }
+                // Footer like the other dialogs: hairline, then one primary pill.
+                ui.add_space(qs_theme::space::SM as f32);
+                ui.separator();
+                ui.add_space(qs_theme::space::XS as f32);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if crate::components::pill_button_primary(ui, "Done", "Save and close") {
+                        close_clicked = true;
+                    }
+                });
             });
 
         if close_clicked {
@@ -1377,6 +1375,33 @@ impl EditorApp {
             if self.find.open && i.consume_key(Modifiers::NONE, Key::Escape) {
                 self.find.open = false;
             }
+            // Escape closes whichever dialog is on top. Without this the panels
+            // could only be dismissed by hitting their small close button.
+            if i.consume_key(Modifiers::NONE, Key::Escape) {
+                if self.confirm_flatten {
+                    self.confirm_flatten = false;
+                } else if self.export_dialog_open {
+                    self.export_dialog_open = false;
+                } else if self.canvas_dialog_open {
+                    self.canvas_dialog_open = false;
+                } else if self.combine_dialog_open {
+                    self.combine_dialog_open = false;
+                } else if self.alignment_open {
+                    self.alignment_open = false;
+                } else if self.settings_open {
+                    self.settings_open = false;
+                }
+            }
+            // Settings has the standard macOS shortcut; Align needs a panel that
+            // used to be reachable only from the Layers header.
+            if i.consume_key(Modifiers::COMMAND, Key::Comma) {
+                self.settings_open = true;
+            }
+            if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::A)
+                || i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::A)
+            {
+                self.alignment_open = true;
+            }
             // Dialog shortcuts: these panels were only reachable by mouse.
             if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::C)
                 || i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::C)
@@ -1392,8 +1417,10 @@ impl EditorApp {
                 self.confirm_flatten = false;
                 self.export_dialog_open = true;
             }
-            if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::F)
-                || i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::F)
+            // cmd+shift+F never reached us (macOS swallows it), so the
+            // destructive flatten confirmation uses option+cmd+F.
+            if i.consume_key(Modifiers::COMMAND | Modifiers::ALT, Key::F)
+                || i.consume_key(Modifiers::CTRL | Modifiers::ALT, Key::F)
             {
                 self.canvas_dialog_open = false;
                 self.export_dialog_open = false;
