@@ -13,7 +13,8 @@ pub const CHROME_PAD_X: f32 = qs_theme::space::MD as f32;
 
 pub const RADIUS_WINDOW: CornerRadius = CornerRadius::same(qs_theme::radius::XL as u8);
 pub const RADIUS_CARD: CornerRadius = CornerRadius::same(qs_theme::radius::LG as u8);
-pub const RADIUS_TRACK: CornerRadius = CornerRadius::same(qs_theme::radius::MD as u8);
+/// macOS 26 toolbar groups are capsules; egui clamps to half the height.
+pub const RADIUS_TRACK: CornerRadius = CornerRadius::same(255);
 pub const RADIUS_PILL: CornerRadius = CornerRadius::same(qs_theme::radius::SM as u8);
 pub const RADIUS_BTN: CornerRadius = CornerRadius::same(qs_theme::radius::MD as u8);
 pub const RADIUS_CAPSULE: CornerRadius = CornerRadius::same(255);
@@ -122,6 +123,9 @@ pub fn sync_egui_visuals(ctx: &egui::Context) {
         s.visuals.window_fill = bg_card();
         s.visuals.window_stroke = Stroke::new(1.0, border_subtle());
         s.visuals.window_corner_radius = RADIUS_WINDOW;
+        s.visuals.menu_corner_radius = RADIUS_CARD;
+        s.visuals.popup_shadow = soft_shadow();
+        s.visuals.window_shadow = soft_shadow();
 
         s.visuals.widgets.noninteractive.bg_fill = bg_inspector_top();
         s.visuals.widgets.noninteractive.weak_bg_fill = bg_inspector_top();
@@ -267,15 +271,35 @@ pub fn paint_chrome_bar(
     bot: Color32,
     _is_top_level: bool,
 ) {
-    // Flat crisp surface + single 1px bottom hairline (baseline-ui + Apple HIG)
-    painter.rect_filled(rect, CornerRadius::ZERO, bot);
-    painter.line_segment(
-        [rect.left_bottom(), rect.right_bottom()],
-        Stroke::new(1.0, border_dark_hairline()),
-    );
+    // macOS 26: no bar slab; control groups float over the workspace.
+    let _ = bot;
+    painter.rect_filled(rect, CornerRadius::ZERO, bg_workspace_top());
+}
+
+fn soft_shadow() -> egui::epaint::Shadow {
+    egui::epaint::Shadow {
+        offset: [0, 2],
+        blur: 12,
+        spread: 0,
+        color: Color32::from_black_alpha(if qs_theme::pal().dark { 70 } else { 22 }),
+    }
+}
+
+/// Floating glass panel (Layers, Inspector): inset from the window edge,
+/// large concentric corners, hairline edge and a soft drop shadow.
+pub fn glass_panel_frame() -> egui::Frame {
+    let gap = qs_theme::space::SM as i8;
+    egui::Frame::NONE
+        .fill(bg_inspector_top())
+        .corner_radius(CornerRadius::same(qs_theme::radius::XL as u8))
+        .stroke(Stroke::new(1.0, border_subtle()))
+        .shadow(soft_shadow())
+        .outer_margin(egui::Margin { left: gap, right: gap, top: 0, bottom: gap })
+        .inner_margin(egui::Margin::same(qs_theme::space::MD as i8))
 }
 
 pub fn paint_segmented_track(painter: &egui::Painter, rect: Rect, corner_radius: CornerRadius) {
+    painter.add(soft_shadow().as_shape(rect, corner_radius));
     painter.rect_filled(rect, corner_radius, bg_pill_track());
     painter.rect_stroke(
         rect,
