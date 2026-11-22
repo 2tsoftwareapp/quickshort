@@ -31,6 +31,12 @@ pub enum ActionIcon {
     Open,
     SaveAs,
     Canvas,
+    /// Layer visibility: an eye, with a slash when hidden.
+    Eye,
+    EyeOff,
+    /// Layer lock: a padlock, open when unlocked.
+    Lock,
+    Unlock,
 }
 
 #[inline]
@@ -333,6 +339,48 @@ pub fn draw_action_icon(painter: &Painter, c: Pos2, icon: ActionIcon, color: Col
             );
             painter.line_segment([p(c, 3.3, 3.6), p(c, 6.3, 3.6)], st);
             painter.line_segment([p(c, 4.8, 2.1), p(c, 4.8, 5.1)], st);
+        }
+        ActionIcon::Eye | ActionIcon::EyeOff => {
+            painter.add(PathShape::closed_line(
+                vec![
+                    p(c, -6.0, 0.0),
+                    p(c, 0.0, -3.6),
+                    p(c, 6.0, 0.0),
+                    p(c, 0.0, 3.6),
+                ],
+                Stroke::new(1.25, color),
+            ));
+            painter.circle_filled(c, 1.9, color);
+            if matches!(icon, ActionIcon::EyeOff) {
+                painter.line_segment(
+                    [p(c, -5.2, 3.8), p(c, 5.2, -3.8)],
+                    Stroke::new(1.3, color),
+                );
+            }
+        }
+        ActionIcon::Lock | ActionIcon::Unlock => {
+            let body = Rect::from_center_size(p(c, 0.0, 1.6), Vec2::new(9.0, 7.0));
+            painter.rect_stroke(
+                body,
+                CornerRadius::same(1),
+                Stroke::new(1.25, color),
+                StrokeKind::Inside,
+            );
+            let shackle_top = if matches!(icon, ActionIcon::Lock) {
+                -2.2
+            } else {
+                -3.0
+            };
+            let right = if matches!(icon, ActionIcon::Lock) { 2.8 } else { 4.2 };
+            painter.add(PathShape::closed_line(
+                vec![
+                    p(c, -2.8, -2.2),
+                    p(c, -2.8, shackle_top - 2.0),
+                    p(c, right, shackle_top - 2.0),
+                    p(c, right, -2.2),
+                ],
+                Stroke::new(1.25, color),
+            ));
         }
         ActionIcon::Canvas => {
             painter.rect_stroke(

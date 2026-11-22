@@ -2082,34 +2082,35 @@ impl eframe::App for EditorApp {
                 ui.horizontal(|ui| {
                     ui.label(
                         egui::RichText::new("LAYERS")
-                            .size(10.5)
+                            .size(qs_theme::font::CAPTION as f32)
                             .strong()
                             .color(theme::text_tertiary()),
                     );
                     ui.label(
                         egui::RichText::new(format!("{}", self.editor.doc().objects.len()))
-                            .size(10.5)
+                            .size(qs_theme::font::CAPTION as f32)
                             .color(theme::text_tertiary()),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if self.editor.selection().len() >= 2 {
-                            self.alignment_open =
-                                ui.small_button("Align").clicked() || self.alignment_open;
+                            self.alignment_open = crate::components::pill_button(
+                                ui,
+                                "Align",
+                                "Align & distribute",
+                            ) || self.alignment_open;
                         }
                         if self.editor.selection_grouped()
-                            && ui
-                                .small_button("Ungroup")
-                                .on_hover_text("Ungroup (Ctrl+Shift+G)")
-                                .clicked()
+                            && crate::components::pill_button(
+                                ui,
+                                "Ungroup",
+                                "Ungroup (Ctrl+Shift+G)",
+                            )
                             && self.editor.ungroup_selected()
                         {
                             self.touch();
                         }
                         if self.editor.selection().len() >= 2
-                            && ui
-                                .small_button("Group")
-                                .on_hover_text("Group selection (Ctrl+G)")
-                                .clicked()
+                            && crate::components::pill_button(ui, "Group", "Group (Ctrl+G)")
                             && self.editor.group_selected()
                         {
                             self.touch();
@@ -2150,45 +2151,117 @@ impl eframe::App for EditorApp {
                 } else {
                     egui::ScrollArea::vertical().show(ui, |ui| {
                     for (index, id, label, visible, locked, grouped, selected) in rows {
-                        let response = ui
-                            .horizontal(|ui| {
-                                let eye = if visible { "◉" } else { "○" };
-                                if ui
-                                    .small_button(eye)
-                                    .on_hover_text(if visible {
-                                        "Hide layer"
+                        // Padded row like the Library list: selection is a wash,
+                        // hover a hairline, and every control has a fixed box.
+                        let row_fill = if selected {
+                            theme::accent_alpha(if qs_theme::pal().dark { 72 } else { 36 })
+                        } else {
+                            Color32::TRANSPARENT
+                        };
+                        let response = egui::Frame::NONE
+                            .inner_margin(egui::Margin::symmetric(
+                                qs_theme::space::SM as i8,
+                                qs_theme::space::XS as i8,
+                            ))
+                            .corner_radius(egui::CornerRadius::same(6))
+                            .fill(row_fill)
+                            .show(ui, |ui| {
+                                ui.spacing_mut().item_spacing.x = qs_theme::space::XS as f32;
+                                // Same row rhythm as the Library list.
+                                ui.set_min_height(crate::components::CONTROL_H);
+                                ui.horizontal(|ui| {
+                                    // Vector icons, not glyphs: the bundled
+                                    // fonts have no ◉/○/🔒, so the controls
+                                    // rendered as invisible buttons.
+                                    let (eye_rect, eye_resp) = ui.allocate_exact_size(
+                                        egui::Vec2::splat(20.0),
+                                        egui::Sense::click(),
+                                    );
+                                    crate::icons::draw_action_icon(
+                                        ui.painter(),
+                                        eye_rect.center(),
+                                        if visible {
+                                            crate::icons::ActionIcon::Eye
+                                        } else {
+                                            crate::icons::ActionIcon::EyeOff
+                                        },
+                                        if visible {
+                                            theme::text_secondary()
+                                        } else {
+                                            theme::text_disabled()
+                                        },
+                                    );
+                                    if eye_resp
+                                        .on_hover_text(if visible {
+                                            "Hide layer"
+                                        } else {
+                                            "Show layer"
+                                        })
+                                        .clicked()
+                                    {
+                                        changed |= self.editor.set_visible(id, !visible);
+                                    }
+                                    let (lock_rect, lock_resp) = ui.allocate_exact_size(
+                                        egui::Vec2::splat(20.0),
+                                        egui::Sense::click(),
+                                    );
+                                    crate::icons::draw_action_icon(
+                                        ui.painter(),
+                                        lock_rect.center(),
+                                        if locked {
+                                            crate::icons::ActionIcon::Lock
+                                        } else {
+                                            crate::icons::ActionIcon::Unlock
+                                        },
+                                        if locked {
+                                            theme::text_primary()
+                                        } else {
+                                            theme::text_tertiary()
+                                        },
+                                    );
+                                    if lock_resp
+                                        .on_hover_text(if locked {
+                                            "Unlock layer"
+                                        } else {
+                                            "Lock layer"
+                                        })
+                                        .clicked()
+                                    {
+                                        changed |= self.editor.set_locked(id, !locked);
+                                    }
+                                    let text = if grouped {
+                                        format!("▦ {label}  #{}", id.0)
                                     } else {
-                                        "Show layer"
-                                    })
-                                    .clicked()
-                                {
-                                    changed |= self.editor.set_visible(id, !visible);
-                                }
-                                if ui
-                                    .small_button(if locked { "🔒" } else { "🔓" })
-                                    .on_hover_text(if locked {
-                                        "Unlock layer"
-                                    } else {
-                                        "Lock layer"
-                                    })
-                                    .clicked()
-                                {
-                                    changed |= self.editor.set_locked(id, !locked);
-                                }
-                                let text = if grouped {
-                                    format!("▦ {label}  #{}", id.0)
-                                } else {
-                                    format!("{label}  #{}", id.0)
-                                };
-                                if ui
-                                    .selectable_label(selected, text)
-                                    .on_hover_text(format!("Drag to reorder · index {}", index + 1))
-                                    .clicked()
-                                {
-                                    self.editor.select(Some(id));
-                                }
+                                        format!("{label}  #{}", id.0)
+                                    };
+                                    if ui
+                                        .add(
+                                            egui::Label::new(
+                                                egui::RichText::new(text).size(
+                                                    qs_theme::font::SMALL as f32,
+                                                ),
+                                            )
+                                            .sense(egui::Sense::click()),
+                                        )
+                                        .on_hover_text(format!(
+                                            "Drag to reorder · index {}",
+                                            index + 1
+                                        ))
+                                        .clicked()
+                                    {
+                                        self.editor.select(Some(id));
+                                    }
+                                });
                             })
                             .response;
+                        if response.hovered() {
+                            ui.painter().rect_stroke(
+                                response.rect,
+                                egui::CornerRadius::same(6),
+                                egui::Stroke::new(1.0, theme::border_subtle()),
+                                egui::StrokeKind::Inside,
+                            );
+                        }
                         if response.drag_started() {
                             self.layer_drag_id = Some(id);
                         }

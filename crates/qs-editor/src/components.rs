@@ -397,13 +397,18 @@ pub fn segmented_icon_bar(ui: &mut egui::Ui, items: &[(TransformIcon, &str)]) ->
 }
 
 /// Status bar pill (`24px` height >= 24px Vercel Labs hit-target minimum, `radius::SM`).
-pub fn status_pill(ui: &mut egui::Ui, label: &str, active: bool, tip: &str) -> bool {
+/// Size of a status pill for `label`; the single place its height is decided.
+pub fn status_pill_size(ui: &egui::Ui, label: &str) -> Vec2 {
     let galley = ui.painter().layout_no_wrap(
         label.to_owned(),
         egui::FontId::proportional(fs(font::SMALL)),
         theme::text_primary(),
     );
-    let size = Vec2::new(galley.size().x + sp(space::LG), CONTROL_H);
+    Vec2::new(galley.size().x + sp(space::LG), CONTROL_H)
+}
+
+pub fn status_pill(ui: &mut egui::Ui, label: &str, active: bool, tip: &str) -> bool {
+    let size = status_pill_size(ui, label);
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
     let hovered = resp.hovered();
     let painter = ui.painter();
@@ -460,6 +465,16 @@ pub fn status_pill(ui: &mut egui::Ui, label: &str, active: bool, tip: &str) -> b
 /// One control height for row-level actions (chips, Library buttons, Open).
 pub const CONTROL_H: f32 = 26.0;
 
+/// Size of an action pill; the single place its height is decided.
+pub fn pill_size(ui: &egui::Ui, label: &str) -> Vec2 {
+    let galley = ui.painter().layout_no_wrap(
+        label.to_owned(),
+        egui::FontId::proportional(fs(font::SMALL)),
+        theme::text_primary(),
+    );
+    Vec2::new(galley.size().x + sp(space::LG), CONTROL_H)
+}
+
 pub fn pill_button(ui: &mut egui::Ui, label: &str, tip: &str) -> bool {
     pill_button_colored(ui, label, tip, theme::text_primary())
 }
@@ -471,12 +486,7 @@ pub fn pill_button_colored(
     tip: &str,
     color: Color32,
 ) -> bool {
-    let galley = ui.painter().layout_no_wrap(
-        label.to_owned(),
-        egui::FontId::proportional(fs(font::SMALL)),
-        color,
-    );
-    let size = Vec2::new(galley.size().x + sp(space::LG), CONTROL_H);
+    let size = pill_size(ui, label);
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
     let hovered = resp.hovered();
     let painter = ui.painter();

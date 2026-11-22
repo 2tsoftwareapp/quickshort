@@ -179,3 +179,9 @@ rm "$HOME/Library/Application Support/quickshort/config.toml"
   divider nhóm là hairline 1×16 px màu `divider_vertical` với gap `space::XS`, không dùng
   `ui.separator()` (vốn kế thừa stroke của widget và nặng hơn phần còn lại).
 - `switch_row` cao `CONTROL_H + space::XS` (30) và label/toggle cách mép `space::XS` thay vì 2 px.
+
+- Panel Layers: hàng object dùng chung nhịp 34 px (CONTROL_H 26 + padding 4), nền chọn accent wash,
+  viền hairline khi hover; nút ẩn/khoá là **icon vector** (Eye/EyeOff, Lock/Unlock) — trước đây dùng
+  ký tự ◉/○/🔒 mà font bundled không có nên nút vô hình. Header dùng pill_button cho Group/Ungroup/Align.
+- Test tự động mới `crates/qs-editor/tests/ui_tokens.rs`: mọi control cao đúng `CONTROL_H`; tương phản
+  primary/card ≥ 4.5 và tertiary/card ≥ 3.0 ở cả Light và Dark.
