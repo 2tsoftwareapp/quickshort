@@ -563,15 +563,8 @@ fn copy_image_to_clipboard(img: &RgbaImage, wait: bool) {
         });
         return;
     } else {
-        static RESIDENT: std::sync::Mutex<Option<arboard::Clipboard>> = std::sync::Mutex::new(None);
-        let mut slot = RESIDENT.lock().unwrap_or_else(|e| e.into_inner());
-        if slot.is_none() {
-            *slot = arboard::Clipboard::new()
-                .map_err(|e| eprintln!("clipboard: {e}"))
-                .ok();
-        }
-        match slot.as_mut() {
-            Some(c) => Ok(c.set_image(data)),
+        match with_resident_clipboard(|c| c.set_image(data)) {
+            Some(r) => Ok(r),
             None => return,
         }
     };
@@ -590,20 +583,35 @@ fn copy_text_to_clipboard(text: &str, wait: bool) {
         return;
     }
     #[cfg(target_os = "linux")]
-    let r = arboard::Clipboard::new().map(|mut c| {
+    let r = if wait {
         use arboard::SetExtLinux;
-        if wait {
-            c.set().wait().text(text.to_string())
-        } else {
-            c.set().text(text.to_string())
+        arboard::Clipboard::new().map(|mut c| c.set().wait().text(text.to_string()))
+    } else {
+        match with_resident_clipboard(|c| c.set_text(text.to_string())) {
+            Some(r) => Ok(r),
+            None => return,
         }
-    });
+    };
     #[cfg(not(target_os = "linux"))]
     let r = {
         let _ = wait;
         arboard::Clipboard::new().map(|mut c| c.set().text(text.to_string()))
     };
     report_clipboard(r);
+}
+
+/// The one clipboard instance the resident app keeps for its lifetime, so
+/// X11 keeps serving what was copied (see `copy_image_to_clipboard`).
+#[cfg(target_os = "linux")]
+fn with_resident_clipboard<T>(f: impl FnOnce(&mut arboard::Clipboard) -> T) -> Option<T> {
+    static RESIDENT: std::sync::Mutex<Option<arboard::Clipboard>> = std::sync::Mutex::new(None);
+    let mut slot = RESIDENT.lock().unwrap_or_else(|e| e.into_inner());
+    if slot.is_none() {
+        *slot = arboard::Clipboard::new()
+            .map_err(|e| eprintln!("clipboard: {e}"))
+            .ok();
+    }
+    slot.as_mut().map(f)
 }
 
 fn report_clipboard(r: Result<Result<(), arboard::Error>, arboard::Error>) {
