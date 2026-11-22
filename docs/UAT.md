@@ -194,3 +194,19 @@ rm "$HOME/Library/Application Support/quickshort/config.toml"
 - Phím tắt dialog: ⌘⇧C Canvas, ⌘⇧E Export/Share, ⌥⌘F Flatten, ⌘⇧A Align & Distribute, ⌘, Settings.
   ⌘⇧F không dùng được (macOS nuốt) nên Flatten chuyển sang ⌥⌘F. **Esc** đóng dialog đang mở trên cùng.
 - Settings: footer có hairline + pill xanh "Done" thay nút full-width; dialog dùng `pill_button_primary`.
+
+### Ma trận bằng chứng đã chụp
+
+| Surface | Light 720 | Light 1100 | Dark 720 | Dark 1100 |
+|---|---|---|---|---|
+| Library | ✓ | ✓ | ✓ | ✓ |
+| Find | ✓ | ✓ | — | — |
+| Canvas | ✓ | ✓ | ✓ | ✓ |
+| Export & Share | — | ✓ | ✓ | ✓ |
+| Flatten | ✓ | ✓ | ✓ | ✓ |
+| Settings | ✓ | ✓ | ✓ | ✓ |
+| Align & Distribute | — | ✓ | ✓ | ✓ |
+| Layers panel | ✓ | — | — | ✓ |
+
+Ảnh nằm trong `.zwork/uat/` (không commit). Combine chưa có ảnh vì cần chọn ≥2 ảnh trong filmstrip
+bằng chuột — macOS chặn tổng hợp click trên máy này.
