@@ -244,3 +244,7 @@ rm "$HOME/Library/Application Support/quickshort/config.toml"
 - Logic phím của tray tách thành `qs-editor/src/filmstrip_keys.rs` (hàm thuần + 4 unit test): mũi tên
   di chuyển và kẹp hai đầu, lần bấm đầu chọn item đầu tiên, Space đánh dấu, Enter mở Combine khi ≥2.
   App chỉ còn dịch `TrayAction` sang hành động.
+
+- Test app-level (`tests/ui_app.rs`) dùng `EditorApp::for_tests` + `handle_dialog_keys`: ⌘⇧C/E/⌥⌘F/⌘⇧A/⌘,
+  mở đúng dialog và **đóng cái trước**, Esc đóng dialog trên cùng, ⌘⇧T bật/tắt tray. Qua đó phát hiện
+  Align/Settings trước đây không đóng dialog khác nên chồng lên nhau.

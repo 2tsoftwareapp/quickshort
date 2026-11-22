@@ -314,6 +314,64 @@ impl EditorApp {
     }
 
     /// Swaps in another document, dropping the current one and its history.
+    /// Blank editor for tests: same field set as the internal test fixture,
+    /// without needing an eframe `CreationContext`.
+    #[doc(hidden)]
+    pub fn for_tests(doc: Document, base: RgbaImage) -> Self {
+        let w = doc.base_size.w.max(1.0) as u32;
+        let h = doc.base_size.h.max(1.0) as u32;
+        Self {
+            editor: Editor::new(doc),
+            base,
+            doc_path: None,
+            view: CanvasView::default(),
+            texture: None,
+            needs_render: true,
+            unsaved: false,
+            saved_rev: 0,
+            close_confirmed: false,
+            confirm_close: false,
+            pending_recovery: None,
+            autosave_at: None,
+            window_title: None,
+            needs_initial_fit: true,
+            last_canvas_rect: None,
+            saw_drag_press: false,
+            show_layers: true,
+            show_inspector: true,
+            show_filmstrip: false,
+            filmstrip_focus: None,
+            last_cursor_doc: None,
+            filmstrip: Filmstrip::new(None),
+            session_cache: std::collections::HashMap::new(),
+            toast: None,
+            canvas_dialog_open: false,
+            confirm_flatten: false,
+            canvas_insets: [0.0; 4],
+            canvas_background: 0,
+            resize_w: w,
+            resize_h: h,
+            resize_lock: true,
+            export_dialog_open: false,
+            export_format: ExportFormat::Png,
+            export_quality: 90,
+            combine_dialog_open: false,
+            combine_layout: CombineLayout::SideBySide,
+            tray_selected: Vec::new(),
+            canvas_anchor: (1, 1),
+            layer_drag_id: None,
+            alignment_open: false,
+            settings_open: false,
+            prefs: crate::prefs::AppPrefs::default(),
+            styles: styles::Library::default(),
+            library: crate::library::Library::default(),
+            style_filter: String::new(),
+            ocr_hints: crate::ocr_hint::OcrHints::default(),
+            find: crate::find::FindState::default(),
+            last_find_focus: None,
+        }
+    }
+
     pub fn load_path(&mut self, path: &Path) -> anyhow::Result<()> {
         let (doc, base, doc_path) = load_document(path)?;
         self.apply_document(doc, base);
@@ -1360,6 +1418,94 @@ impl EditorApp {
         }
     }
 
+    /// Dialog chords and Escape. Split out of `handle_shortcuts` so tests can
+    /// drive them without an eframe frame.
+    pub fn handle_dialog_keys(&mut self, ctx: &egui::Context) {
+        ctx.input_mut(|i| {
+            // Escape closes whichever dialog is on top. Without this the panels
+            // could only be dismissed by hitting their small close button.
+            if i.consume_key(Modifiers::NONE, Key::Escape) {
+                if self.confirm_flatten {
+                    self.confirm_flatten = false;
+                } else if self.export_dialog_open {
+                    self.export_dialog_open = false;
+                } else if self.canvas_dialog_open {
+                    self.canvas_dialog_open = false;
+                } else if self.combine_dialog_open {
+                    self.combine_dialog_open = false;
+                } else if self.alignment_open {
+                    self.alignment_open = false;
+                } else if self.settings_open {
+                    self.settings_open = false;
+                }
+            }
+            // Settings has the standard macOS shortcut; Align needs a panel that
+            // used to be reachable only from the Layers header.
+            if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::T)
+                || i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::T)
+            {
+                self.show_filmstrip = !self.show_filmstrip;
+            }
+            if i.consume_key(Modifiers::COMMAND, Key::Comma) {
+                self.canvas_dialog_open = false;
+                self.export_dialog_open = false;
+                self.confirm_flatten = false;
+                self.alignment_open = false;
+                self.settings_open = true;
+            }
+            if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::A)
+                || i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::A)
+            {
+                self.canvas_dialog_open = false;
+                self.export_dialog_open = false;
+                self.confirm_flatten = false;
+                self.alignment_open = true;
+            }
+            // Dialog shortcuts: these panels were only reachable by mouse.
+            if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::C)
+                || i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::C)
+            {
+                self.export_dialog_open = false;
+                self.confirm_flatten = false;
+                self.canvas_dialog_open = true;
+            }
+            if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::E)
+                || i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::E)
+            {
+                self.canvas_dialog_open = false;
+                self.confirm_flatten = false;
+                self.export_dialog_open = true;
+            }
+            // cmd+shift+F never reached us (macOS swallows it), so the
+            // destructive flatten confirmation uses option+cmd+F.
+            if i.consume_key(Modifiers::COMMAND | Modifiers::ALT, Key::F)
+                || i.consume_key(Modifiers::CTRL | Modifiers::ALT, Key::F)
+            {
+                self.canvas_dialog_open = false;
+                self.export_dialog_open = false;
+                self.confirm_flatten = true;
+            }
+        });
+    }
+
+    /// Which dialogs are open: canvas, export, flatten, align, settings.
+    #[doc(hidden)]
+    pub fn open_dialogs(&self) -> (bool, bool, bool, bool, bool) {
+        (
+            self.canvas_dialog_open,
+            self.export_dialog_open,
+            self.confirm_flatten,
+            self.alignment_open,
+            self.settings_open,
+        )
+    }
+
+    /// Filmstrip visibility, for tests.
+    #[doc(hidden)]
+    pub fn filmstrip_visible(&self) -> bool {
+        self.show_filmstrip
+    }
+
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
         let mut undo = false;
         let mut redo = false;
@@ -1387,62 +1533,6 @@ impl EditorApp {
         ctx.input_mut(|i| {
             if self.find.open && i.consume_key(Modifiers::NONE, Key::Escape) {
                 self.find.open = false;
-            }
-            // Escape closes whichever dialog is on top. Without this the panels
-            // could only be dismissed by hitting their small close button.
-            if i.consume_key(Modifiers::NONE, Key::Escape) {
-                if self.confirm_flatten {
-                    self.confirm_flatten = false;
-                } else if self.export_dialog_open {
-                    self.export_dialog_open = false;
-                } else if self.canvas_dialog_open {
-                    self.canvas_dialog_open = false;
-                } else if self.combine_dialog_open {
-                    self.combine_dialog_open = false;
-                } else if self.alignment_open {
-                    self.alignment_open = false;
-                } else if self.settings_open {
-                    self.settings_open = false;
-                }
-            }
-            // Settings has the standard macOS shortcut; Align needs a panel that
-            // used to be reachable only from the Layers header.
-            if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::T)
-                || i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::T)
-            {
-                self.show_filmstrip = !self.show_filmstrip;
-            }
-            if i.consume_key(Modifiers::COMMAND, Key::Comma) {
-                self.settings_open = true;
-            }
-            if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::A)
-                || i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::A)
-            {
-                self.alignment_open = true;
-            }
-            // Dialog shortcuts: these panels were only reachable by mouse.
-            if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::C)
-                || i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::C)
-            {
-                self.export_dialog_open = false;
-                self.confirm_flatten = false;
-                self.canvas_dialog_open = true;
-            }
-            if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::E)
-                || i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::E)
-            {
-                self.canvas_dialog_open = false;
-                self.confirm_flatten = false;
-                self.export_dialog_open = true;
-            }
-            // cmd+shift+F never reached us (macOS swallows it), so the
-            // destructive flatten confirmation uses option+cmd+F.
-            if i.consume_key(Modifiers::COMMAND | Modifiers::ALT, Key::F)
-                || i.consume_key(Modifiers::CTRL | Modifiers::ALT, Key::F)
-            {
-                self.canvas_dialog_open = false;
-                self.export_dialog_open = false;
-                self.confirm_flatten = true;
             }
             if self.editor.edit().is_some() {
                 return;
@@ -1772,6 +1862,7 @@ impl eframe::App for EditorApp {
         self.close_guard(&ctx);
         self.filmstrip.poll(&ctx);
         self.handle_text_events(&ctx);
+        self.handle_dialog_keys(&ctx);
         self.handle_shortcuts(&ctx);
 
         let top_res = egui::Panel::top("top_bar")
