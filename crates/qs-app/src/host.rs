@@ -106,6 +106,8 @@ pub fn run(cfg: Config) -> Result<()> {
 
 struct Host {
     cfg: Config,
+    /// Running evidence session — numbers saved captures per test case.
+    evidence: Option<crate::evidence::Session>,
     proxy: EventLoopProxy<HostEvent>,
     overlay: Option<Overlay>,
     /// Frames captured for the active overlay session — kept for stitching.
@@ -178,6 +180,7 @@ impl Host {
             overlay: None,
             frames: None,
             tray: None,
+            evidence: None,
             hotkeys: None,
             hotkey: None,
             hotkey_full: None,
@@ -200,9 +203,10 @@ impl Host {
     fn rebuild_menu(&self) {
         let recents = actions::recent_captures(&self.cfg.save_dir(), self.cfg.recent_max as usize);
         let update = self.pending_update.as_ref().map(|r| r.version.clone());
+        let evidence = self.evidence.as_ref().map(|s| s.label());
         #[cfg(target_os = "linux")]
         if let Some(t) = &self.tray {
-            t.set_menu(self.cfg.clone(), recents, update);
+            t.set_menu(self.cfg.clone(), recents, update, evidence);
         }
         #[cfg(not(target_os = "linux"))]
         if let Some(t) = &self.tray {
@@ -210,7 +214,22 @@ impl Host {
                 &self.cfg,
                 &recents,
                 update.as_deref(),
+                evidence.as_deref(),
             ))));
+        }
+    }
+
+    /// Where a capture is written: the next numbered evidence file while a
+    /// session runs (saving actions only), else the capture folder.
+    fn save_target(&mut self, action: qs_overlay::Action) -> SaveTarget {
+        use qs_overlay::Action as A;
+        match &mut self.evidence {
+            Some(s) if matches!(action, A::Copy | A::Save | A::Edit) => {
+                let p = s.next_path();
+                self.rebuild_menu();
+                SaveTarget::File(p)
+            }
+            _ => SaveTarget::Dir(self.cfg.save_dir()),
         }
     }
 
@@ -342,7 +361,7 @@ impl Host {
         };
         let sel = qs_core::virtual_bounds(&frames);
         let px = self.proxy.clone();
-        let target = SaveTarget::Dir(self.cfg.save_dir());
+        let target = self.save_target(qs_overlay::Action::Save);
         let copy = self.cfg.copy_after_save;
         let lang = self.cfg.ocr_lang.clone();
         let prov = actions::provenance_now(qs_library::CaptureMode::Fullscreen);
@@ -370,6 +389,25 @@ impl Host {
             tray::ID_CAPTURE => self.trigger(el),
             tray::ID_CAPTURE_FULL => self.trigger_full(el),
             tray::ID_OPEN_DIR => actions::open_path(&self.cfg.save_dir()),
+            tray::ID_EVIDENCE_START => {
+                match crate::evidence::Session::start(&self.cfg.save_dir()) {
+                    Ok(s) => self.evidence = Some(s),
+                    Err(e) => eprintln!("evidence: {e:#}"),
+                }
+                self.rebuild_menu();
+            }
+            tray::ID_EVIDENCE_NEXT => {
+                if let Some(s) = &mut self.evidence {
+                    s.next_case();
+                }
+                self.rebuild_menu();
+            }
+            tray::ID_EVIDENCE_END => {
+                if let Some(s) = self.evidence.take() {
+                    actions::open_path(&s.finish());
+                }
+                self.rebuild_menu();
+            }
             tray::ID_QUIT => el.exit(),
             tray::ID_DONATE => actions::open_path(std::path::Path::new(
                 "https://truongnat.github.io/quickshort/#donate",
@@ -1006,7 +1044,7 @@ impl ApplicationHandler<HostEvent> for Host {
         {
             let builder = tray_icon::TrayIcon::builder()
                 .with_tooltip("Quickshort — region screenshot")
-                .with_menu(Box::new(tray::build_menu(&self.cfg, &recents, None)));
+                .with_menu(Box::new(tray::build_menu(&self.cfg, &recents, None, None)));
             // template icon = auto dark/light menu-bar tinting (macOS only)
             #[cfg(target_os = "macos")]
             let builder = builder.with_icon_templated(tray::tray_icon(44));
@@ -1521,7 +1559,7 @@ impl ApplicationHandler<HostEvent> for Host {
             }
             // stitch + encode off the UI thread; Done updates menu/toast later
             let px = self.proxy.clone();
-            let target = SaveTarget::Dir(self.cfg.save_dir());
+            let target = self.save_target(action);
             let share = (action == qs_overlay::Action::Share).then(|| {
                 self.share
                     .get_or_insert_with(crate::share::ShareManager::new)

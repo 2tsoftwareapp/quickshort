@@ -10,6 +10,7 @@
 mod actions;
 mod chrome;
 mod config;
+mod evidence;
 mod host;
 #[cfg(target_os = "linux")]
 mod hotkey_linux;
