@@ -228,3 +228,8 @@ rm "$HOME/Library/Application Support/quickshort/config.toml"
 - Đã thử tự động hoá kiểm tra tràn bằng `Shape::visual_bounding_rect` và `Context::globally_used_rect`:
   cách đầu trả rect rỗng, cách sau tính cả bóng đổ nên báo sai. Cả hai đã bỏ; bằng chứng tràn hiện
   dựa vào ảnh chụp.
+
+- Test tương tác bàn phím (`tests/ui_keys.rs`): ↓/↑ chọn hàng Library, Enter trả `Open` đúng file,
+  Esc đóng; gõ vào Find tới được ô nhập mà không cần click (chứng minh bản sửa auto-focus).
+- Test trạng thái lỗi (`tests/ui_states.rs`): index hỏng → notice "corrupt" + vẫn duyệt được 3 ảnh;
+  index version mới hơn → read-only + notice "newer"; thư mục không đọc được → lỗi nêu tên thư mục.

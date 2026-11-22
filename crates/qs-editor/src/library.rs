@@ -206,6 +206,27 @@ impl Library {
         self.scanning
     }
 
+    /// File names currently selected, sorted for a stable assertion.
+    pub fn selected_names(&self) -> Vec<String> {
+        self.selected.iter().cloned().collect()
+    }
+
+    /// Notice shown under the toolbar (corrupt index, newer index, …).
+    pub fn notice(&self) -> Option<&str> {
+        self.notice.as_deref()
+    }
+
+    /// True when the index on disk belongs to a newer build and must not be
+    /// overwritten.
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
+    }
+
+    /// Folder-level failure (unreadable directory), if any.
+    pub fn error(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
+
     pub fn refresh(&mut self) {
         let dir = self.dir.clone();
         if dir.as_os_str().is_empty() {
