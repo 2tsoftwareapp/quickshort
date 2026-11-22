@@ -143,6 +143,11 @@ pub fn send_shot(msg: &str, path: PathBuf) {
 
 static IN_FLIGHT: AtomicU32 = AtomicU32::new(0);
 
+/// Notifications not yet handed to the bus — a short-lived process waits.
+pub fn in_flight() -> bool {
+    IN_FLIGHT.load(Ordering::Relaxed) > 0
+}
+
 /// Fire-and-forget; safe from any thread.
 pub fn send(msg: &str, ok: bool) {
     let msg = msg.to_string();

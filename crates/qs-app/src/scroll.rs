@@ -61,6 +61,13 @@ pub fn run(sel: qs_core::Rect) -> Result<RgbaImage> {
                 shots.push((cur, top));
                 idle = 0;
             }
+            // the overlay windows are still fading out when the first
+            // grab lands (KWin animates the close) — restart from the
+            // real content instead of ending on a white frame
+            None if shots.len() == 1 => {
+                shots[0].0 = cur;
+                idle = 0;
+            }
             None => break,
         }
     }

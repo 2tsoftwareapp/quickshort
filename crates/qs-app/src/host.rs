@@ -539,10 +539,10 @@ impl Host {
         #[cfg(target_os = "linux")]
         {
             let _ = (sel, img, dur_s, shared);
-            // a saved image gets the thumbnail + Edit notification (the
-            // Linux stand-in for the corner shelf); recordings and the
-            // rest keep the plain confirmation
-            if let (Some(p), ShotKind::Saved) = (saved, kind) {
+            // an image on disk gets the thumbnail + Edit notification (the
+            // Linux stand-in for the corner shelf); recordings and
+            // unsaved results keep the plain confirmation
+            if let Some(p) = saved.filter(|_| kind != ShotKind::Record) {
                 eprintln!("linux: post-capture card ({msg})");
                 self.toast = None;
                 crate::linux_notify::send_shot(msg, p);
@@ -589,6 +589,48 @@ impl Host {
             }
             self.open_card(el, img, msg, saved);
         }
+    }
+
+    /// A capture that is on disk — from Save, or Done (`copied`: already on
+    /// the clipboard).
+    fn land_saved(
+        &mut self,
+        el: &ActiveEventLoop,
+        sel: qs_core::Rect,
+        img: image::RgbaImage,
+        p: PathBuf,
+        copied: bool,
+    ) {
+        self.card = None;
+        self.toast = None;
+        self.rebuild_menu();
+        match self.cfg.after_capture() {
+            AfterCapture::Editor => actions::open_editor(&p),
+            AfterCapture::Copy => {
+                if !copied && !self.cfg.copy_after_save {
+                    actions::copy_image(&img, false);
+                }
+                self.toast_done(el, "Copied to clipboard".to_string(), true);
+                return;
+            }
+            AfterCapture::Shelf => {}
+        }
+        let name = file_label(&p);
+        let msg = if copied {
+            format!("Copied · saved {name}")
+        } else {
+            format!("Saved {name}")
+        };
+        self.land_shot(
+            el,
+            Some(sel),
+            img,
+            ShotKind::Saved,
+            Some(p),
+            None,
+            None,
+            &msg,
+        );
     }
 
     /// Run a context-menu action the in-chrome menu emitted.
@@ -1125,40 +1167,10 @@ impl ApplicationHandler<HostEvent> for Host {
                                 &format!("Saved {name}"),
                             );
                         }
-                        Outcome::Saved(p) => {
-                            self.card = None;
-                            self.toast = None;
-                            self.rebuild_menu();
-                            match self.cfg.after_capture() {
-                                AfterCapture::Editor => actions::open_editor(&p),
-                                AfterCapture::Copy => {
-                                    // copy_after_save already did it
-                                    if !self.cfg.copy_after_save {
-                                        actions::copy_image(&d.img, false);
-                                    }
-                                    self.toast_done(el, "Copied to clipboard".to_string(), true);
-                                    return;
-                                }
-                                AfterCapture::Shelf => {}
-                            }
-                            let name = p
-                                .file_name()
-                                .map(|n| n.to_string_lossy().into_owned())
-                                .unwrap_or_default();
-                            self.land_shot(
-                                el,
-                                Some(d.sel),
-                                d.img,
-                                ShotKind::Saved,
-                                Some(p),
-                                None,
-                                None,
-                                &format!("Saved {name}"),
-                            );
-                        }
-                        // a copy has nothing to act on later — confirm it
-                        // with the toast instead of a shelf thumb
-                        Outcome::Copied => {
+                        Outcome::Saved(p) => self.land_saved(el, d.sel, d.img, p, false),
+                        // Done saved the file too, so it lands like a Save
+                        Outcome::Copied(Some(p)) => self.land_saved(el, d.sel, d.img, p, true),
+                        Outcome::Copied(None) => {
                             self.toast_done(el, "Copied to clipboard".to_string(), true);
                         }
                         Outcome::Shared(link, path) => {
@@ -1212,16 +1224,34 @@ impl ApplicationHandler<HostEvent> for Host {
                 }
             }
             HostEvent::ScrollDone(res, sel) => match res {
-                Ok(img) => self.land_shot(
-                    el,
-                    Some(sel),
-                    img,
-                    ShotKind::Scroll,
-                    None,
-                    None,
-                    None,
-                    "Captured — pick an action",
-                ),
+                Ok(img) => {
+                    // a stitched page is the slowest capture to redo — it
+                    // goes to disk before any surface can drop it
+                    let dir = self.cfg.save_dir();
+                    let (saved, msg) = match actions::save_to_dir(&img, &dir) {
+                        Ok(p) => {
+                            let prov = actions::provenance_now(qs_library::CaptureMode::Scrolling);
+                            actions::record_saved(&dir, &p, prov);
+                            self.rebuild_menu();
+                            let msg = format!("Saved {}", file_label(&p));
+                            (Some(p), msg)
+                        }
+                        Err(e) => {
+                            eprintln!("scroll save: {e:#}");
+                            (None, "Captured — pick an action".to_string())
+                        }
+                    };
+                    self.land_shot(
+                        el,
+                        Some(sel),
+                        img,
+                        ShotKind::Scroll,
+                        saved,
+                        None,
+                        None,
+                        &msg,
+                    )
+                }
                 Err(e) => self.toast_done(el, format!("Scroll failed: {e}"), false),
             },
             HostEvent::RecDone(res, sel) => {
@@ -1539,4 +1569,11 @@ impl ApplicationHandler<HostEvent> for Host {
         // so the windows must die here, not in Demo/Host teardown.
         self.chrome.wins.clear();
     }
+}
+
+/// File name for toasts and notifications.
+fn file_label(p: &std::path::Path) -> String {
+    p.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }

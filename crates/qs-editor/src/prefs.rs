@@ -32,7 +32,7 @@ impl Default for AppPrefs {
             theme: "light".into(),
             accent: "blue".into(),
             after_capture: "shelf".into(),
-            copy_after_save: false,
+            copy_after_save: true,
             save_dir: None,
             ocr_lang: "auto".into(),
         }

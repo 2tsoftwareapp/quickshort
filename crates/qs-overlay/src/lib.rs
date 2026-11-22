@@ -69,7 +69,7 @@ impl Default for Prefs {
                 save: 's',
                 copy: 'c',
                 ocr: 't',
-                share: 'l',
+                share: 'k',
                 scroll: 'g',
                 record: 'r',
                 undo: 'z',
@@ -463,6 +463,32 @@ impl Session {
         self.result =
             action.and_then(|a| self.sel.map(|s| (s, a, std::mem::take(&mut self.annots))));
         self.done = true;
+    }
+
+    /// Arm `nt` (None = disarm) from a toolbar click or its letter key. The
+    /// second row goes back from More to the tool's options.
+    fn set_tool(&mut self, nt: Option<Tool>, i: usize) {
+        self.tool = nt;
+        if nt != Some(Tool::Select) {
+            self.selected = None;
+        }
+        let mr = self.sel.map(|s| self.sel_monitor(s));
+        if let Some(tb) = &mut self.toolbar {
+            tb.tool = nt;
+            tb.more = false;
+            // Select has no stroke options to show
+            if let (Some(sel), Some(mr)) = (self.sel, mr) {
+                tb.layout(sel, mr, nt.is_some() && nt != Some(Tool::Select));
+            }
+            tb.hover = None;
+        }
+        self.dirty = true;
+        self.wins[i].win.set_cursor(match self.tool {
+            Some(Tool::Text) => winit::window::CursorIcon::Text,
+            Some(Tool::Select) => winit::window::CursorIcon::Default,
+            Some(_) => winit::window::CursorIcon::Crosshair,
+            None => winit::window::CursorIcon::Pointer,
+        });
     }
 
     /// `Some` exactly once when the session has ended (see `OverlayEvent`).
@@ -1400,31 +1426,19 @@ impl Session {
                             }
                             Item::Tool(t) => {
                                 let nt = if self.tool == Some(t) { None } else { Some(t) };
-                                self.tool = nt;
-                                if nt != Some(Tool::Select) {
-                                    self.selected = None;
-                                }
+                                self.set_tool(nt, i);
+                            }
+                            Item::More => {
                                 let mr = self.sel.map(|s| self.sel_monitor(s));
+                                let armed = self.tool.is_some() && self.tool != Some(Tool::Select);
                                 if let Some(tb) = &mut self.toolbar {
-                                    tb.tool = nt;
-                                    // options row toggles -> reflow the bar
-                                    // (Select has no stroke options to show)
+                                    tb.more = !tb.more;
                                     if let (Some(sel), Some(mr)) = (self.sel, mr) {
-                                        tb.layout(
-                                            sel,
-                                            mr,
-                                            nt.is_some() && nt != Some(Tool::Select),
-                                        );
+                                        tb.layout(sel, mr, armed);
                                     }
                                     tb.hover = None;
                                 }
                                 self.dirty = true;
-                                self.wins[i].win.set_cursor(match self.tool {
-                                    Some(Tool::Text) => winit::window::CursorIcon::Text,
-                                    Some(Tool::Select) => winit::window::CursorIcon::Default,
-                                    Some(_) => winit::window::CursorIcon::Crosshair,
-                                    None => winit::window::CursorIcon::Pointer,
-                                });
                             }
                         }
                         return;
@@ -1635,6 +1649,15 @@ impl Session {
                     self.finish(None);
                     return;
                 }
+                // Enter = Done, the highlighted primary button (copy + save)
+                if matches!(event.logical_key, Key::Named(NamedKey::Enter))
+                    && self.sel.is_some()
+                    && self.toolbar.is_some()
+                {
+                    self.commit_annot();
+                    self.finish(Some(Action::Copy));
+                    return;
+                }
                 // Toolbar actions — same keys as the buttons. Ctrl/⌘+key is
                 // the documented path; plain keys (S/C/…) work too so Linux
                 // users aren't stuck when they skip the modifier.
@@ -1674,6 +1697,9 @@ impl Session {
                         if let Some(a) = act {
                             eprintln!("overlay action: {a:?} (key '{ch}')");
                             self.finish(Some(a));
+                        } else if let Some(t) = Tool::from_key(ch).filter(|_| !modded) {
+                            self.commit_annot();
+                            self.set_tool(Some(t), i);
                         }
                     }
                 }
