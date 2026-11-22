@@ -79,7 +79,7 @@ enum Rec {
 /// Shortcuts page rows — label + recordable slot.
 const KEY_ROWS: &[(&str, Rec)] = &[
     ("Save", Rec::Save),
-    ("Copy to clipboard", Rec::Copy),
+    ("Done (copy + save)", Rec::Copy),
     ("Extract text (OCR)", Rec::Ocr),
     ("Share link", Rec::Share),
     ("Scrolling capture", Rec::Scroll),

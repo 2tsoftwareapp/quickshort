@@ -142,7 +142,10 @@ quickshort --capture-full               # save the whole screen, no selection
 |---|---|---|
 | Anywhere | `⌘⇧S` macOS/Linux, `PrintScreen` Windows (configurable) | Start a selection |
 | Anywhere | `⌘⇧F` (configurable, `hotkey_full`) | Save the whole screen — no overlay |
-| Selection made | `⌘S` / `⌘C` / `⌘T` / `⌘L` (rebindable) | Save / copy / OCR / share link → clipboard |
+| Selection made | `Enter` or `⌘C` (rebindable) | Done — copy to clipboard and save |
+| Selection made | `A` `R` `T` `H` `B` · `V` `P` `O` | Arrow, Rect, Text, Highlight, Blur · Select, Pen, Ellipse (same letters as the editor) |
+| Selection made | `⌘E` | Open in the editor, annotations still editable |
+| Selection made | `⌘S` / `⌘T` / `⌘K` (rebindable) | Save only / OCR / share link → clipboard |
 | Selection made | `⌘G` / `⌘R` (rebindable) | Scrolling capture / record region to mp4 |
 | Selection made | `⌘Z` / `⌘⇧Z` (rebindable key) | Undo / redo an edit |
 | Block selected | `Delete` / `⌫` / `Esc` | Remove block / deselect |
@@ -165,14 +168,14 @@ launch_at_login = false
 auto_update = true
 recent_max = 8                 # entries in the tray menu
 accent = "blue"                # blue/purple/pink/orange/green/gray
-copy_after_save = false        # also put the PNG on the clipboard
+copy_after_save = true         # also put the PNG on the clipboard
 ocr_lang = "auto"              # Linux tesseract: "auto" detects the
                                # script, or pin e.g. "eng+jpn"
 keep_days = 0                  # auto-delete captures older than N days
 key_save = "s"                 # overlay ⌘+key actions
-key_copy = "c"
+key_copy = "c"                 # Done: copy + save (Enter does the same)
 key_ocr = "t"
-key_share = "l"
+key_share = "k"
 key_scroll = "g"               # scrolling capture
 key_record = "r"               # screen recording (needs ffmpeg on PATH)
 key_undo = "z"                 # ⌘z undo, ⌘⇧z redo
@@ -181,8 +184,11 @@ popup_pos = "top-right"        # toast/card/REC dock corner: top-left,
 ```
 
 The selection toolbar docks to whichever edge of the region has room.
-Clicking away starts a new selection; Esc or a click without dragging
-cancels. Saved files go to `~/Pictures/quickshort/quickshort-<ts>.png`.
+It shows the everyday tools plus **Done** (highlighted): Enter or a click
+copies the capture and saves it, so nothing exists only in memory. **⋯**
+opens Select, Pen, Ellipse, Scroll, Record, OCR and Share; **Edit** hands
+the capture, annotations still editable, to the editor. Clicking away
+starts a new selection; Esc or a click without dragging cancels. Saved files go to `~/Pictures/quickshort/quickshort-<ts>.png`.
 
 ## How it works
 

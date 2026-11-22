@@ -22,7 +22,9 @@ pub enum Outcome {
     Saved(PathBuf),
     /// flattened PNG + its editable `.qsdoc` sibling — open the editor
     Edited(PathBuf, PathBuf),
-    Copied,
+    /// Done: on the clipboard, and saved like a Save (None if the write
+    /// failed — the clipboard copy still stands)
+    Copied(Option<PathBuf>),
     /// public URL of the shared file + where it was saved locally
     Shared(crate::share::SharedLink, PathBuf),
     /// chars of extracted text put on the clipboard
@@ -98,8 +100,16 @@ pub fn dispatch(
             Outcome::Shared(link, p)
         }
         Action::Copy => {
+            // clipboard first — it is what the user waits on — then the
+            // same file a Save writes, so no capture lives only in memory
             copy_image_to_clipboard(&img, wait_clipboard);
-            Outcome::Copied
+            match save(&img, target) {
+                Ok(p) => Outcome::Copied(Some(p)),
+                Err(e) => {
+                    eprintln!("copy: save failed: {e:#}");
+                    Outcome::Copied(None)
+                }
+            }
         }
         Action::Edit => {
             // the flattened PNG lands like a normal Save (recents, shelf,
@@ -132,7 +142,9 @@ pub fn dispatch(
     };
     if let SaveTarget::Dir(dir) = target {
         match &outcome {
-            Outcome::Saved(p) | Outcome::Edited(p, _) => record_saved(dir, p, provenance),
+            Outcome::Saved(p) | Outcome::Edited(p, _) | Outcome::Copied(Some(p)) => {
+                record_saved(dir, p, provenance)
+            }
             _ => {}
         }
     }

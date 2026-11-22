@@ -52,22 +52,50 @@ pub enum Item {
     Bold,
     /// Font size preset index into annotate::TEXT_SIZES — text tool only
     FontSize(u8),
+    /// Opens the second row with the less-used tools and actions
+    More,
 }
 
+impl Tool {
+    /// Letter that arms the tool — the same letters as Quickshort Editor.
+    pub fn from_key(ch: char) -> Option<Self> {
+        Some(match ch {
+            'v' => Tool::Select,
+            'p' => Tool::Pen,
+            'a' => Tool::Arrow,
+            'r' => Tool::Rect,
+            'o' => Tool::Ellipse,
+            'h' => Tool::Marker,
+            't' => Tool::Text,
+            'b' => Tool::Pixelate,
+            _ => return None,
+        })
+    }
+}
+
+/// Everyday row: core tools | history | More, Edit, Done. Done (Copy) is
+/// the highlighted primary — it copies and saves in one step.
 const MAIN: &[Item] = &[
-    Item::Tool(Tool::Select),
-    Item::Tool(Tool::Pen),
     Item::Tool(Tool::Arrow),
     Item::Tool(Tool::Rect),
-    Item::Tool(Tool::Ellipse),
-    Item::Tool(Tool::Marker),
     Item::Tool(Tool::Text),
+    Item::Tool(Tool::Marker),
     Item::Tool(Tool::Pixelate),
     Item::Undo,
     Item::Redo,
+    Item::More,
     Item::Act(Action::Edit),
-    Item::Act(Action::Save),
     Item::Act(Action::Copy),
+];
+/// MAIN indexes where the tools and the history groups end — dividers
+const TOOLS_END: usize = 5;
+const HISTORY_END: usize = 7;
+
+/// Second row behind More: the remaining tools, then the special captures.
+const MORE: &[Item] = &[
+    Item::Tool(Tool::Select),
+    Item::Tool(Tool::Pen),
+    Item::Tool(Tool::Ellipse),
     Item::Act(Action::Scroll),
     Item::Act(Action::Record),
     Item::Act(Action::Ocr),
@@ -96,7 +124,6 @@ const STROKE: f64 = 1.6; // SF-Symbol-weight icon stroke, logical px
 const DOCK_RAD: f64 = qs_theme::radius::LG; // 10px outer dock corner radius
 const BTN_RAD: f64 = qs_theme::radius::SM; // 6px concentric inner button radius
 
-
 pub struct Toolbar {
     /// bounding box in virtual logical coords
     pub rect: Rect,
@@ -105,6 +132,8 @@ pub struct Toolbar {
     pub hover: Option<usize>,
     /// currently armed drawing tool (highlighted + shows the options row)
     pub tool: Option<Tool>,
+    /// More is open — the second row shows `MORE` instead of options
+    pub more: bool,
     /// selected size level / palette index for the next stroke
     pub size: u8,
     pub color: usize,
@@ -128,6 +157,7 @@ impl Toolbar {
             buttons: Vec::new(),
             hover: None,
             tool: None,
+            more: false,
             size: 1,
             color: 0,
             bold: false,
@@ -146,7 +176,9 @@ impl Toolbar {
         let n = MAIN.len() as f64;
         // the text tool swaps stroke sizes for real font sizes + a Bold
         // toggle; colors stay shared
-        let opts_row: Vec<Item> = if self.tool == Some(Tool::Text) {
+        let opts_row: Vec<Item> = if self.more {
+            MORE.to_vec()
+        } else if self.tool == Some(Tool::Text) {
             (0..crate::annotate::TEXT_SIZES.len() as u8)
                 .map(Item::FontSize)
                 .chain([Item::Bold])
@@ -156,7 +188,8 @@ impl Toolbar {
             OPTS.to_vec()
         };
         let on = opts_row.len() as f64;
-        let rows = if opts { 2.0 } else { 1.0 };
+        let second = opts || self.more;
+        let rows = if second { 2.0 } else { 1.0 };
         // second row aligns under the main row, slightly narrower
         let (hw, hh) = (
             PAD * 2.0 + n.max(on) * d + (n.max(on) - 1.0) * GAP,
@@ -236,7 +269,7 @@ impl Toolbar {
         };
         self.buttons.clear();
         place(MAIN, false, &mut self.buttons);
-        if opts {
+        if second {
             place(&opts_row, true, &mut self.buttons);
         }
     }
@@ -270,8 +303,8 @@ impl Toolbar {
         paint_dock(&mut cv, dock_x, dock_y, dock_w, dock_h);
 
         // Subtle vertical dividers between Tools | History | Actions (horizontal layout)
-        if dock_w >= dock_h && self.buttons.len() >= 11 {
-            for split_idx in [8usize, 10usize] {
+        if dock_w >= dock_h && self.buttons.len() >= MAIN.len() {
+            for split_idx in [TOOLS_END, HISTORY_END] {
                 let prev = self.buttons[split_idx - 1].1;
                 let next = self.buttons[split_idx].1;
                 let lx = (prev.right() as f64 + next.x as f64) * 0.5 - vrect.x as f64;
@@ -293,6 +326,7 @@ impl Toolbar {
                 || matches!(item, Item::Color(c) if self.color == *c)
                 || matches!(item, Item::FontSize(s) if self.font_size == *s)
                 || matches!(item, Item::Bold) && self.bold
+                || matches!(item, Item::More) && self.more
                 || is_primary;
             let enabled = match item {
                 Item::Undo => self.can_undo,
@@ -536,6 +570,18 @@ fn draw_icon(
                 cv.blend(x, y, fg_col, a);
             }
         }
+        Item::More => {
+            // ⋯ three dots
+            let d = (lx + 4.5)
+                .hypot(ly)
+                .min(lx.hypot(ly))
+                .min((lx - 4.5).hypot(ly))
+                - 1.5;
+            let a = fill_cov(d, scale) * fg_a;
+            if a > 0.0 {
+                cv.blend(x, y, fg_col, a);
+            }
+        }
         Item::Size(s) => {
             // filled disc, radius grows with the level
             let r = [1.8, 3.0, 4.6][s as usize];
@@ -634,5 +680,65 @@ fn draw_icon(
                 cv.blend(x, y, fg_col, a);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sel() -> (Rect, Rect) {
+        (Rect::new(200, 200, 400, 300), Rect::new(0, 0, 1920, 1080))
+    }
+
+    #[test]
+    fn main_row_ends_with_more_edit_done() {
+        let (s, m) = sel();
+        let tb = Toolbar::new(s, m, false);
+        let items: Vec<Item> = tb.buttons.iter().map(|b| b.0).collect();
+        assert_eq!(items, MAIN);
+        assert_eq!(items[TOOLS_END], Item::Undo);
+        assert_eq!(items[HISTORY_END], Item::More);
+        assert_eq!(items.last(), Some(&Item::Act(Action::Copy)));
+    }
+
+    #[test]
+    fn more_swaps_the_second_row() {
+        let (s, m) = sel();
+        let mut tb = Toolbar::new(s, m, false);
+        tb.tool = Some(Tool::Arrow);
+        tb.layout(s, m, true);
+        assert!(tb.buttons.iter().any(|b| matches!(b.0, Item::Color(_))));
+        tb.more = true;
+        tb.layout(s, m, true);
+        let second: Vec<Item> = tb.buttons[MAIN.len()..].iter().map(|b| b.0).collect();
+        assert_eq!(second, MORE);
+        // every action and tool stays reachable from one of the two rows
+        for a in [
+            Action::Save,
+            Action::Edit,
+            Action::Copy,
+            Action::Scroll,
+            Action::Record,
+            Action::Ocr,
+            Action::Share,
+        ] {
+            if a == Action::Save {
+                continue; // keyboard only — Done already saves
+            }
+            assert!(
+                MAIN.contains(&Item::Act(a)) || MORE.contains(&Item::Act(a)),
+                "{a:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn tool_letters_match_the_editor() {
+        assert_eq!(Tool::from_key('a'), Some(Tool::Arrow));
+        assert_eq!(Tool::from_key('h'), Some(Tool::Marker));
+        assert_eq!(Tool::from_key('b'), Some(Tool::Pixelate));
+        assert_eq!(Tool::from_key('s'), None);
+        assert_eq!(Tool::from_key('c'), None);
     }
 }

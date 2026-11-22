@@ -125,7 +125,27 @@ impl ApplicationHandler<Ev> for Run {
                 self.workers -= 1;
                 self.toast = None;
                 match res {
-                    Ok(img) => self.open_card(el, img, "Captured — pick an action", None),
+                    Ok(img) => {
+                        // saved before the card so a timeout can't lose it
+                        let saved = match actions::save_to_dir(&img, &self.save_dir) {
+                            Ok(p) => {
+                                let prov =
+                                    actions::provenance_now(qs_library::CaptureMode::Scrolling);
+                                actions::record_saved(&self.save_dir, &p, prov);
+                                Some(p)
+                            }
+                            Err(e) => {
+                                eprintln!("scroll save: {e:#}");
+                                None
+                            }
+                        };
+                        let msg = if saved.is_some() {
+                            "Saved — pick an action"
+                        } else {
+                            "Captured — pick an action"
+                        };
+                        self.open_card(el, img, msg, saved)
+                    }
                     Err(e) => self.notify(el, &format!("Scroll failed: {e}"), false),
                 }
             }
@@ -294,7 +314,9 @@ impl Run {
         // the editor is its own process — it outlives this one-shot
         match &d.outcome {
             Outcome::Edited(_, doc) => crate::actions::open_editor(doc),
-            Outcome::Saved(p) if self.after_editor => crate::actions::open_editor(p),
+            Outcome::Saved(p) | Outcome::Copied(Some(p)) if self.after_editor => {
+                crate::actions::open_editor(p)
+            }
             _ => {}
         }
         let (msg, saved) = match &d.outcome {
@@ -307,7 +329,16 @@ impl Run {
                 ),
                 Some(p.clone()),
             ),
-            Outcome::Copied => ("Copied to clipboard".to_string(), None),
+            Outcome::Copied(Some(p)) => (
+                format!(
+                    "Copied · saved {}",
+                    p.file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default()
+                ),
+                Some(p.clone()),
+            ),
+            Outcome::Copied(None) => ("Copied to clipboard".to_string(), None),
             Outcome::Shared(l, _) => {
                 self.notify(
                     el,
