@@ -2339,8 +2339,10 @@ impl eframe::App for EditorApp {
             .resizable(true)
             .default_size(220.0)
             .size_range(192.0..=316.0)
-            .frame(theme::glass_panel_frame())
+            .frame(theme::panel_gutter())
             .show(ui, |ui| {
+ theme::glass_panel_frame().show(ui, |ui| {
+ ui.set_min_size(ui.available_size());
                 ui.horizontal(|ui| {
                     ui.label(
                         egui::RichText::new("LAYERS")
@@ -2544,7 +2546,8 @@ impl eframe::App for EditorApp {
                     });
                 }
                 changed
-            });
+            }).inner
+ });
             let lr = layers_resp.response.rect;
             ui.painter().line_segment(
                 [lr.right_top(), lr.right_bottom()],
@@ -2562,8 +2565,10 @@ impl eframe::App for EditorApp {
             let panel_resp = egui::Panel::right("image_panel")
                 .resizable(false)
                 .exact_size(272.0)
-                .frame(theme::glass_panel_frame())
+                .frame(theme::panel_gutter())
                 .show(ui, |ui| {
+ theme::glass_panel_frame().show(ui, |ui| {
+ ui.set_min_size(ui.available_size());
                     egui::ScrollArea::vertical()
                         .show(ui, |ui| {
                             if self.canvas_dialog_open {
@@ -2630,7 +2635,8 @@ impl eframe::App for EditorApp {
                             changed
                         })
                         .inner
-                });
+                }).inner
+ });
             let pr = panel_resp.response.rect;
             ui.painter().line_segment(
                 [pr.left_top(), pr.left_bottom()],

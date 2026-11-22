@@ -288,14 +288,19 @@ fn soft_shadow() -> egui::epaint::Shadow {
 /// Floating glass panel (Layers, Inspector): inset from the window edge,
 /// large concentric corners, hairline edge and a soft drop shadow.
 pub fn glass_panel_frame() -> egui::Frame {
-    let gap = qs_theme::space::SM as i8;
     egui::Frame::NONE
         .fill(bg_inspector_top())
         .corner_radius(CornerRadius::same(qs_theme::radius::XL as u8))
         .stroke(Stroke::new(1.0, border_subtle()))
         .shadow(soft_shadow())
-        .outer_margin(egui::Margin { left: gap, right: gap, top: 0, bottom: gap })
         .inner_margin(egui::Margin::same(qs_theme::space::MD as i8))
+}
+
+/// Transparent gutter a side panel reserves around its `glass_panel_frame`,
+/// so the panel floats inset from the window edge.
+pub fn panel_gutter() -> egui::Frame {
+    let gap = qs_theme::space::SM as i8;
+    egui::Frame::NONE.inner_margin(egui::Margin { left: gap, right: gap, top: 0, bottom: gap })
 }
 
 pub fn paint_segmented_track(painter: &egui::Painter, rect: Rect, corner_radius: CornerRadius) {
