@@ -1128,7 +1128,10 @@ impl EditorApp {
         let (mut copy, mut print) = (false, false);
         let area = egui::Area::new(egui::Id::unique("export_menu"))
             .order(egui::Order::Foreground)
-            .fixed_pos(anchor.left_bottom() + Vec2::new(0.0, qs_theme::space::XS as f32))
+            // right-aligned under Export, as macOS toolbar menus are, so it
+            // keeps clear of the window edge
+            .pivot(egui::Align2::RIGHT_TOP)
+            .fixed_pos(anchor.right_bottom() + Vec2::new(0.0, qs_theme::space::XS as f32))
             .show(ctx, |ui| {
                 egui::Frame::menu(ui.style()).show(ui, |ui| {
                     ui.set_min_width(200.0);
@@ -1866,6 +1869,10 @@ impl EditorApp {
 }
 
 impl eframe::App for EditorApp {
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        theme::bg_workspace_top().to_normalized_gamma_f32()
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
 
@@ -1975,7 +1982,7 @@ impl eframe::App for EditorApp {
             .exact_size(crate::components::CONTROL_H + 2.0 * qs_theme::space::XS as f32)
             .frame(
                 egui::Frame::NONE
-                    .fill(theme::bg_status())
+                    .fill(theme::bg_workspace_top())
                     .inner_margin(egui::Margin::symmetric(
                         qs_theme::space::MD as i8,
                         qs_theme::space::XS as i8,
@@ -2333,14 +2340,11 @@ impl eframe::App for EditorApp {
         let layers_mutated = if self.show_layers && !self.library.open {
             let layers_resp = egui::Panel::left("layers_panel")
             .resizable(true)
-            .default_size(204.0)
-            .size_range(176.0..=300.0)
-            .frame(
-                egui::Frame::NONE
-                    .fill(theme::bg_inspector_top())
-                    .inner_margin(egui::Margin::same(12)),
-            )
+            .default_size(220.0)
+            .size_range(192.0..=316.0)
+            .frame(theme::panel_gutter())
             .show(ui, |ui| {
+                theme::glass_panel(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(
                         egui::RichText::new("LAYERS")
@@ -2544,12 +2548,8 @@ impl eframe::App for EditorApp {
                     });
                 }
                 changed
+            })
             });
-            let lr = layers_resp.response.rect;
-            ui.painter().line_segment(
-                [lr.right_top(), lr.right_bottom()],
-                egui::Stroke::new(1.0, theme::border_dark_hairline()),
-            );
             layers_resp.inner
         } else {
             false
@@ -2561,13 +2561,10 @@ impl eframe::App for EditorApp {
         let panel_mutated = if self.show_inspector && !self.library.open {
             let panel_resp = egui::Panel::right("image_panel")
                 .resizable(false)
-                .exact_size(256.0)
-                .frame(
-                    egui::Frame::NONE
-                        .fill(theme::bg_inspector_top())
-                        .inner_margin(egui::Margin::same(12)),
-                )
+                .exact_size(272.0)
+                .frame(theme::panel_gutter())
                 .show(ui, |ui| {
+                theme::glass_panel(ui, |ui| {
                     egui::ScrollArea::vertical()
                         .show(ui, |ui| {
                             if self.canvas_dialog_open {
@@ -2634,12 +2631,8 @@ impl eframe::App for EditorApp {
                             changed
                         })
                         .inner
-                });
-            let pr = panel_resp.response.rect;
-            ui.painter().line_segment(
-                [pr.left_top(), pr.left_bottom()],
-                egui::Stroke::new(1.0, theme::border_dark_hairline()),
-            );
+                })
+            });
             panel_resp.inner
         } else {
             false
