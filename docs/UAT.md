@@ -207,12 +207,18 @@ rm "$HOME/Library/Application Support/quickshort/config.toml"
 | Settings | ✓ | ✓ | ✓ | ✓ |
 | Align & Distribute | ✓ | ✓ | ✓ | ✓ |
 | Layers panel | ✓ | ✓ | ✓ | ✓ |
+| Combine | ✓ | ✓ | ✓ | ✓ |
 
-Ảnh nằm trong `.zwork/uat/` (không commit). Ô trống duy nhất còn lại: **Combine** — cần chọn ≥2 ảnh trong filmstrip bằng chuột, mà macOS chặn
-tổng hợp click trên máy này.
+Ảnh nằm trong `.zwork/uat/` (không commit). Không còn ô trống. Filmstrip có điều hướng bàn phím: ⌘⇧T mở/đóng tray, ←/→ di chuyển con trỏ
+(viền accent), Space đánh dấu (viền xanh), Enter mở Combine khi ≥2 ảnh được đánh dấu.
 
 - Slider/ComboBox dùng style chung: rail 84 px, knob tròn, chiều cao `CONTROL_H` 26, rail lấy
   `bg_pill_track`, phần đã kéo tô accent (`slider_trailing_fill`). Nhãn dài được rút ("Corner radius"
   → "Radius", "Outline width" → "Outline") để hàng không tràn panel 256 px.
 - Fixture `.zwork/uat/layers-sample.qsdoc` có sẵn Border/Shadow/Color adjust để panel Effects hiện
   slider mà không cần click (máy này không tổng hợp được chuột).
+
+- Filmstrip: ⌘⇧T mở tray, ←/→ chọn, Space đánh dấu nhiều, Enter mở Combine (hoặc mở ảnh nếu chọn 1).
+  Khi tray mở, phím mũi tên thuộc tray (nudge tạm nhường). Panel cao 124 px để không cắt thumbnail.
+- `components::dialog_actions`: hàng nút phải canh đúng chiều cao `CONTROL_H` — trước đây
+  `with_layout(right_to_left)` chiếm hết chiều cao còn lại, làm Settings/Combine/Canvas cao bất thường.

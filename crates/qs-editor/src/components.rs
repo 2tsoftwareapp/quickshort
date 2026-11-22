@@ -458,6 +458,19 @@ pub fn status_pill(ui: &mut egui::Ui, label: &str, active: bool, tip: &str) -> b
 
 /// Empty state following `baseline-ui` ("MUST give empty states one clear next action").
 /// Returns `true` when the primary next-action button is clicked.
+/// Right-aligned row of dialog actions with an explicit height.
+///
+/// A bare `with_layout(right_to_left)` claims all remaining height, which made
+/// short dialogs stretch to a few hundred pixels of empty space.
+pub fn dialog_actions(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
+    let w = ui.available_width();
+    ui.allocate_ui_with_layout(
+        egui::vec2(w, CONTROL_H),
+        egui::Layout::right_to_left(egui::Align::Center),
+        add,
+    );
+}
+
 /// Compact action button: filled pill with a hairline, hover lightens it.
 ///
 /// `status_pill` is a *toggle* — inactive it draws text only, which is wrong

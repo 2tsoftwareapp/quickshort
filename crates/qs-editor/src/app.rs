@@ -107,6 +107,8 @@ pub struct EditorApp {
     show_layers: bool,
     show_inspector: bool,
     show_filmstrip: bool,
+    /// Keyboard cursor over the filmstrip (arrows move it, Space marks).
+    filmstrip_focus: Option<usize>,
     last_cursor_doc: Option<qs_doc::PointF>,
     filmstrip: Filmstrip,
     session_cache: std::collections::HashMap<PathBuf, SavedDocSession>,
@@ -201,6 +203,7 @@ impl EditorApp {
             show_layers: true,
             show_inspector: true,
             show_filmstrip: false,
+            filmstrip_focus: None,
             last_cursor_doc: None,
             filmstrip,
             session_cache: std::collections::HashMap::new(),
@@ -641,7 +644,7 @@ impl EditorApp {
                     }
                 });
                 ui.add_space(qs_theme::space::SM as f32);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                crate::components::dialog_actions(ui, |ui| {
                     if crate::components::pill_button(ui, "Apply", "Apply the canvas insets") {
                         apply = true;
                     }
@@ -1121,7 +1124,7 @@ impl EditorApp {
                 ui.add_space(qs_theme::space::SM as f32);
                 ui.separator();
                 ui.add_space(qs_theme::space::XS as f32);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                crate::components::dialog_actions(ui, |ui| {
                     if crate::components::pill_button_primary(ui, "Done", "Save and close") {
                         close_clicked = true;
                     }
@@ -1276,8 +1279,15 @@ impl EditorApp {
                     ui.radio_value(&mut self.combine_layout, layout, layout.label());
                 }
                 ui.add_space(qs_theme::space::MD as f32);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if crate::components::pill_button(ui, "Create Combined Sheet", "") {
+                ui.add_space(qs_theme::space::SM as f32);
+                ui.separator();
+                ui.add_space(qs_theme::space::XS as f32);
+                crate::components::dialog_actions(ui, |ui| {
+                    if crate::components::pill_button_primary(
+                        ui,
+                        "Create Combined Sheet",
+                        "Build the sheet",
+                    ) {
                         create = true;
                     }
                 });
@@ -1397,6 +1407,11 @@ impl EditorApp {
             }
             // Settings has the standard macOS shortcut; Align needs a panel that
             // used to be reachable only from the Layers header.
+            if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::T)
+                || i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::T)
+            {
+                self.show_filmstrip = !self.show_filmstrip;
+            }
             if i.consume_key(Modifiers::COMMAND, Key::Comma) {
                 self.settings_open = true;
             }
@@ -1580,22 +1595,22 @@ impl EditorApp {
             }
 
             let nudge_step = if i.modifiers.shift { 10.0 } else { 1.0 };
-            if !overlay_keys && !typing && i.consume_key(Modifiers::NONE, Key::ArrowLeft)
+            if !overlay_keys && !typing && !self.show_filmstrip && i.consume_key(Modifiers::NONE, Key::ArrowLeft)
                 || i.consume_key(Modifiers::SHIFT, Key::ArrowLeft)
             {
                 nudge = Some((-nudge_step, 0.0));
             }
-            if !overlay_keys && !typing && i.consume_key(Modifiers::NONE, Key::ArrowRight)
+            if !overlay_keys && !typing && !self.show_filmstrip && i.consume_key(Modifiers::NONE, Key::ArrowRight)
                 || i.consume_key(Modifiers::SHIFT, Key::ArrowRight)
             {
                 nudge = Some((nudge_step, 0.0));
             }
-            if !overlay_keys && !typing && i.consume_key(Modifiers::NONE, Key::ArrowUp)
+            if !overlay_keys && !typing && !self.show_filmstrip && i.consume_key(Modifiers::NONE, Key::ArrowUp)
                 || i.consume_key(Modifiers::SHIFT, Key::ArrowUp)
             {
                 nudge = Some((0.0, -nudge_step));
             }
-            if !overlay_keys && !typing && i.consume_key(Modifiers::NONE, Key::ArrowDown)
+            if !overlay_keys && !typing && !self.show_filmstrip && i.consume_key(Modifiers::NONE, Key::ArrowDown)
                 || i.consume_key(Modifiers::SHIFT, Key::ArrowDown)
             {
                 nudge = Some((0.0, nudge_step));
@@ -1999,8 +2014,10 @@ impl eframe::App for EditorApp {
         if self.show_filmstrip {
             let mut switch_target: Option<PathBuf> = None;
             let mut refresh_tray = false;
+            // Tall enough for the RECENT column (label + three pill buttons);
+            // at 94 the thumbnails were clipped by the panel edge.
             egui::Panel::bottom("filmstrip_panel")
-                .exact_size(94.0)
+                .exact_size(124.0)
                 .frame(
                     egui::Frame::NONE
                         .fill(theme::bg_inspector_bot())
@@ -2008,9 +2025,54 @@ impl eframe::App for EditorApp {
                         .inner_margin(egui::Margin::symmetric(10, 6)),
                 )
                 .show(ui, |ui| {
+                    // Keyboard route: arrows move a cursor, Space marks for
+                    // Combine, Enter opens the marked set. Without this the tray
+                    // was mouse-only.
+                    if ui.ctx().memory(|m| m.focused().is_none()) {
+                        let n = self.filmstrip.items.len();
+                        if n > 0 {
+                            let (left, right, space, enter) = ui.input(|i| {
+                                (
+                                    i.key_pressed(egui::Key::ArrowLeft),
+                                    i.key_pressed(egui::Key::ArrowRight),
+                                    i.key_pressed(egui::Key::Space),
+                                    i.key_pressed(egui::Key::Enter),
+                                )
+                            });
+                            let mut idx = self.filmstrip_focus.unwrap_or(0).min(n - 1);
+                            if right {
+                                idx = (idx + 1).min(n - 1);
+                            } else if left {
+                                idx = idx.saturating_sub(1);
+                            }
+                            if left || right {
+                                self.filmstrip_focus = Some(idx);
+                            }
+                            if let Some(item) = self.filmstrip.items.get(idx) {
+                                let path = item.path.clone();
+                                if space {
+                                    if let Some(pos) =
+                                        self.tray_selected.iter().position(|p| p == &path)
+                                    {
+                                        self.tray_selected.remove(pos);
+                                    } else {
+                                        self.tray_selected.push(path.clone());
+                                    }
+                                }
+                                if enter {
+                                    if self.tray_selected.len() >= 2 {
+                                        self.combine_dialog_open = true;
+                                    } else {
+                                        switch_target = Some(path);
+                                    }
+                                }
+                            }
+                        }
+                    }
                     ui.horizontal(|ui| {
                         ui.vertical(|ui| {
-                            ui.set_width(74.0);
+                            // Wide enough for the "Combine (N)" pill.
+                            ui.set_width(104.0);
                             ui.label(
                                 egui::RichText::new("RECENT")
                                     .size(10.0)
@@ -2061,7 +2123,10 @@ impl eframe::App for EditorApp {
                                 .show(ui, |ui| {
                                     ui.horizontal(|ui| {
                                         ui.spacing_mut().item_spacing.x = 8.0;
-                                        for item in &self.filmstrip.items {
+                                        for (item_idx, item) in
+                                            self.filmstrip.items.iter().enumerate()
+                                        {
+                                            let focused = self.filmstrip_focus == Some(item_idx);
                                             let is_active =
                                                 self.doc_path.as_deref() == Some(item.path.as_path());
                                             let is_tray_sel = self
@@ -2100,6 +2165,14 @@ impl eframe::App for EditorApp {
                                                 border,
                                                 StrokeKind::Inside,
                                             );
+                                            if focused {
+                                                ui.painter().rect_stroke(
+                                                    rect,
+                                                    theme::RADIUS_PILL,
+                                                    egui::Stroke::new(2.0, theme::accent_blue()),
+                                                    StrokeKind::Outside,
+                                                );
+                                            }
                                             if let Some(tex) = &item.texture {
                                                 let avail = rect.shrink2(Vec2::new(6.0, 14.0));
                                                 let img_rect = Rect::from_min_max(
@@ -2918,6 +2991,7 @@ mod tests {
             show_layers: true,
             show_inspector: true,
             show_filmstrip: false,
+            filmstrip_focus: None,
             last_cursor_doc: None,
             filmstrip: Filmstrip::new(None),
             session_cache: std::collections::HashMap::new(),
