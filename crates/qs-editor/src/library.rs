@@ -23,6 +23,11 @@ const THUMB_H: u32 = 84;
 /// Tall enough to hold the 84 px thumbnail with breathing room; a shorter
 /// row let the thumbnail bleed into the next one.
 const ROW_H: f32 = 92.0;
+/// Fixed star column, then a gap, then the thumbnail: keeps every row aligned.
+const STAR_COL: f32 = 34.0;
+const GAP: f32 = 8.0;
+/// Margin the dialog keeps from the window edge.
+const MARGIN: f32 = 24.0;
 /// Thumbnails requested but not yet returned; keeps the worker from being
 /// flooded when a 10k-entry folder is filtered to everything.
 const MAX_INFLIGHT: usize = 12;
@@ -320,18 +325,27 @@ impl Library {
 
         let mut open = self.open;
         let mut action = None;
+        // Leave a real margin: at 720x600 the old default filled the window and
+        // covered the status bar.
+        let avail = ctx.content_rect().size();
+        let size = Vec2::new(
+            (avail.x - 2.0 * MARGIN).clamp(420.0, 860.0),
+            (avail.y - 2.0 * MARGIN).clamp(320.0, 620.0),
+        );
         egui::Window::new("Library")
             .frame(theme::modal_frame())
             .open(&mut open)
             .collapsible(false)
             .resizable(true)
-            .default_size(Vec2::new(780.0, 560.0))
+            .default_size(size)
             .min_size(Vec2::new(420.0, 320.0))
             .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
             .show(ctx, |ui| {
                 action = self.body(ui);
             });
-        self.open = open;
+        // `body` can close the view itself (Escape); copying `open` back
+        // unconditionally used to resurrect it.
+        self.open = open && self.open;
         action
     }
 
@@ -436,7 +450,6 @@ impl Library {
             }
         });
         ui.add_space(qs_theme::space::XS as f32);
-
         if names.is_empty() {
             components::empty_state(
                 ui,
@@ -498,36 +511,47 @@ impl Library {
             }
         }
 
-        ui.separator();
-        if let Some(act) = self.footer(ui) {
-            action = Some(act);
+        // An empty footer is just a hairline eating 90 px of list space.
+        if !self.selected.is_empty() {
+            ui.separator();
+            if let Some(act) = self.footer(ui) {
+                action = Some(act);
+            }
         }
         self.delete_dialog(ui.ctx());
         action
     }
 
     fn toolbar(&mut self, ui: &mut egui::Ui) {
+        // Two deliberate rows instead of one wrapping row: a separator inside a
+        // wrapped row leaves a stray `|` at the start of the next line.
         ui.horizontal(|ui| {
             ui.label(
                 egui::RichText::new("Search")
                     .size(qs_theme::font::SMALL as f32)
                     .color(theme::text_secondary()),
             );
+            // The field takes the slack and Refresh sits on the far edge, so
+            // the row has no dead gap at any width.
+            let field_w = (ui.available_width() - 96.0).max(150.0);
             ui.add(
                 egui::TextEdit::singleline(&mut self.filter.search)
                     .hint_text("name or tag")
-                    .desired_width(200.0),
+                    .desired_width(field_w),
             );
-            if ui
-                .add_enabled(!self.scanning, egui::Button::new("Refresh"))
-                .on_hover_text("Rescan the capture folder")
-                .clicked()
-            {
+            if self.scanning {
+                ui.label(
+                    egui::RichText::new("Scanning…")
+                        .size(qs_theme::font::SMALL as f32)
+                        .color(theme::text_tertiary()),
+                );
+            } else if components::pill_button(ui, "Refresh", "Rescan the folder") {
                 self.refresh();
             }
         });
-        ui.add_space(qs_theme::space::XS as f32);
-        ui.horizontal_wrapped(|ui| {
+
+        ui.add_space(qs_theme::space::MD as f32);
+        ui.horizontal(|ui| {
             let mut kind = self.filter.kind;
             if components::status_pill(ui, "All", kind.is_none(), "Every file type") {
                 kind = None;
@@ -540,7 +564,7 @@ impl Library {
             }
             self.filter.kind = kind;
 
-            ui.separator();
+            ui.add_space(qs_theme::space::LG as f32);
             let mut date = self.filter.date;
             for option in [
                 DateFilter::All,
@@ -553,8 +577,10 @@ impl Library {
                 }
             }
             self.filter.date = date;
+        });
 
-            ui.separator();
+        ui.add_space(qs_theme::space::SM as f32);
+        ui.horizontal(|ui| {
             let mut sort = self.filter.sort;
             for option in [Sort::Newest, Sort::Oldest, Sort::Name] {
                 if components::status_pill(ui, option.label(), sort == option, "") {
@@ -563,7 +589,7 @@ impl Library {
             }
             self.filter.sort = sort;
 
-            ui.separator();
+            ui.add_space(qs_theme::space::XL as f32);
             if components::status_pill(
                 ui,
                 "Favourites",
@@ -576,7 +602,7 @@ impl Library {
 
         let tags = index::all_tags(self.entries.iter());
         if !tags.is_empty() {
-            ui.add_space(qs_theme::space::XS as f32);
+            ui.add_space(qs_theme::space::SM as f32);
             ui.horizontal_wrapped(|ui| {
                 if components::status_pill(ui, "All tags", self.filter.tag.is_none(), "") {
                     self.filter.tag = None;
@@ -665,8 +691,8 @@ impl Library {
             egui::StrokeKind::Inside,
         );
 
-        // Favourite marker.
-        let star_center = Pos2::new(rect.left() + 18.0, rect.center().y);
+        // Favourite marker, on its own fixed column so the thumbnails line up.
+        let star_center = Pos2::new(rect.left() + 20.0, rect.center().y);
         let star_color = if entry.favorite {
             theme::amber_orange()
         } else {
@@ -677,7 +703,10 @@ impl Library {
 
         // Thumbnail.
         let thumb_rect = Rect::from_min_size(
-            Pos2::new(rect.left() + 34.0, rect.center().y - THUMB_H as f32 / 2.0),
+            Pos2::new(
+                rect.left() + STAR_COL + GAP,
+                rect.center().y - THUMB_H as f32 / 2.0,
+            ),
             Vec2::new(THUMB_W as f32, THUMB_H as f32),
         );
         match thumb {
@@ -692,6 +721,12 @@ impl Library {
                     fitted,
                     Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
                     Color32::WHITE,
+                );
+                painter.rect_stroke(
+                    thumb_rect,
+                    CornerRadius::same(4),
+                    egui::Stroke::new(1.0, theme::border_subtle()),
+                    egui::StrokeKind::Inside,
                 );
             }
             None => {
@@ -738,13 +773,36 @@ impl Library {
             theme::text_tertiary(),
         );
 
-        // Open affordance on the right edge.
+        // Open is a pill like every other affordance in the app, not bare text.
         let open_rect = Rect::from_center_size(
-            Pos2::new(rect.right() - 34.0, rect.center().y),
-            Vec2::new(56.0, 24.0),
+            Pos2::new(rect.right() - 16.0 - 30.0, rect.center().y),
+            Vec2::new(60.0, 26.0),
+        );
+        let open_hovered = ui.rect_contains_pointer(open_rect);
+        painter.rect_filled(
+            open_rect,
+            CornerRadius::same(7),
+            if open_hovered {
+                theme::bg_btn_secondary_hover_top()
+            } else {
+                theme::bg_btn_secondary_top()
+            },
+        );
+        painter.rect_stroke(
+            open_rect,
+            CornerRadius::same(7),
+            egui::Stroke::new(1.0, theme::border_subtle()),
+            egui::StrokeKind::Inside,
+        );
+        painter.text(
+            open_rect.center(),
+            Align2::CENTER_CENTER,
+            "Open",
+            FontId::proportional(qs_theme::font::SMALL as f32),
+            theme::text_primary(),
         );
         let open = ui
-            .put(open_rect, egui::Button::new("Open").frame(false))
+            .put(open_rect, egui::Button::new("").frame(false))
             .on_hover_text("Open in the editor");
 
         // Clicking the star area toggles the favourite; everything else selects.
@@ -804,9 +862,7 @@ impl Library {
                         .hint_text("add tag")
                         .desired_width(96.0),
                 );
-                add_tag = ui
-                    .add_enabled(!read_only, egui::Button::new("Add"))
-                    .clicked()
+                add_tag = (!read_only && components::pill_button(ui, "Add", "Attach this tag"))
                     || (ui.input(|i| i.key_pressed(egui::Key::Enter))
                         && !self.tag_draft.trim().is_empty());
             } else if count > 1 {
@@ -819,18 +875,19 @@ impl Library {
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if count > 0 {
-                    let trash = egui::Button::new(
-                        egui::RichText::new(format!("Move {count} to Trash"))
-                            .color(theme::danger_red()),
-                    );
-                    if ui
-                        .add_enabled(!read_only, trash)
-                        .on_hover_text("Files go to the system trash")
-                        .clicked()
+                    if !read_only
+                        && components::pill_button_colored(
+                            ui,
+                            &format!("Move {count} to Trash"),
+                            "Files go to the system trash",
+                            theme::danger_red(),
+                        )
                     {
                         self.confirm_delete = true;
                     }
-                    if count == 1 && ui.button("Reveal").clicked() {
+                    if count == 1
+                        && components::pill_button(ui, "Reveal", "Show in the file manager")
+                    {
                         action = sole_path.clone().map(LibraryAction::Reveal);
                     }
                 }

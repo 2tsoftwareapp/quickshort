@@ -452,6 +452,60 @@ pub fn status_pill(ui: &mut egui::Ui, label: &str, active: bool, tip: &str) -> b
 
 /// Empty state following `baseline-ui` ("MUST give empty states one clear next action").
 /// Returns `true` when the primary next-action button is clicked.
+/// Compact action button: filled pill with a hairline, hover lightens it.
+///
+/// `status_pill` is a *toggle* — inactive it draws text only, which is wrong
+/// for an action. Actions use this instead.
+pub fn pill_button(ui: &mut egui::Ui, label: &str, tip: &str) -> bool {
+    pill_button_colored(ui, label, tip, theme::text_primary())
+}
+
+/// Same pill with a custom label colour, for destructive actions.
+pub fn pill_button_colored(
+    ui: &mut egui::Ui,
+    label: &str,
+    tip: &str,
+    color: Color32,
+) -> bool {
+    let galley = ui.painter().layout_no_wrap(
+        label.to_owned(),
+        egui::FontId::proportional(fs(font::SMALL)),
+        color,
+    );
+    let size = Vec2::new(galley.size().x + sp(space::LG), sp(space::XL));
+    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+    let hovered = resp.hovered();
+    let painter = ui.painter();
+    let cr = rad(radius::SM);
+    painter.rect_filled(
+        rect,
+        cr,
+        if hovered {
+            theme::bg_btn_secondary_hover_top()
+        } else {
+            theme::bg_btn_secondary_top()
+        },
+    );
+    painter.rect_stroke(
+        rect,
+        cr,
+        Stroke::new(1.0, theme::border_subtle()),
+        egui::StrokeKind::Inside,
+    );
+    painter.text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        label,
+        egui::FontId::proportional(fs(font::SMALL)),
+        color,
+    );
+    if tip.is_empty() {
+        resp.clicked()
+    } else {
+        resp.on_hover_text(tip).clicked()
+    }
+}
+
 pub fn empty_state(
     ui: &mut egui::Ui,
     title: &str,

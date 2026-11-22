@@ -153,3 +153,12 @@ rm "$HOME/Library/Application Support/quickshort/config.toml"
 - **Find** không sửa chữ, không đọc clipboard — chỉ điều hướng trong ảnh đang mở.
 - **Copy text theo vùng** lấy dòng có *tâm* nằm trong khung; dòng nằm nửa trong nửa ngoài sẽ bị bỏ.
 - Ảnh chụp ra trắng ⇒ thiếu quyền **Screen Recording**, không phải lỗi render.
+
+## 7. Ghi chú thiết kế sau vòng polish
+
+- Mọi hành động dùng chung `components::pill_button` (nền + viền + hover). `status_pill` chỉ dùng cho
+  toggle/filter — trước đây dùng nó cho nút hành động nên nút trông như chữ trơn.
+- Hàng filter Library chia hai hàng cố định, không dùng `separator` trong hàng wrap (separator bị
+  đẩy xuống đầu dòng mới thành dấu `|` lơ lửng).
+- Dialog cách mép cửa sổ 24 px; ở 720×600 trước đây nó phủ kín và đè status bar.
+- Chỉ một overlay mở tại một thời điểm: ⌘F đóng Library, ⌘L đóng Find.

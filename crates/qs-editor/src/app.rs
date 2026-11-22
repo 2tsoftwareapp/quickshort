@@ -1338,10 +1338,14 @@ impl EditorApp {
             }
 
             if i.consume_key(Modifiers::COMMAND, Key::L) || i.consume_key(Modifiers::CTRL, Key::L) {
+                // One overlay at a time: two stacked dialogs hide each other's
+                // content and both keep stealing the keyboard.
+                self.find.open = false;
                 self.library.toggle();
             }
 
             if i.consume_key(Modifiers::COMMAND, Key::F) || i.consume_key(Modifiers::CTRL, Key::F) {
+                self.library.open = false;
                 self.find.open = true;
                 self.find.focus_pending = true;
             }

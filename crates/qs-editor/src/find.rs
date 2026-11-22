@@ -45,7 +45,8 @@ pub fn render(
         .open(&mut open)
         .collapsible(false)
         .resizable(false)
-        .anchor(egui::Align2::CENTER_TOP, Vec2::new(0.0, 72.0))
+        // Clear of the toolbar and the properties bar, which are 96 px tall.
+        .anchor(egui::Align2::CENTER_TOP, Vec2::new(0.0, 132.0))
         .show(ctx, |ui| {
             ui.horizontal(|ui| {
                 let resp = ui.add(
@@ -68,14 +69,14 @@ pub fn render(
                         1
                     });
                 }
-                if ui.button("Prev").clicked() {
+                if crate::components::pill_button(ui, "Prev", "Previous match") {
                     action = FindAction::Step(-1);
                 }
-                if ui.button("Next").clicked() {
+                if crate::components::pill_button(ui, "Next", "Next match") {
                     action = FindAction::Step(1);
                 }
             });
-            ui.add_space(space::XS as f32);
+            ui.add_space(space::SM as f32);
             // Three distinct states: still reading, nothing to search yet, and
             // a real result count. "No match" while the worker runs would be a
             // lie the user cannot tell apart from a wrong query.
