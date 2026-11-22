@@ -317,7 +317,7 @@ impl Annotation {
                 (c.x as f64 - w / 2.0).round() as i32,
                 (c.y as f64 - h / 2.0).round() as i32,
             );
-            render_text(t, pos, &label, STEP_PX, true, 0xFFFFFF, vrect, scale);
+            render_text(t, pos, &label, STEP_PX, true, qs_theme::pal().on_accent, vrect, scale);
             return;
         }
         if let Self::Text {

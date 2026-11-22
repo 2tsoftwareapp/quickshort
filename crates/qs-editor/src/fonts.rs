@@ -19,6 +19,18 @@ pub fn install(ctx: &egui::Context) {
     if let Some(prop) = fonts.families.get_mut(&FontFamily::Proportional) {
         prop.insert(0, "BeVietnamPro-Regular".to_owned());
     }
+    // On macOS the UI reads in the system face (SF Pro), as native apps do.
+    // It is loaded from the OS, never bundled: its licence is Apple-only.
+    // Be Vietnam Pro stays behind it for any glyph SF lacks.
+    #[cfg(target_os = "macos")]
+    if let Ok(bytes) = std::fs::read("/System/Library/Fonts/SFNS.ttf") {
+        fonts
+            .font_data
+            .insert("SF-Pro".to_owned(), FontData::from_owned(bytes).into());
+        if let Some(prop) = fonts.families.get_mut(&FontFamily::Proportional) {
+            prop.insert(0, "SF-Pro".to_owned());
+        }
+    }
     // Also declare a named Bold family for headings / emphasis.
     fonts.families.insert(
         FontFamily::Name("Bold".into()),
