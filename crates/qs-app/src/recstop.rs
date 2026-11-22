@@ -42,7 +42,7 @@ impl RecStop {
             .with_window_level(WindowLevel::AlwaysOnTop)
             .with_inner_size(LogicalSize::new(W, H));
         let win = Rc::new(el.create_window(attrs).context("rec window")?);
-        crate::widgets::round_window(&win, 11.0);
+        crate::widgets::round_window(&win, crate::widgets::popup_radius(H / 2.0));
         crate::widgets::place_popup(&win, el, pos, W, H);
         let surf = SbContext::new(win.clone())
             .and_then(|c| Surface::new(&c, win.clone()))
@@ -120,7 +120,7 @@ impl RecStop {
             &mut cv,
             W,
             H,
-            11.0,
+            crate::widgets::popup_radius(H / 2.0),
             qs_theme::pal().popover,
             qs_theme::pal().popover_border,
             qs_theme::pal().fringe,

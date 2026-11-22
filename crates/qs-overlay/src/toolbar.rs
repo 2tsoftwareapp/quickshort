@@ -130,8 +130,10 @@ const GAP: f64 = qs_theme::space::XS; // 4px grid between buttons
 const PAD: f64 = 6.0; // dock inner padding
 const EDGE_GAP: f64 = qs_theme::space::SM; // 8px between selection edge and dock
 const STROKE: f64 = 1.6; // SF-Symbol-weight icon stroke, logical px
-const DOCK_RAD: f64 = qs_theme::radius::LG; // 10px outer dock corner radius
-const BTN_RAD: f64 = qs_theme::radius::SM; // 6px concentric inner button radius
+// macOS 26 HUD: round buttons in a dock whose corners are concentric with
+// them (button radius + dock padding), so a one-row dock reads as a capsule.
+const BTN_RAD: f64 = R;
+const DOCK_RAD: f64 = R + PAD;
 
 pub struct Toolbar {
     /// bounding box in virtual logical coords
