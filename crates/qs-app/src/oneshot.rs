@@ -205,8 +205,18 @@ impl ApplicationHandler<Ev> for Run {
             && self.toast.is_none()
             && self.workers == 0
         {
-            el.exit();
-            return;
+            // the clipboard holder and notification threads end on their
+            // own — poll until they have, the process owns their data
+            #[cfg(target_os = "linux")]
+            let lingering = actions::clipboard_held() || crate::linux_notify::in_flight();
+            #[cfg(not(target_os = "linux"))]
+            let lingering = actions::clipboard_held();
+            if !lingering {
+                el.exit();
+                return;
+            }
+            let poll = Instant::now() + std::time::Duration::from_millis(200);
+            wake = Some(wake.map_or(poll, |w| w.min(poll)));
         }
         el.set_control_flow(match wake {
             Some(w) => ControlFlow::WaitUntil(w),

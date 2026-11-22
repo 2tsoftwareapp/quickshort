@@ -225,6 +225,9 @@ fn run_one_shot(args: Args) -> Result<()> {
             actions::provenance_now(qs_library::CaptureMode::Fullscreen),
         )?;
         eprintln!("fullscreen saved, {:?} outcome", d.outcome);
+        while actions::clipboard_held() {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
         if let actions::Outcome::Saved(p) = &d.outcome {
             if cfg.after_capture() == config::AfterCapture::Editor {
                 actions::open_editor(p);

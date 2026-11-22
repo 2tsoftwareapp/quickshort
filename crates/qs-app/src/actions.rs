@@ -100,16 +100,13 @@ pub fn dispatch(
             Outcome::Shared(link, p)
         }
         Action::Copy => {
-            // clipboard first — it is what the user waits on — then the
-            // same file a Save writes, so no capture lives only in memory
+            // the same file a Save writes, so no capture lives only in
+            // memory, then the clipboard
+            let saved = save(&img, target)
+                .map_err(|e| eprintln!("copy: save failed: {e:#}"))
+                .ok();
             copy_image_to_clipboard(&img, wait_clipboard);
-            match save(&img, target) {
-                Ok(p) => Outcome::Copied(Some(p)),
-                Err(e) => {
-                    eprintln!("copy: save failed: {e:#}");
-                    Outcome::Copied(None)
-                }
-            }
+            Outcome::Copied(saved)
         }
         Action::Edit => {
             // the flattened PNG lands like a normal Save (recents, shelf,
@@ -519,6 +516,23 @@ fn wl_copy(mime: &str, data: &[u8]) -> bool {
 
 /// On Wayland the clipboard dies with the owning process — `set().wait()`
 /// keeps us alive serving paste requests until another app takes over.
+/// Clipboard copies still being served by a holder thread (see
+/// `copy_image_to_clipboard`); a short-lived process stays up while any are.
+#[cfg(target_os = "linux")]
+static CLIP_HELD: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+pub fn clipboard_held() -> bool {
+    #[cfg(target_os = "linux")]
+    return CLIP_HELD.load(std::sync::atomic::Ordering::Relaxed) > 0;
+    #[cfg(not(target_os = "linux"))]
+    false
+}
+
+/// X11 serves the clipboard from the owning process: the data is gone when
+/// the last `arboard::Clipboard` drops unless a clipboard manager took it.
+/// `wait` (short-lived processes): a holder thread serves it until another
+/// app takes the selection, without blocking the caller. Otherwise one
+/// instance lives as long as the resident app.
 fn copy_image_to_clipboard(img: &RgbaImage, wait: bool) {
     // Wayland: wl-copy forks a helper — survives after this call returns,
     // so paste works without blocking the worker on `set().wait()`.
@@ -538,15 +552,29 @@ fn copy_image_to_clipboard(img: &RgbaImage, wait: bool) {
         bytes: img.as_raw().into(),
     };
     #[cfg(target_os = "linux")]
-    let r = arboard::Clipboard::new().map(|mut c| {
-        use arboard::SetExtLinux;
-        // `set` and `set.wait()` are distinct types — branch the whole call
-        if wait {
-            c.set().wait().image(data)
-        } else {
-            c.set().image(data)
+    let r = if wait {
+        use std::sync::atomic::Ordering;
+        CLIP_HELD.fetch_add(1, Ordering::Relaxed);
+        let data = data.to_owned_img();
+        std::thread::spawn(move || {
+            use arboard::SetExtLinux;
+            report_clipboard(arboard::Clipboard::new().map(|mut c| c.set().wait().image(data)));
+            CLIP_HELD.fetch_sub(1, Ordering::Relaxed);
+        });
+        return;
+    } else {
+        static RESIDENT: std::sync::Mutex<Option<arboard::Clipboard>> = std::sync::Mutex::new(None);
+        let mut slot = RESIDENT.lock().unwrap_or_else(|e| e.into_inner());
+        if slot.is_none() {
+            *slot = arboard::Clipboard::new()
+                .map_err(|e| eprintln!("clipboard: {e}"))
+                .ok();
         }
-    });
+        match slot.as_mut() {
+            Some(c) => Ok(c.set_image(data)),
+            None => return,
+        }
+    };
     #[cfg(not(target_os = "linux"))]
     let r = {
         let _ = wait;

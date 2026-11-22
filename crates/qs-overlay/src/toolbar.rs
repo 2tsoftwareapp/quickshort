@@ -326,7 +326,8 @@ impl Toolbar {
                 || matches!(item, Item::Color(c) if self.color == *c)
                 || matches!(item, Item::FontSize(s) if self.font_size == *s)
                 || matches!(item, Item::Bold) && self.bold
-                || matches!(item, Item::More) && self.more
+                || matches!(item, Item::More)
+                    && (self.more || self.tool.is_some_and(|t| MORE.contains(&Item::Tool(t))))
                 || is_primary;
             let enabled = match item {
                 Item::Undo => self.can_undo,
