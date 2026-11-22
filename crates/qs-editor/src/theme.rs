@@ -152,7 +152,16 @@ pub fn sync_egui_visuals(ctx: &egui::Context) {
 
         s.spacing.item_spacing = Vec2::new(8.0, 6.0);
         s.spacing.button_padding = Vec2::new(10.0, 5.0);
-        s.spacing.slider_width = 132.0;
+        // The inspector is 236 px wide; a wider rail pushed its labels and
+        // value fields outside the panel.
+        s.spacing.slider_width = 84.0;
+        // Stock sliders/combos follow the same control height and token
+        // colours as the pill language: 26 px tall, token rail, round knob,
+        // accent trailing fill.
+        s.spacing.interact_size.y = crate::components::CONTROL_H;
+        s.visuals.slider_trailing_fill = true;
+        s.visuals.handle_shape = egui::style::HandleShape::Circle;
+        s.visuals.widgets.inactive.bg_fill = bg_pill_track();
     });
 }
 

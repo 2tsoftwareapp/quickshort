@@ -210,3 +210,9 @@ rm "$HOME/Library/Application Support/quickshort/config.toml"
 
 Ảnh nằm trong `.zwork/uat/` (không commit). Combine chưa có ảnh vì cần chọn ≥2 ảnh trong filmstrip
 bằng chuột — macOS chặn tổng hợp click trên máy này.
+
+- Slider/ComboBox dùng style chung: rail 84 px, knob tròn, chiều cao `CONTROL_H` 26, rail lấy
+  `bg_pill_track`, phần đã kéo tô accent (`slider_trailing_fill`). Nhãn dài được rút ("Corner radius"
+  → "Radius", "Outline width" → "Outline") để hàng không tràn panel 256 px.
+- Fixture `.zwork/uat/layers-sample.qsdoc` có sẵn Border/Shadow/Color adjust để panel Effects hiện
+  slider mà không cần click (máy này không tổng hợp được chuột).

@@ -30,6 +30,11 @@ fn a_multi_object_document_round_trips_and_leaves_a_uat_fixture() {
         fill: Fill::None,
     });
 
+    // Effects on, so the inspector renders its sliders for UAT capture.
+    doc.effects.border = Some(qs_doc::BorderEffect::default());
+    doc.effects.color_adjust = Some(qs_doc::ColorAdjustEffect::default());
+    doc.effects.shadow = Some(qs_doc::ShadowEffect::default());
+
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.zwork/uat");
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("layers-sample.qsdoc");

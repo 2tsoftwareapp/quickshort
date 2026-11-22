@@ -175,7 +175,7 @@ fn text_ui(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
     if let Some(mut outline) = current.outline {
         let mut dirty = false;
         if ui
-            .add(egui::Slider::new(&mut outline.width, 0.5..=12.0).text("Outline width"))
+            .add(egui::Slider::new(&mut outline.width, 0.5..=12.0).text("Outline"))
             .changed()
         {
             dirty = true;
@@ -244,7 +244,7 @@ fn effects_ui(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
     toggle(ui, "Border", &mut effects.border);
     if let Some(b) = &mut effects.border {
         ui.add(egui::Slider::new(&mut b.width, 0.0..=256.0).text("Width"));
-        ui.add(egui::Slider::new(&mut b.radius, 0.0..=1024.0).text("Corner radius"));
+        ui.add(egui::Slider::new(&mut b.radius, 0.0..=1024.0).text("Radius"));
         components::switch_row(ui, &mut b.inset, "Inside image");
         color(ui, "Border color", &mut b.color);
     }
@@ -309,7 +309,7 @@ fn effects_ui(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
     toggle(ui, "Reflection", &mut effects.reflection);
     if let Some(rf) = &mut effects.reflection {
         ui.add(egui::Slider::new(&mut rf.height, 8.0..=256.0).text("Height"));
-        ui.add(egui::Slider::new(&mut rf.opacity, 0.0..=1.0).text("Reflect opacity"));
+        ui.add(egui::Slider::new(&mut rf.opacity, 0.0..=1.0).text("Opacity"));
         ui.add(egui::Slider::new(&mut rf.gap, 0.0..=32.0).text("Gap"));
     }
     toggle(ui, "Watermark", &mut effects.watermark);
@@ -324,7 +324,7 @@ fn effects_ui(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
                 }
             });
         ui.add(egui::Slider::new(&mut w.font_scale, 0.05..=32.0).logarithmic(true).text("Size"));
-        ui.add(egui::Slider::new(&mut w.opacity, 0.0..=1.0).text("Watermark opacity"));
+        ui.add(egui::Slider::new(&mut w.opacity, 0.0..=1.0).text("Opacity"));
         color(ui, "Watermark color", &mut w.color);
     }
     toggle(ui, "Torn edge", &mut effects.edge);
