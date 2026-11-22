@@ -296,6 +296,30 @@ pub fn glass_panel_frame() -> egui::Frame {
         .inner_margin(egui::Margin::same(qs_theme::space::MD as i8))
 }
 
+/// Paints the glass card over the whole space the panel gives it and lays
+/// `add` out inside, clipped — content wider than the panel can no longer
+/// stretch the card past the window edge.
+pub fn glass_panel<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let rect = ui.available_rect_before_wrap();
+    let cr = CornerRadius::same(qs_theme::radius::XL as u8);
+    ui.painter().add(soft_shadow().as_shape(rect, cr));
+    ui.painter().rect(
+        rect,
+        cr,
+        bg_inspector_top(),
+        Stroke::new(1.0, border_subtle()),
+        StrokeKind::Inside,
+    );
+    let inner = rect.shrink(qs_theme::space::MD as f32);
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner));
+    child.set_clip_rect(rect.shrink(1.0).intersect(ui.clip_rect()));
+    // stock sliders size their rail from a fixed width; fit it to the card
+    child.spacing_mut().slider_width = (inner.width() - 150.0).clamp(48.0, 84.0);
+    let out = add(&mut child);
+    ui.allocate_rect(rect, egui::Sense::hover());
+    out
+}
+
 /// Transparent gutter a side panel reserves around its `glass_panel_frame`,
 /// so the panel floats inset from the window edge.
 pub fn panel_gutter() -> egui::Frame {

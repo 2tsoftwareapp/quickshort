@@ -2341,8 +2341,7 @@ impl eframe::App for EditorApp {
             .size_range(192.0..=316.0)
             .frame(theme::panel_gutter())
             .show(ui, |ui| {
-                theme::glass_panel_frame().show(ui, |ui| {
-                ui.set_min_size(ui.available_size());
+                theme::glass_panel(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(
                         egui::RichText::new("LAYERS")
@@ -2546,7 +2545,7 @@ impl eframe::App for EditorApp {
                     });
                 }
                 changed
-            }).inner
+            })
             });
             layers_resp.inner
         } else {
@@ -2562,8 +2561,7 @@ impl eframe::App for EditorApp {
                 .exact_size(272.0)
                 .frame(theme::panel_gutter())
                 .show(ui, |ui| {
-                theme::glass_panel_frame().show(ui, |ui| {
-                ui.set_min_size(ui.available_size());
+                theme::glass_panel(ui, |ui| {
                     egui::ScrollArea::vertical()
                         .show(ui, |ui| {
                             if self.canvas_dialog_open {
@@ -2630,7 +2628,7 @@ impl eframe::App for EditorApp {
                             changed
                         })
                         .inner
-                }).inner
+                })
             });
             panel_resp.inner
         } else {
