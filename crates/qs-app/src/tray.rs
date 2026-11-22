@@ -19,11 +19,20 @@ pub const ID_QUIT: &str = "quit";
 pub const ID_RECENT_PREFIX: &str = "recent:";
 pub const ID_UPDATE: &str = "update";
 pub const ID_DONATE: &str = "donate";
+pub const ID_EVIDENCE_START: &str = "evidence_start";
+pub const ID_EVIDENCE_NEXT: &str = "evidence_next";
+pub const ID_EVIDENCE_END: &str = "evidence_end";
 
 /// Rebuild the tray menu. `recents` = newest-first saved PNGs;
 /// `pending_update` = version waiting to be installed (changes the
-/// "Check for Updates…" item into a one-click updater).
-pub fn build_menu(cfg: &Config, recents: &[PathBuf], pending_update: Option<&str>) -> Menu {
+/// "Check for Updates…" item into a one-click updater); `evidence` = label
+/// of the running evidence session.
+pub fn build_menu(
+    cfg: &Config,
+    recents: &[PathBuf],
+    pending_update: Option<&str>,
+    evidence: Option<&str>,
+) -> Menu {
     let menu = Menu::new();
     let capture = MenuItem::with_id(
         ID_CAPTURE,
@@ -66,9 +75,24 @@ pub fn build_menu(cfg: &Config, recents: &[PathBuf], pending_update: Option<&str
     );
     let donate = MenuItem::with_id(ID_DONATE, "Support Quickshort", true, None);
     let quit = MenuItem::with_id(ID_QUIT, "Quit Quickshort", true, None);
+    let evidence_items = match evidence {
+        None => vec![MenuItem::with_id(
+            ID_EVIDENCE_START,
+            "Start Evidence Session",
+            true,
+            None,
+        )],
+        Some(l) => vec![
+            MenuItem::new(format!("Evidence: {l}"), false, None),
+            MenuItem::with_id(ID_EVIDENCE_NEXT, "Next Test Case", true, None),
+            MenuItem::with_id(ID_EVIDENCE_END, "End Evidence Session", true, None),
+        ],
+    };
+    let _ = menu.append_items(&[&capture, &capture_full]);
+    for i in &evidence_items {
+        let _ = menu.append(i);
+    }
     let _ = menu.append_items(&[
-        &capture,
-        &capture_full,
         &recent,
         &PredefinedMenuItem::separator(),
         &open,
@@ -152,6 +176,7 @@ pub mod linux_tray {
             cfg: Config,
             recents: Vec<PathBuf>,
             update: Option<String>,
+            evidence: Option<String>,
         },
         Quit,
     }
@@ -179,7 +204,7 @@ pub mod linux_tray {
             }
             let built = tray_icon::TrayIcon::builder()
                 .with_tooltip("Quickshort — region screenshot")
-                .with_menu(Box::new(build_menu(&cfg, &recents, None)))
+                .with_menu(Box::new(build_menu(&cfg, &recents, None, None)))
                 .with_icon(tray_icon(44))
                 .build();
             match built {
@@ -215,12 +240,14 @@ pub mod linux_tray {
                         cfg,
                         recents,
                         update,
+                        evidence,
                     } => TRAY.with(|t| {
                         if let Some(t) = t.borrow().as_ref() {
                             t.set_menu(Some(Box::new(build_menu(
                                 &cfg,
                                 &recents,
                                 update.as_deref(),
+                                evidence.as_deref(),
                             ))));
                         }
                     }),
@@ -249,11 +276,18 @@ pub mod linux_tray {
     }
 
     impl TrayHandle {
-        pub fn set_menu(&self, cfg: Config, recents: Vec<PathBuf>, update: Option<String>) {
+        pub fn set_menu(
+            &self,
+            cfg: Config,
+            recents: Vec<PathBuf>,
+            update: Option<String>,
+            evidence: Option<String>,
+        ) {
             let _ = self.tx.send(TrayMsg::Menu {
                 cfg,
                 recents,
                 update,
+                evidence,
             });
             wake();
         }
