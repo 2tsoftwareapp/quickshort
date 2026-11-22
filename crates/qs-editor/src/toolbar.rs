@@ -29,6 +29,8 @@ pub struct TopBarResult {
     pub save_as: bool,
     pub open: bool,
     pub export: bool,
+    /// Where the Export button sits, so its dropdown can hang below it.
+    pub export_rect: Option<Rect>,
     pub canvas: bool,
     pub zoom: ZoomCmd,
 }
@@ -320,6 +322,7 @@ pub fn render_top_bar(
         save_rect.left()
     };
 
+    res.export_rect = Some(export_rect);
     // Secondary action buttons (Save / Export) + Primary CTA (Copy)
     if compact_actions {
         if icon_segment(
@@ -340,7 +343,7 @@ pub fn render_top_bar(
             ActionIcon::Export,
             false,
             true,
-            "Export PNG",
+            "Export image (Ctrl+Shift+E)",
         ) {
             res.export = true;
         }
@@ -363,7 +366,7 @@ pub fn render_top_bar(
             ActionIcon::Export,
             "Export",
             false,
-            "Export PNG",
+            "Export image (Ctrl+Shift+E)",
         ) {
             res.export = true;
         }

@@ -134,7 +134,6 @@ pub struct Library {
     selected: BTreeSet<String>,
     anchor: Option<String>,
     tag_draft: String,
-    confirm_delete: bool,
     /// Last persistence failure, shown until the next successful write.
     write_error: Option<String>,
     /// Viewport size of the frame being drawn, so the list can cap itself.
@@ -158,7 +157,6 @@ impl Default for Library {
             selected: BTreeSet::new(),
             anchor: None,
             tag_draft: String::new(),
-            confirm_delete: false,
             write_error: None,
             viewport: None,
         }
@@ -225,11 +223,6 @@ impl Library {
     /// Folder-level failure (unreadable directory), if any.
     pub fn error(&self) -> Option<&str> {
         self.error.as_deref()
-    }
-
-    /// True while the "Move to Trash" confirmation is on screen.
-    pub fn is_confirming_delete(&self) -> bool {
-        self.confirm_delete
     }
 
     pub fn refresh(&mut self) {
@@ -345,41 +338,37 @@ impl Library {
         Some(entry)
     }
 
-    pub fn show(&mut self, ctx: &egui::Context) -> Option<LibraryAction> {
+    /// The Library takes over the editor's canvas area (Esc or "Back to
+    /// image" returns) instead of floating as a window over it.
+    pub fn show(&mut self, ui: &mut egui::Ui) -> Option<LibraryAction> {
         if !self.open {
             return None;
         }
+        let ctx = ui.ctx().clone();
         self.poll_scan();
-        self.poll_thumbs(ctx);
-
-        let mut open = self.open;
-        let mut action = None;
-        // Leave a real margin: at 720x600 the old default filled the window and
-        // covered the status bar.
-        let avail = ctx.content_rect().size();
-        self.viewport = Some(avail);
-        let size = Vec2::new(
-            (avail.x - 2.0 * MARGIN).clamp(420.0, 860.0),
-            (avail.y - 2.0 * MARGIN).clamp(320.0, 620.0),
-        );
-        egui::Window::new("Library")
-            .frame(theme::modal_frame())
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(true)
-            .default_size(size)
-            // `default_size` is only the first frame: a long list used to grow
-            // the window past the screen bottom. Cap it and let the list scroll.
-            .max_height((avail.y - 2.0 * MARGIN).max(320.0))
-            .min_size(Vec2::new(420.0, 320.0))
-            .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
-            .show(ctx, |ui| {
-                action = self.body(ui);
-            });
-        // `body` can close the view itself (Escape); copying `open` back
-        // unconditionally used to resurrect it.
-        self.open = open && self.open;
-        action
+        self.poll_thumbs(&ctx);
+        self.viewport = Some(ui.available_size());
+        egui::Frame::NONE
+            .fill(theme::bg_inspector_bot())
+            .inner_margin(egui::Margin::same(qs_theme::space::LG as i8))
+            .show(ui, |ui| {
+                ui.set_min_size(ui.available_size());
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new("Library")
+                            .size(qs_theme::font::TITLE as f32)
+                            .strong(),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if components::pill_button(ui, "Back to image", "Return to the editor (Esc)") {
+                            self.open = false;
+                        }
+                    });
+                });
+                ui.add_space(qs_theme::space::SM as f32);
+                self.body(ui)
+            })
+            .inner
     }
 
     fn body(&mut self, ui: &mut egui::Ui) -> Option<LibraryAction> {
@@ -450,7 +439,7 @@ impl Library {
                 }
             }
             if delete && !self.read_only && !self.selected.is_empty() {
-                self.confirm_delete = true;
+                self.trash_selected();
             }
         }
 
@@ -557,7 +546,6 @@ impl Library {
                 action = Some(act);
             }
         }
-        self.delete_dialog(ui.ctx());
         action
     }
 
@@ -923,7 +911,7 @@ impl Library {
                             theme::danger_red(),
                         )
                     {
-                        self.confirm_delete = true;
+                        self.trash_selected();
                     }
                     if count == 1
                         && components::pill_button(ui, "Reveal", "Show in the file manager")
@@ -961,92 +949,42 @@ impl Library {
         action
     }
 
-    fn delete_dialog(&mut self, ctx: &egui::Context) {
-        if !self.confirm_delete {
-            return;
-        }
+    /// Moves the selection to the system trash right away: the OS trash is
+    /// the undo, so no confirmation dialog stands in the way.
+    fn trash_selected(&mut self) {
         let paths: Vec<PathBuf> = self
             .selected
             .iter()
             .map(|name| self.dir.join(name))
             .collect();
-        let mut open = true;
-        let mut decision = None;
-        egui::Window::new("Move to Trash")
-            .frame(theme::modal_frame())
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
-            .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
-            .show(ctx, |ui| {
-                ui.label(format!(
-                    "Move {} capture{} to the system trash?",
-                    paths.len(),
-                    if paths.len() == 1 { "" } else { "s" }
-                ));
-                ui.label(
-                    egui::RichText::new("They can be restored from the trash.")
-                        .size(qs_theme::font::SMALL as f32)
-                        .color(theme::text_tertiary()),
-                );
-                // Same structure as the Library footer: hairline, then actions.
-                ui.add_space(qs_theme::space::SM as f32);
-                ui.separator();
-                ui.add_space(qs_theme::space::XS as f32);
-                // `components::button` stretches to the full width, which in a
-                // horizontal row pushed the destructive button outside the
-                // window and clipped the question text with it.
-                ui.horizontal(|ui| {
-                    if ui.button("Cancel").clicked() {
-                        decision = Some(false);
-                    }
-                    let trash = egui::Button::new(
-                        egui::RichText::new("Move to Trash").color(theme::danger_red()),
-                    );
-                    if ui.add(trash).clicked() {
-                        decision = Some(true);
-                    }
-                });
-            });
-        // The dialog is keyboard-complete too: ⌘⌫ opened it, so Enter must be
-        // able to confirm and Escape to back out without a mouse.
-        let (enter, esc) = ctx.input(|i| {
-            (
-                i.key_pressed(egui::Key::Enter),
-                i.key_pressed(egui::Key::Escape),
-            )
-        });
-        if !open || esc {
-            decision = Some(false);
+        if paths.is_empty() {
+            return;
         }
-        if enter {
-            decision = Some(true);
+        let outcomes = qs_library::trash::move_all(&paths);
+        let failed = outcomes.iter().filter(|o| o.error.is_some()).count();
+        if failed > 0 {
+            self.write_error = Some(format!(
+                "{failed} of {} captures could not be moved to the trash.",
+                outcomes.len()
+            ));
         }
-        match decision {
-            Some(true) => {
-                let outcomes = qs_library::trash::move_all(&paths);
-                let failed = outcomes.iter().filter(|o| o.error.is_some()).count();
-                if failed > 0 {
-                    self.write_error = Some(format!(
-                        "{failed} of {} captures could not be moved to the trash.",
-                        outcomes.len()
-                    ));
+        for outcome in outcomes.iter().filter(|o| o.error.is_none()) {
+            if let Some(name) = outcome.path.file_name().and_then(|n| n.to_str()) {
+                self.entries.retain(|e| e.file_name != name);
+                if let Some(index) = &mut self.index {
+                    index.entries.remove(name);
                 }
-                for outcome in outcomes.iter().filter(|o| o.error.is_none()) {
-                    if let Some(name) = outcome.path.file_name().and_then(|n| n.to_str()) {
-                        self.entries.retain(|e| e.file_name != name);
-                        if let Some(index) = &mut self.index {
-                            index.entries.remove(name);
-                        }
-                    }
-                }
-                let _ = self.persist();
-                self.selected.clear();
-                self.confirm_delete = false;
             }
-            Some(false) => self.confirm_delete = false,
-            None => {}
         }
+        let moved = outcomes.len() - failed;
+        if moved > 0 {
+            self.notice = Some(format!(
+                "Moved {moved} capture{} to the system Trash \u{2014} restore from there if needed.",
+                if moved == 1 { "" } else { "s" }
+            ));
+        }
+        let _ = self.persist();
+        self.selected.clear();
     }
 }
 

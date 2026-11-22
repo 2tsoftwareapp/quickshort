@@ -33,8 +33,8 @@ fn scan(dir: &std::path::Path) -> (egui::Context, Library) {
             screen_rect: Some(screen(900.0, 700.0)),
             ..Default::default()
         };
-        let mut full = ctx.run_ui(raw, |_| {
-            let _ = library.show(&ctx);
+        let mut full = ctx.run_ui(raw, |ui| {
+            let _ = library.show(ui);
         });
         full.textures_delta.clear();
         if !library.is_scanning() {
@@ -121,8 +121,8 @@ fn a_broken_image_still_lists_and_does_not_break_the_view() {
             screen_rect: Some(screen(720.0, 600.0)),
             ..Default::default()
         };
-        let mut full = ctx.run_ui(raw, |_| {
-            let _ = library.show(&ctx);
+        let mut full = ctx.run_ui(raw, |ui| {
+            let _ = library.show(ui);
         });
         full.textures_delta.clear();
         std::thread::sleep(std::time::Duration::from_millis(10));

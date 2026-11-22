@@ -162,8 +162,7 @@ fn uat_library_browses_a_real_folder_across_viewports_and_themes() {
                     ..Default::default()
                 };
                 let mut out = ctx.run_ui(raw, |ui| {
-                    let _ = ui;
-                    let _ = library.show(&ctx);
+                    let _ = library.show(ui);
                 });
                 out.textures_delta.clear();
 

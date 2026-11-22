@@ -92,14 +92,16 @@ pub struct EditorApp {
     saw_drag_press: bool,
     toast: Option<(String, std::time::Instant)>,
     canvas_dialog_open: bool,
-    /// "Flatten all" confirmation is on screen.
-    confirm_flatten: bool,
+    /// Document and base image before "Flatten all", so undo can bring
+    /// the layers back.
+    pre_flatten: Option<(Document, RgbaImage)>,
     canvas_insets: [f32; 4],
     canvas_background: u32,
     resize_w: u32,
     resize_h: u32,
     resize_lock: bool,
-    export_dialog_open: bool,
+    export_menu_open: bool,
+    export_anchor: Option<Rect>,
     export_format: ExportFormat,
     export_quality: u8,
     combine_dialog_open: bool,
@@ -116,7 +118,6 @@ pub struct EditorApp {
     canvas_anchor: (usize, usize),
     layer_drag_id: Option<ObjectId>,
     alignment_open: bool,
-    settings_open: bool,
     prefs: crate::prefs::AppPrefs,
     /// Quick Styles: built-in presets + the user's saved ones.
     styles: styles::Library,
@@ -189,13 +190,14 @@ impl EditorApp {
             saw_drag_press: false,
             toast: None,
             canvas_dialog_open: false,
-            confirm_flatten: false,
+            pre_flatten: None,
             canvas_insets: [0.0; 4],
             canvas_background,
             resize_w: init_w,
             resize_h: init_h,
             resize_lock: true,
-            export_dialog_open: false,
+            export_menu_open: false,
+            export_anchor: None,
             export_format: ExportFormat::Png,
             export_quality: 90,
             combine_dialog_open: false,
@@ -211,7 +213,6 @@ impl EditorApp {
             session_cache: std::collections::HashMap::new(),
             layer_drag_id: None,
             alignment_open: false,
-            settings_open: false,
             prefs: crate::prefs::AppPrefs::load(),
             styles: styles::Library::load(),
             library: crate::library::Library::default(),
@@ -255,6 +256,7 @@ impl EditorApp {
             .clamp(0.2, 1.0);
         self.base = base;
         self.editor = Editor::new(doc);
+        self.pre_flatten = None;
         // A different document can share the previous one's size, scale and
         // view; the hint cache is keyed on those, so it has to be dropped
         // explicitly rather than waiting for a key mismatch.
@@ -388,13 +390,14 @@ impl EditorApp {
             session_cache: std::collections::HashMap::new(),
             toast: None,
             canvas_dialog_open: false,
-            confirm_flatten: false,
+            pre_flatten: None,
             canvas_insets: [0.0; 4],
             canvas_background: 0,
             resize_w: w,
             resize_h: h,
             resize_lock: true,
-            export_dialog_open: false,
+            export_menu_open: false,
+            export_anchor: None,
             export_format: ExportFormat::Png,
             export_quality: 90,
             combine_dialog_open: false,
@@ -403,7 +406,6 @@ impl EditorApp {
             canvas_anchor: (1, 1),
             layer_drag_id: None,
             alignment_open: false,
-            settings_open: false,
             prefs: crate::prefs::AppPrefs::default(),
             styles: styles::Library::default(),
             library: crate::library::Library::default(),
@@ -558,55 +560,6 @@ impl EditorApp {
         match picked {
             Some(path) => self.load_path(&path),
             None => Ok(()),
-        }
-    }
-
-    /// "Flatten all" confirmation: baking annotations cannot be undone.
-    fn flatten_dialog(&mut self, ctx: &egui::Context) {
-        if !self.confirm_flatten {
-            return;
-        }
-        let mut open = self.confirm_flatten;
-        let mut go = false;
-        egui::Window::new("Flatten all annotations")
-            .frame(theme::modal_frame())
-            .collapsible(false)
-            .resizable(false)
-            .open(&mut open)
-            .show(ctx, |ui| {
-                ui.label(
-                    egui::RichText::new("Every annotation is baked into the image.")
-                        .size(qs_theme::font::SMALL as f32)
-                        .color(theme::text_secondary()),
-                );
-                ui.label(
-                    egui::RichText::new("The layers and the undo history are removed.")
-                        .size(qs_theme::font::SMALL as f32)
-                        .color(theme::text_tertiary()),
-                );
-                ui.add_space(qs_theme::space::MD as f32);
-                ui.separator();
-                ui.add_space(qs_theme::space::XS as f32);
-                ui.horizontal(|ui| {
-                    if crate::components::pill_button(ui, "Cancel", "") {
-                        self.confirm_flatten = false;
-                    }
-                    if crate::components::pill_button_colored(
-                        ui,
-                        "Flatten",
-                        "Bake every annotation into the image",
-                        theme::danger_red(),
-                    ) {
-                        go = true;
-                    }
-                });
-            });
-        self.confirm_flatten = open;
-        if go {
-            self.confirm_flatten = false;
-            if let Err(e) = self.flatten_all() {
-                self.show_toast(format!("Flatten failed: {e}"));
-            }
         }
     }
 
@@ -1044,204 +997,70 @@ impl EditorApp {
         Ok(())
     }
 
-    fn export_dialog(&mut self, ctx: &egui::Context) {
-        if !self.export_dialog_open {
+    /// Export is a dropdown under the Export button: one click picks the
+    /// format and the OS save dialog is the only window that follows.
+    fn export_menu(&mut self, ctx: &egui::Context) {
+        if !self.export_menu_open {
             return;
         }
-        let mut open = self.export_dialog_open;
-        let mut do_export = false;
-        let mut do_copy = false;
-        let mut do_save = false;
-        let mut do_print = false;
-
-        egui::Window::new("Export & Share")
-            .frame(theme::modal_frame())
-            .collapsible(false)
-            .resizable(false)
-            .open(&mut open)
+        let anchor = self.export_anchor.unwrap_or_else(|| {
+            let r = ctx.content_rect();
+            Rect::from_min_size(egui::pos2(r.right() - 220.0, r.top()), Vec2::new(1.0, 36.0))
+        });
+        let mut pick: Option<ExportFormat> = None;
+        let (mut copy, mut print) = (false, false);
+        let area = egui::Area::new(egui::Id::unique("export_menu"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(anchor.left_bottom() + Vec2::new(0.0, qs_theme::space::XS as f32))
             .show(ctx, |ui| {
-                ui.set_min_width(280.0);
-                theme::section_header(ui, "Format");
-                ui.horizontal(|ui| {
-                    for fmt in [ExportFormat::Png, ExportFormat::Jpeg, ExportFormat::Webp] {
-                        ui.selectable_value(&mut self.export_format, fmt, fmt.label());
-                    }
-                });
-                if self.export_format == ExportFormat::Jpeg {
-                    ui.add_space(qs_theme::space::XS as f32);
-                    ui.add(
-                        egui::Slider::new(&mut self.export_quality, 40..=100)
-                            .suffix("%")
-                            .text("Quality"),
-                    );
-                }
-                ui.add_space(qs_theme::space::MD as f32);
-                theme::section_header(ui, "Destination");
-                ui.horizontal_wrapped(|ui| {
-                    if crate::components::pill_button(ui, "Save Image As…", "") {
-                        do_export = true;
-                    }
-                    if crate::components::pill_button(ui, "Copy Flattened", "") {
-                        do_copy = true;
-                    }
-                    if crate::components::pill_button(ui, "Save .qsdoc", "") {
-                        do_save = true;
-                    }
-                    if crate::components::pill_button(ui, "Print…", "") {
-                        do_print = true;
-                    }
+                egui::Frame::menu(ui.style()).show(ui, |ui| {
+                    ui.set_min_width(200.0);
+                    ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
+                        for fmt in [ExportFormat::Png, ExportFormat::Jpeg, ExportFormat::Webp] {
+                            let mut label = format!("Save as {}\u{2026}", fmt.label());
+                            if fmt == self.export_format {
+                                label.push_str("  \u{2713}");
+                            }
+                            if ui.add(egui::Button::new(label).frame(false)).clicked() {
+                                pick = Some(fmt);
+                            }
+                        }
+                        ui.separator();
+                        if ui
+                            .add(egui::Button::new("Copy image").shortcut_text("Ctrl+C").frame(false))
+                            .clicked()
+                        {
+                            copy = true;
+                        }
+                        if ui.add(egui::Button::new("Print\u{2026}").frame(false)).clicked() {
+                            print = true;
+                        }
+                    });
                 });
             });
-        self.export_dialog_open = open;
-
-        if do_export {
-            if let Err(e) = self.export_with_dialog(self.export_format, self.export_quality) {
+        let menu_rect = area.response.rect;
+        let clicked_outside = ctx.input(|i| {
+            i.pointer.any_pressed()
+                && i
+                    .pointer
+                    .interact_pos()
+                    .is_some_and(|p| !menu_rect.contains(p) && !anchor.contains(p))
+        });
+        if pick.is_some() || copy || print || clicked_outside {
+            self.export_menu_open = false;
+        }
+        if let Some(fmt) = pick {
+            self.export_format = fmt;
+            if let Err(e) = self.export_with_dialog(fmt, self.export_quality) {
                 self.show_toast(format!("Export failed: {e}"));
             }
-            self.export_dialog_open = false;
-        } else if do_copy {
+        } else if copy {
             let _ = self.copy_to_clipboard();
-            self.export_dialog_open = false;
-        } else if do_save {
-            let _ = self.save();
-            self.export_dialog_open = false;
-        } else if do_print {
+        } else if print {
             if let Err(e) = self.print_image() {
                 self.show_toast(format!("Print failed: {e}"));
             }
-            self.export_dialog_open = false;
         }
-    }
-
-    fn settings_dialog(&mut self, ctx: &egui::Context) {
-        if !self.settings_open {
-            return;
-        }
-        let mut open = self.settings_open;
-        let mut close_clicked = false;
-        let mut dirty = false;
-        egui::Window::new("Settings")
-            .frame(theme::modal_frame())
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
-            .default_width(360.0)
-            .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
-            .show(ctx, |ui| {
-                ui.set_min_width(340.0);
-                crate::components::card(ui, |ui| {
-                    crate::components::section_header(ui, "Appearance");
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            egui::RichText::new("Theme")
-                                .size(qs_theme::font::BODY as f32 - 0.5)
-                                .color(theme::text_primary()),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            for (key, label) in qs_theme::THEMES.iter().rev() {
-                                let active = self.prefs.theme == *key;
-                                let tip = format!("Zoom to {label}");
-                            if crate::components::status_pill(ui, label, active, &tip) {
-                                    self.prefs.theme = (*key).into();
-                                    dirty = true;
-                                }
-                            }
-                        });
-                    });
-                    ui.add_space(qs_theme::space::SM as f32);
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            egui::RichText::new("Accent")
-                                .size(qs_theme::font::BODY as f32 - 0.5)
-                                .color(theme::text_primary()),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            for (name, rgb) in qs_theme::ACCENTS.iter().rev() {
-                                let (rect, resp) =
-                                    ui.allocate_exact_size(Vec2::splat(22.0), egui::Sense::click());
-                                let selected = self.prefs.accent == *name;
-                                theme::paint_color_swatch(
-                                    ui.painter(),
-                                    rect.center(),
-                                    7.0,
-                                    toolbar::rgb_to_color32(*rgb),
-                                    selected,
-                                    resp.hovered(),
-                                );
-                                if resp.on_hover_text(*name).clicked() {
-                                    self.prefs.accent = (*name).into();
-                                    dirty = true;
-                                }
-                            }
-                        });
-                    });
-                });
-
-                ui.add_space(qs_theme::space::MD as f32);
-                crate::components::card(ui, |ui| {
-                    crate::components::section_header(ui, "Capture Workflow");
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            egui::RichText::new("After capture")
-                                .size(qs_theme::font::BODY as f32 - 0.5)
-                                .color(theme::text_primary()),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let cur_label = crate::prefs::AFTER_CAPTURE_OPTIONS
-                                .iter()
-                                .find(|(k, _)| *k == self.prefs.after_capture)
-                                .map(|(_, l)| *l)
-                                .unwrap_or("Show Shelf");
-                            egui::ComboBox::from_id_salt("prefs_after_capture")
-                                .width(152.0)
-                                .selected_text(cur_label)
-                                .show_ui(ui, |ui| {
-                                    for (key, label) in crate::prefs::AFTER_CAPTURE_OPTIONS {
-                                        if ui
-                                            .selectable_value(
-                                                &mut self.prefs.after_capture,
-                                                (*key).to_owned(),
-                                                *label,
-                                            )
-                                            .changed()
-                                        {
-                                            dirty = true;
-                                        }
-                                    }
-                                });
-                        });
-                    });
-                    ui.add_space(qs_theme::space::XS as f32);
-                    if crate::components::switch_row(
-                        ui,
-                        &mut self.prefs.copy_after_save,
-                        "Copy captures after saving",
-                    ) {
-                        dirty = true;
-                    }
-                });
-
-                // Footer like the other dialogs: hairline, then one primary pill.
-                ui.add_space(qs_theme::space::SM as f32);
-                ui.separator();
-                ui.add_space(qs_theme::space::XS as f32);
-                crate::components::dialog_actions(ui, |ui| {
-                    if crate::components::pill_button_primary(ui, "Done", "Save and close") {
-                        close_clicked = true;
-                    }
-                });
-            });
-
-        if close_clicked {
-            open = false;
-        }
-        if dirty {
-            self.prefs.apply_live();
-            self.prefs.save();
-            theme::sync_egui_visuals(ctx);
-            self.show_toast("Preferences saved");
-        }
-        self.settings_open = open;
     }
 
     /// Find in capture: the window paints, this owns the matching and panning.
@@ -1332,12 +1151,9 @@ impl EditorApp {
 
     /// Library view: keep it pointed at the capture folder and apply the one
     /// action it can request (open, or reveal in the file manager).
-    fn library_dialog(&mut self, ctx: &egui::Context) {
-        if !self.library.open {
-            return;
-        }
+    fn library_view(&mut self, ui: &mut egui::Ui) {
         self.library.set_dir(self.prefs.capture_dir());
-        match self.library.show(ctx) {
+        match self.library.show(ui) {
             Some(crate::library::LibraryAction::Open(path)) => {
                 if let Err(e) = self.switch_to_path(&path) {
                     self.show_toast(format!("Failed to open: {e}"));
@@ -1424,10 +1240,12 @@ impl EditorApp {
         let mut doc = Document::new(flat.width(), flat.height(), old.scale);
         doc.meta = old.meta.clone();
         doc.background = old.background;
+        let before = (old, self.base.clone());
         self.apply_document(doc, flat);
+        self.pre_flatten = Some(before);
         self.editor.mark_modified();
         self.touch();
-        self.show_toast("Flattened annotations into the image");
+        self.show_toast("Flattened into the image \u{00b7} Ctrl+Z to undo");
         Ok(())
     }
 
@@ -1471,6 +1289,7 @@ impl EditorApp {
     pub fn handle_dialog_keys(&mut self, ctx: &egui::Context) {
         // `send_viewport_cmd` needs the context outside the input lock.
         let mut close_requested = false;
+        let mut flatten_now = false;
         ctx.input_mut(|i| {
             // macOS close chord: same guard as the window's red button.
             if i.consume_key(Modifiers::COMMAND, Key::W) {
@@ -1479,18 +1298,14 @@ impl EditorApp {
             // Escape closes whichever dialog is on top. Without this the panels
             // could only be dismissed by hitting their small close button.
             if i.consume_key(Modifiers::NONE, Key::Escape) {
-                if self.confirm_flatten {
-                    self.confirm_flatten = false;
-                } else if self.export_dialog_open {
-                    self.export_dialog_open = false;
+                if self.export_menu_open {
+                    self.export_menu_open = false;
                 } else if self.canvas_dialog_open {
                     self.canvas_dialog_open = false;
                 } else if self.combine_dialog_open {
                     self.combine_dialog_open = false;
                 } else if self.alignment_open {
                     self.alignment_open = false;
-                } else if self.settings_open {
-                    self.settings_open = false;
                 }
             }
             // Settings has the standard macOS shortcut; Align needs a panel that
@@ -1502,33 +1317,29 @@ impl EditorApp {
             }
             if i.consume_key(Modifiers::COMMAND, Key::Comma) {
                 self.canvas_dialog_open = false;
-                self.export_dialog_open = false;
-                self.confirm_flatten = false;
+                self.export_menu_open = false;
                 self.alignment_open = false;
-                self.settings_open = true;
+                spawn_app("--settings");
             }
             if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::A)
                 || i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::A)
             {
                 self.canvas_dialog_open = false;
-                self.export_dialog_open = false;
-                self.confirm_flatten = false;
+                self.export_menu_open = false;
                 self.alignment_open = true;
             }
             // Dialog shortcuts: these panels were only reachable by mouse.
             if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::C)
                 || i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::C)
             {
-                self.export_dialog_open = false;
-                self.confirm_flatten = false;
+                self.export_menu_open = false;
                 self.canvas_dialog_open = true;
             }
             if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::E)
                 || i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::E)
             {
                 self.canvas_dialog_open = false;
-                self.confirm_flatten = false;
-                self.export_dialog_open = true;
+                self.export_menu_open = true;
             }
             // cmd+shift+F never reached us (macOS swallows it), so the
             // destructive flatten confirmation uses option+cmd+F.
@@ -1536,24 +1347,27 @@ impl EditorApp {
                 || i.consume_key(Modifiers::CTRL | Modifiers::ALT, Key::F)
             {
                 self.canvas_dialog_open = false;
-                self.export_dialog_open = false;
-                self.confirm_flatten = true;
+                self.export_menu_open = false;
+                flatten_now = true;
             }
         });
+        if flatten_now {
+            if let Err(e) = self.flatten_all() {
+                self.show_toast(format!("Flatten failed: {e}"));
+            }
+        }
         if close_requested {
             self.request_close(ctx);
         }
     }
 
-    /// Which dialogs are open: canvas, export, flatten, align, settings.
+    /// Which panels are open: canvas, export menu, align.
     #[doc(hidden)]
-    pub fn open_dialogs(&self) -> (bool, bool, bool, bool, bool) {
+    pub fn open_dialogs(&self) -> (bool, bool, bool) {
         (
             self.canvas_dialog_open,
-            self.export_dialog_open,
-            self.confirm_flatten,
+            self.export_menu_open,
             self.alignment_open,
-            self.settings_open,
         )
     }
 
@@ -1621,7 +1435,7 @@ impl EditorApp {
             }
 
             if i.consume_key(Modifiers::COMMAND, Key::N) || i.consume_key(Modifiers::CTRL, Key::N) {
-                spawn_capture();
+                spawn_app("--capture");
             }
 
             if i.consume_key(Modifiers::COMMAND, Key::F) || i.consume_key(Modifiers::CTRL, Key::F) {
@@ -1769,7 +1583,13 @@ impl EditorApp {
         });
 
         if undo {
-            self.editor.undo();
+            if !self.editor.undo() {
+                if let Some((doc, base)) = self.pre_flatten.take() {
+                    self.apply_document(doc, base);
+                    self.editor.mark_modified();
+                    self.show_toast("Flatten undone");
+                }
+            }
             self.touch();
         }
         if redo {
@@ -1988,8 +1808,11 @@ impl eframe::App for EditorApp {
         if top_res.open {
             let _ = self.open_dialog();
         }
+        if top_res.export_rect.is_some() {
+            self.export_anchor = top_res.export_rect;
+        }
         if top_res.export {
-            self.export_dialog_open = !self.export_dialog_open;
+            self.export_menu_open = !self.export_menu_open;
         }
         if top_res.canvas {
             self.canvas_dialog_open = !self.canvas_dialog_open;
@@ -2001,11 +1824,8 @@ impl eframe::App for EditorApp {
             self.apply_zoom_cmd(top_res.zoom);
         }
         self.canvas_dialog(&ctx);
-        self.flatten_dialog(&ctx);
-        self.export_dialog(&ctx);
+        self.export_menu(&ctx);
         self.combine_dialog(&ctx);
-        self.settings_dialog(&ctx);
-        self.library_dialog(&ctx);
         self.find_dialog(&ctx);
 
         // Bottom Studio Status Bar (32px = 4px + 24px hit target + 4px, single top hairline)
@@ -2041,9 +1861,9 @@ impl eframe::App for EditorApp {
                     }
                     if crate::components::status_pill(
                         ui,
-                        "Tray",
+                        "Recent",
                         self.show_filmstrip,
-                        "Toggle Recent Captures filmstrip",
+                        "Toggle the recent captures strip (Ctrl+Shift+T)",
                     ) {
                         self.show_filmstrip = !self.show_filmstrip;
                     }
@@ -2099,7 +1919,7 @@ impl eframe::App for EditorApp {
                             false,
                             "Capture a new screenshot (\u{2318}N)",
                         ) {
-                            spawn_capture();
+                            spawn_app("--capture");
                         }
                         if self.editor.region().is_some()
                             && crate::components::status_pill(
@@ -2122,13 +1942,10 @@ impl eframe::App for EditorApp {
                         if crate::components::status_pill(
                             ui,
                             "Settings",
-                            self.settings_open,
-                            "Appearance & capture preferences (config.toml)",
+                            false,
+                            "Open Quickshort Settings (\u{2318},)",
                         ) {
-                            if !self.settings_open {
-                                self.prefs = crate::prefs::AppPrefs::load();
-                            }
-                            self.settings_open = !self.settings_open;
+                            spawn_app("--settings");
                         }
                         let is_dark = qs_theme::pal().dark;
                         let (theme_lbl, theme_tip) = if is_dark {
@@ -2420,7 +2237,7 @@ impl eframe::App for EditorApp {
             }
         }
 
-        let layers_mutated = if self.show_layers {
+        let layers_mutated = if self.show_layers && !self.library.open {
             let layers_resp = egui::Panel::left("layers_panel")
             .resizable(true)
             .default_size(204.0)
@@ -2699,7 +2516,7 @@ impl eframe::App for EditorApp {
             self.alignment_open = open;
         }
 
-        let panel_mutated = if self.show_inspector {
+        let panel_mutated = if self.show_inspector && !self.library.open {
             let panel_resp = egui::Panel::right("image_panel")
                 .resizable(false)
                 .exact_size(256.0)
@@ -2734,13 +2551,15 @@ impl eframe::App for EditorApp {
                                 ui.add_space(qs_theme::space::SM as f32);
                                 if crate::components::button(
                                     ui,
-                                    "Flatten all…",
+                                    "Flatten all",
                                     crate::components::ButtonVariant::Secondary,
-                                    "Bake every annotation into the image",
+                                    "Bake every annotation into the image (undo with Ctrl+Z)",
                                 )
                                 .clicked()
                                 {
-                                    self.confirm_flatten = true;
+                                    if let Err(e) = self.flatten_all() {
+                                        self.show_toast(format!("Flatten failed: {e}"));
+                                    }
                                 }
                             });
                             changed
@@ -2763,6 +2582,10 @@ impl eframe::App for EditorApp {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ui, |ui| {
+                if self.library.open {
+                    self.library_view(ui);
+                    return;
+                }
                 let (screen_rect, response) =
                     ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
                 self.last_canvas_rect = Some(screen_rect);
@@ -3173,13 +2996,14 @@ mod tests {
             session_cache: std::collections::HashMap::new(),
             toast: None,
             canvas_dialog_open: false,
-            confirm_flatten: false,
+            pre_flatten: None,
             canvas_insets: [0.0; 4],
             canvas_background: 0,
             resize_w: 20,
             resize_h: 10,
             resize_lock: true,
-            export_dialog_open: false,
+            export_menu_open: false,
+            export_anchor: None,
             export_format: ExportFormat::Png,
             export_quality: 90,
             combine_dialog_open: false,
@@ -3188,7 +3012,6 @@ mod tests {
             canvas_anchor: (1, 1),
             layer_drag_id: None,
             alignment_open: false,
-            settings_open: false,
             prefs: crate::prefs::AppPrefs::default(),
             styles: styles::Library::default(),
             library: crate::library::Library::default(),
@@ -3296,9 +3119,10 @@ fn load_document(p: &Path) -> anyhow::Result<(Document, RgbaImage, PathBuf)> {
     }
 }
 
-/// Starts a fresh region capture through the sibling `quickshort` binary, so
-/// the editor loops straight back to Capture without a trip to the tray.
-fn spawn_capture() {
+/// Runs the sibling `quickshort` binary with `arg` (`--capture`,
+/// `--settings`), so the editor reaches Capture and the one Settings window
+/// without a trip to the tray.
+fn spawn_app(arg: &str) {
     let name = if cfg!(windows) {
         "quickshort.exe"
     } else {
@@ -3309,7 +3133,7 @@ fn spawn_capture() {
         .and_then(|e| Some(e.parent()?.join(name)))
         .filter(|p| p.exists())
         .unwrap_or_else(|| name.into());
-    if let Err(e) = std::process::Command::new(&exe).arg("--capture").spawn() {
-        eprintln!("new capture: failed to launch {}: {e}", exe.display());
+    if let Err(e) = std::process::Command::new(&exe).arg(arg).spawn() {
+        eprintln!("{arg}: failed to launch {}: {e}", exe.display());
     }
 }

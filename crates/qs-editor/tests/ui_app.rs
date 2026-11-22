@@ -43,31 +43,24 @@ fn chords_open_the_expected_dialog_and_close_the_previous_one() {
     let mut app = app();
     let ctx = egui::Context::default();
     qs_editor::theme::apply_macos_visuals(&ctx);
-    assert_eq!(app.open_dialogs(), (false, false, false, false, false));
+    assert_eq!(app.open_dialogs(), (false, false, false));
 
     press(&mut app, &ctx, Key::C, Modifiers::COMMAND | Modifiers::SHIFT);
     assert_eq!(
         app.open_dialogs(),
-        (true, false, false, false, false),
+        (true, false, false),
         "cmd+shift+C opens Canvas"
     );
 
     press(&mut app, &ctx, Key::E, Modifiers::COMMAND | Modifiers::SHIFT);
     assert_eq!(
         app.open_dialogs(),
-        (false, true, false, false, false),
-        "Export replaces Canvas instead of stacking"
+        (false, true, false),
+        "the Export menu replaces Canvas instead of stacking"
     );
 
-    // Option chords reach Flatten; cmd+shift+F is swallowed by macOS.
-    press(&mut app, &ctx, Key::F, Modifiers::COMMAND | Modifiers::ALT);
-    assert_eq!(app.open_dialogs(), (false, false, true, false, false));
-
     press(&mut app, &ctx, Key::A, Modifiers::COMMAND | Modifiers::SHIFT);
-    assert_eq!(app.open_dialogs(), (false, false, false, true, false));
-
-    press(&mut app, &ctx, Key::Comma, Modifiers::COMMAND);
-    assert_eq!(app.open_dialogs(), (false, false, false, false, true));
+    assert_eq!(app.open_dialogs(), (false, false, true));
 }
 
 #[test]
@@ -82,7 +75,7 @@ fn escape_closes_the_top_dialog() {
     press(&mut app, &ctx, Key::Escape, Modifiers::NONE);
     assert_eq!(
         app.open_dialogs(),
-        (false, false, false, false, false),
+        (false, false, false),
         "escape dismisses Canvas"
     );
 }
