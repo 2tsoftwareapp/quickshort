@@ -64,6 +64,12 @@ pub fn from_overlay(
                 mode: BlurMode::Pixelate,
                 strength: qs_overlay::PIX_BLOCK as f32,
             },
+            Annotation::Step { c, rgb, .. } => ObjectKind::Step {
+                center: pt(c),
+                radius: qs_overlay::STEP_R as f32,
+                rgb: *rgb,
+                text_rgb: 0xFFFFFF,
+            },
             Annotation::Text {
                 pos,
                 text,

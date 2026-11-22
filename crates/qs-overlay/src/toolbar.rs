@@ -36,6 +36,8 @@ pub enum Tool {
     Marker,
     Text,
     Pixelate,
+    /// Numbered badge ①②③ for reproduction steps
+    Step,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -68,18 +70,20 @@ impl Tool {
             'h' => Tool::Marker,
             't' => Tool::Text,
             'b' => Tool::Pixelate,
+            'n' => Tool::Step,
             _ => return None,
         })
     }
 }
 
 /// Everyday row: core tools | history | More, Edit, Done. Done (Copy) is
-/// the highlighted primary — it copies and saves in one step.
+/// the highlighted primary — it copies and saves in one step. Ordered for
+/// bug reports: box it, point at it, number the steps, note, blur.
 const MAIN: &[Item] = &[
-    Item::Tool(Tool::Arrow),
     Item::Tool(Tool::Rect),
+    Item::Tool(Tool::Arrow),
+    Item::Tool(Tool::Step),
     Item::Tool(Tool::Text),
-    Item::Tool(Tool::Marker),
     Item::Tool(Tool::Pixelate),
     Item::Undo,
     Item::Redo,
@@ -96,6 +100,7 @@ const MORE: &[Item] = &[
     Item::Tool(Tool::Select),
     Item::Tool(Tool::Pen),
     Item::Tool(Tool::Ellipse),
+    Item::Tool(Tool::Marker),
     Item::Act(Action::Scroll),
     Item::Act(Action::Record),
     Item::Act(Action::Ocr),
@@ -601,6 +606,24 @@ fn draw_icon(
                 cv.blend(x, y, fg_col, a);
             }
         }
+        Item::Tool(Tool::Step) => {
+            // circle with a "1" inside
+            let d = lx.hypot(ly) - 7.0;
+            let ring = stroke_cov(d, STROKE, scale);
+            let m = crate::annotate::label_mask("1", true);
+            let n = crate::annotate::ICON_MASK_N;
+            let gx = ((lx * 1.7 + 8.0) / 16.0 * n as f64) as i32;
+            let gy = ((ly * 1.7 + 8.0) / 16.0 * n as f64) as i32;
+            let g = if (0..n as i32).contains(&gx) && (0..n as i32).contains(&gy) {
+                m[gy as usize * n + gx as usize] as f64
+            } else {
+                0.0
+            };
+            let a = ring.max(g) * fg_a;
+            if a > 0.0 {
+                cv.blend(x, y, fg_col, a);
+            }
+        }
         Item::Tool(Tool::Text) | Item::Bold | Item::FontSize(_) => {
             // real font glyphs — rasterized once into coverage grids
             let (lbl, b) = match item {
@@ -818,6 +841,13 @@ mod tests {
     }
 
     #[test]
+    fn main_row_leads_with_bug_report_tools() {
+        assert_eq!(MAIN[0], Item::Tool(Tool::Rect));
+        assert!(MAIN[..TOOLS_END].contains(&Item::Tool(Tool::Step)));
+        assert!(MORE.contains(&Item::Tool(Tool::Marker)));
+    }
+
+    #[test]
     fn done_is_a_wide_pill_inside_the_dock() {
         let (s, m) = sel();
         let tb = Toolbar::new(s, m, false);
@@ -833,6 +863,7 @@ mod tests {
         assert_eq!(Tool::from_key('a'), Some(Tool::Arrow));
         assert_eq!(Tool::from_key('h'), Some(Tool::Marker));
         assert_eq!(Tool::from_key('b'), Some(Tool::Pixelate));
+        assert_eq!(Tool::from_key('n'), Some(Tool::Step));
         assert_eq!(Tool::from_key('s'), None);
         assert_eq!(Tool::from_key('c'), None);
     }

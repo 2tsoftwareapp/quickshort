@@ -26,10 +26,12 @@ mod macos;
 pub mod sdf;
 mod toolbar;
 
-pub use annotate::{annotate_image, Annotation, PIX_BLOCK};
+pub use annotate::{annotate_image, Annotation, PIX_BLOCK, STEP_R};
 pub use toolbar::{Action, Item, Tool};
 
 const MIN_SELECT: u32 = 3;
+/// Drawing tool armed last, re-armed on the next capture.
+static LAST_TOOL: std::sync::Mutex<Option<Tool>> = std::sync::Mutex::new(None);
 /// Shown until the first drag, so the dimmed screen explains itself.
 const SELECT_HINT: &str = "Drag to select an area  \u{b7}  Esc to cancel";
 /// Fallback accent — `Prefs::default` and the pixelate preview outline.
@@ -471,6 +473,9 @@ impl Session {
     /// second row goes back from More to the tool's options.
     fn set_tool(&mut self, nt: Option<Tool>, i: usize) {
         self.tool = nt;
+        if let Some(t) = nt.filter(|t| *t != Tool::Select) {
+            *LAST_TOOL.lock().unwrap() = Some(t);
+        }
         if nt != Some(Tool::Select) {
             self.selected = None;
         }
@@ -514,7 +519,17 @@ impl Session {
         self.ime_seen = false;
         let rgb = annotate::PALETTE[self.color];
         let w = annotate::SIZES[self.size as usize];
+        let next_step = 1 + self
+            .annots
+            .iter()
+            .filter(|a| matches!(a, Annotation::Step { .. }))
+            .count() as u32;
         self.active = Some(match t {
+            Tool::Step => Annotation::Step {
+                c: p,
+                n: next_step,
+                rgb,
+            },
             Tool::Select => return, // armed select grabs, never strokes
             Tool::Pen => Annotation::Pen {
                 pts: vec![p],
@@ -562,6 +577,7 @@ impl Session {
             | Annotation::Ellipse { r, .. }
             | Annotation::Pixelate(r) => r.w >= MIN_SELECT && r.h >= MIN_SELECT,
             Annotation::Text { text, .. } => !text.trim().is_empty(),
+            Annotation::Step { .. } => true,
         };
         if !ok {
             return;
@@ -1350,6 +1366,7 @@ impl Session {
                             | Annotation::Ellipse { r, .. }
                             | Annotation::Pixelate(r) => *r = Rect::from_drag(self.shape_anchor, p),
                             Annotation::Text { .. } => {}
+                            Annotation::Step { c, .. } => *c = p,
                         }
                     }
                     self.dirty = true;
@@ -1545,8 +1562,16 @@ impl Session {
                     if sel.w >= MIN_SELECT && sel.h >= MIN_SELECT {
                         let mr = self.sel_monitor(sel);
                         self.sel = Some(sel);
+                        let last = *LAST_TOOL.lock().unwrap();
                         let mut tb = toolbar::Toolbar::new(sel, mr, false);
                         tb.accent = self.prefs.accent;
+                        // re-arm the tool from the previous capture so the
+                        // first stroke needs no click
+                        if let Some(t) = last {
+                            self.tool = Some(t);
+                            tb.tool = Some(t);
+                            tb.layout(sel, mr, true);
+                        }
                         self.toolbar = Some(tb);
                         self.dirty = true;
                     } else {
