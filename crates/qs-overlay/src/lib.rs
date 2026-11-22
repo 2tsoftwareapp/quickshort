@@ -30,6 +30,8 @@ pub use annotate::{annotate_image, Annotation, PIX_BLOCK};
 pub use toolbar::{Action, Item, Tool};
 
 const MIN_SELECT: u32 = 3;
+/// Shown until the first drag, so the dimmed screen explains itself.
+const SELECT_HINT: &str = "Drag to select an area  \u{b7}  Esc to cancel";
 /// Fallback accent — `Prefs::default` and the pixelate preview outline.
 pub(crate) fn accent_default() -> u32 {
     qs_theme::accent()
@@ -1221,6 +1223,17 @@ impl Session {
         }
         if let Some(tb) = &self.toolbar {
             tb.paint(&mut buf, sw, sh, wctx.vrect, scale);
+        }
+        let v = wctx.vrect;
+        let c = self.cursor;
+        if self.sel.is_none()
+            && self.anchor.is_none()
+            && c.x >= v.x
+            && c.x < v.right()
+            && c.y >= v.y
+            && c.y < v.bottom()
+        {
+            toolbar::paint_hint(&mut buf, sw, sh, v, scale, SELECT_HINT);
         }
         let _ = buf.present();
     }

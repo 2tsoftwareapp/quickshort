@@ -116,6 +116,10 @@ const OPTS: &[Item] = &[
     Item::Color(7),
 ];
 
+/// Done is a labeled pill in the horizontal dock, so "finish" reads at a glance.
+const DONE_W: f64 = 64.0;
+const DONE_LABEL: &str = "Done";
+const DONE_PX: f64 = 13.0;
 const R: f64 = 14.0; // button half-size (28×28px >= 24px hit target)
 const GAP: f64 = qs_theme::space::XS; // 4px grid between buttons
 const PAD: f64 = 6.0; // dock inner padding
@@ -191,11 +195,11 @@ impl Toolbar {
         let second = opts || self.more;
         let rows = if second { 2.0 } else { 1.0 };
         // second row aligns under the main row, slightly narrower
-        let (hw, hh) = (
-            PAD * 2.0 + n.max(on) * d + (n.max(on) - 1.0) * GAP,
-            PAD * 2.0 + rows * d + (rows - 1.0) * GAP * 0.5,
-        );
-        let (vw, vh) = (hh, hw);
+        let row_w = |k: f64| PAD * 2.0 + k * d + (k - 1.0) * GAP;
+        let on_eff = if second { on } else { 0.0 };
+        let hh = PAD * 2.0 + rows * d + (rows - 1.0) * GAP * 0.5;
+        let hw = (row_w(n) + DONE_W - d).max(row_w(on_eff));
+        let (vw, vh) = (hh, row_w(n.max(on_eff)));
         let (sx0, sy0) = (sel.x as f64, sel.y as f64);
         let (sx1, sy1) = (sel.right() as f64, sel.bottom() as f64);
         let (mx0, my0) = (mr.x as f64, mr.y as f64);
@@ -257,10 +261,15 @@ impl Toolbar {
                         d as u32,
                     )
                 } else {
+                    let w = if *it == Item::Act(Action::Copy) {
+                        DONE_W
+                    } else {
+                        d
+                    };
                     Rect::new(
                         self.rect.x + off.round() as i32,
                         self.rect.y + off2.round() as i32,
-                        d as u32,
+                        w as u32,
                         d as u32,
                     )
                 };
@@ -334,6 +343,10 @@ impl Toolbar {
                 Item::Redo => self.has_redo,
                 _ => true,
             };
+            if is_primary && r.w > r.h {
+                paint_done(&mut cv, *r, vrect, self.hover == Some(i), self.accent);
+                continue;
+            }
             paint_button(
                 &mut cv,
                 cx,
@@ -347,6 +360,76 @@ impl Toolbar {
             );
         }
     }
+}
+
+/// The labeled primary: accent pill with "Done".
+fn paint_done(cv: &mut Canvas, r: Rect, vrect: Rect, hovered: bool, accent: u32) {
+    let s = cv.scale;
+    let p = qs_theme::pal();
+    let (hw, hh) = (r.w as f64 * 0.5, r.h as f64 * 0.5);
+    let cx = r.x as f64 + hw - vrect.x as f64;
+    let cy = r.y as f64 + hh - vrect.y as f64;
+    let (x0, y0) = (((cx - hw - 1.0) * s) as i32, ((cy - hh - 1.0) * s) as i32);
+    let (x1, y1) = (((cx + hw + 1.0) * s) as i32, ((cy + hh + 1.0) * s) as i32);
+    for py in y0..=y1 {
+        for px in x0..=x1 {
+            let (lx, ly) = ((px as f64 + 0.5) / s, (py as f64 + 0.5) / s);
+            let a = fill_cov(rrect_sdf(lx, ly, cx, cy, hw, hh, BTN_RAD), s);
+            if a > 0.0 {
+                cv.blend(px, py, accent, a);
+                if hovered {
+                    cv.blend(px, py, p.on_accent, a * 0.12);
+                }
+            }
+        }
+    }
+    label(cv, r, vrect, DONE_LABEL, DONE_PX, true, p.on_accent);
+}
+
+/// Centered text inside logical rect `r`.
+fn label(cv: &mut Canvas, r: Rect, vrect: Rect, text: &str, px: f64, bold: bool, rgb: u32) {
+    let scale = cv.scale;
+    let (w, h) = crate::annotate::text_extent(text, px, bold);
+    let pos = Point::new(
+        (r.x as f64 + (r.w as f64 - w) * 0.5).round() as i32,
+        (r.y as f64 + (r.h as f64 - h) * 0.5).round() as i32,
+    );
+    crate::annotate::Annotation::Text {
+        pos,
+        text: text.to_string(),
+        px,
+        bold,
+        rgb,
+    }
+    .render_phys(cv, vrect, scale);
+}
+
+/// First-run style hint shown before a selection exists, centered near the
+/// top of the monitor `vrect`.
+pub fn paint_hint(buf: &mut [u32], sw: usize, sh: usize, vrect: Rect, scale: f64, text: &str) {
+    let px = 14.0;
+    let (w, h) = crate::annotate::text_extent(text, px, false);
+    let (bw, bh) = (w + 32.0, h + 16.0);
+    let r = Rect::new(
+        (vrect.x as f64 + (vrect.w as f64 - bw) * 0.5).round() as i32,
+        vrect.y + 40,
+        bw.round() as u32,
+        bh.round() as u32,
+    );
+    let mut cv = Canvas {
+        buf,
+        w: sw,
+        h: sh,
+        scale,
+    };
+    paint_dock(
+        &mut cv,
+        (r.x - vrect.x) as f64,
+        (r.y - vrect.y) as f64,
+        r.w as f64,
+        r.h as f64,
+    );
+    label(&mut cv, r, vrect, text, px, false, qs_theme::pal().fg);
 }
 
 /// Paint the unified Apple Liquid Glass floating dock behind all toolbar items.
@@ -732,6 +815,17 @@ mod tests {
                 "{a:?}"
             );
         }
+    }
+
+    #[test]
+    fn done_is_a_wide_pill_inside_the_dock() {
+        let (s, m) = sel();
+        let tb = Toolbar::new(s, m, false);
+        let (item, r) = *tb.buttons.last().unwrap();
+        assert_eq!(item, Item::Act(Action::Copy));
+        assert_eq!(r.w, DONE_W as u32);
+        assert!(r.right() <= tb.rect.right());
+        assert!(tb.hit(Point::new(r.right() - 2, r.y + 4)).is_some());
     }
 
     #[test]

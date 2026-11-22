@@ -32,7 +32,7 @@ fn send_sync(msg: &str, ok: bool) -> anyhow::Result<()> {
     hints.insert("urgency", Value::from(if ok { 0u8 } else { 2u8 }));
     hints.insert("desktop-entry", Value::from("quickshort"));
     hints.insert("category", Value::from("image-added"));
-    let _: u32 = proxy
+    let id: u32 = proxy
         .call(
             "Notify",
             &(
@@ -47,7 +47,38 @@ fn send_sync(msg: &str, ok: bool) -> anyhow::Result<()> {
             ),
         )
         .context("Notify")?;
+    remember(id);
     Ok(())
+}
+
+/// Ids of our notifications that may still be on screen.
+static SHOWN: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+
+fn remember(id: u32) {
+    let mut v = SHOWN.lock().unwrap();
+    v.retain(|i| *i != id);
+    v.push(id);
+    let n = v.len();
+    if n > 16 {
+        v.drain(..n - 16);
+    }
+}
+
+/// Closes every notification we posted, so a new capture doesn't grab our
+/// own popup. Returns whether any was asked to close.
+pub fn dismiss_all() -> bool {
+    let ids: Vec<u32> = std::mem::take(&mut *SHOWN.lock().unwrap());
+    if ids.is_empty() {
+        return false;
+    }
+    let Ok(conn) = session() else { return false };
+    let Ok(proxy) = Proxy::new(conn, SERVICE, PATH, IFACE) else {
+        return false;
+    };
+    for id in ids {
+        let _: zbus::Result<()> = proxy.call("CloseNotification", &(id,));
+    }
+    true
 }
 
 /// Notification id → saved capture, for `ActionInvoked` routing. Ids are
@@ -84,6 +115,7 @@ fn send_shot_sync(msg: &str, path: &std::path::Path) -> anyhow::Result<()> {
             ),
         )
         .context("Notify")?;
+    remember(id);
     let mut shots = SHOTS.lock().unwrap();
     shots.retain(|(i, _)| *i != id);
     shots.push((id, path.to_path_buf()));
