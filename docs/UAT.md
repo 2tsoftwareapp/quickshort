@@ -119,6 +119,12 @@ Cách có OCR (trên ảnh có chữ):
 3. **Next / Prev** (hoặc Enter / Shift+Enter) → nhảy vòng qua các kết quả.
 4. Gõ từ không tồn tại → "No match"; **Esc** đóng, highlight biến mất.
 
+### 3.8 Library bằng bàn phím (mới)
+
+Library dùng được không cần chuột: **↑/↓** chọn ảnh, **Enter** mở, **⌘⌫** mở hộp xoá,
+**Enter** xác nhận / **Esc** huỷ, **Esc** đóng Library. Khi ô Search hoặc ô tag đang focus thì
+các phím này nhường lại cho việc gõ.
+
 ## 4. Checklist theo kích thước & theme
 
 Với mỗi mục 3.1–3.7, thử ở: **720×600**, **1000×700**, **1280×800**, **1600×1000**, cả **Dark** và **Light**

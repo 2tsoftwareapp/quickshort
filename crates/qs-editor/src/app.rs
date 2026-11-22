@@ -1307,6 +1307,10 @@ impl EditorApp {
         let mut group = false;
         let mut ungroup = false;
 
+        // An open overlay owns the navigation keys: otherwise the canvas nudge
+        // and the Escape-to-deselect path swallow them before the dialog sees
+        // them, which made the Library keyboard route dead on arrival.
+        let overlay_keys = self.library.open || self.find.open;
         ctx.input_mut(|i| {
             if self.find.open && i.consume_key(Modifiers::NONE, Key::Escape) {
                 self.find.open = false;
@@ -1403,7 +1407,7 @@ impl EditorApp {
                 group = true;
             }
 
-            if i.consume_key(Modifiers::NONE, Key::Escape) {
+            if !overlay_keys && i.consume_key(Modifiers::NONE, Key::Escape) {
                 esc = true;
             }
 
@@ -1457,22 +1461,22 @@ impl EditorApp {
             }
 
             let nudge_step = if i.modifiers.shift { 10.0 } else { 1.0 };
-            if i.consume_key(Modifiers::NONE, Key::ArrowLeft)
+            if !overlay_keys && i.consume_key(Modifiers::NONE, Key::ArrowLeft)
                 || i.consume_key(Modifiers::SHIFT, Key::ArrowLeft)
             {
                 nudge = Some((-nudge_step, 0.0));
             }
-            if i.consume_key(Modifiers::NONE, Key::ArrowRight)
+            if !overlay_keys && i.consume_key(Modifiers::NONE, Key::ArrowRight)
                 || i.consume_key(Modifiers::SHIFT, Key::ArrowRight)
             {
                 nudge = Some((nudge_step, 0.0));
             }
-            if i.consume_key(Modifiers::NONE, Key::ArrowUp)
+            if !overlay_keys && i.consume_key(Modifiers::NONE, Key::ArrowUp)
                 || i.consume_key(Modifiers::SHIFT, Key::ArrowUp)
             {
                 nudge = Some((0.0, -nudge_step));
             }
-            if i.consume_key(Modifiers::NONE, Key::ArrowDown)
+            if !overlay_keys && i.consume_key(Modifiers::NONE, Key::ArrowDown)
                 || i.consume_key(Modifiers::SHIFT, Key::ArrowDown)
             {
                 nudge = Some((0.0, nudge_step));

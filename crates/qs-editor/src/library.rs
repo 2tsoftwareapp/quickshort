@@ -3,7 +3,7 @@
 //! Scanning and thumbnail decoding happen on worker threads; this module only
 //! paints state it already owns, so no frame ever waits on the filesystem.
 
-use crate::components::{self, ButtonVariant};
+use crate::components;
 use crate::theme;
 use eframe::egui::{
     self, Align2, Color32, ColorImage, CornerRadius, FontId, Pos2, Rect, TextureHandle,
@@ -336,7 +336,7 @@ impl Library {
     }
 
     fn body(&mut self, ui: &mut egui::Ui) -> Option<LibraryAction> {
-        let mut action = None;
+        let action = None;
         self.toolbar(ui);
         ui.add_space(qs_theme::space::SM as f32);
 
@@ -361,6 +361,51 @@ impl Library {
             .into_iter()
             .map(|e| e.file_name.clone())
             .collect();
+
+        // Keyboard route through the library. Without it the view is
+        // mouse-only, which is both an accessibility gap and the reason this
+        // feature could not be exercised on a machine where synthetic clicks
+        // are blocked. Typing in the search or tag field takes precedence.
+        let mut action = action;
+        if ui.memory(|m| m.focused().is_none()) {
+            let (down, up, enter, esc, delete) = ui.input(|i| {
+                (
+                    i.key_pressed(egui::Key::ArrowDown),
+                    i.key_pressed(egui::Key::ArrowUp),
+                    i.key_pressed(egui::Key::Enter),
+                    i.key_pressed(egui::Key::Escape),
+                    i.modifiers.command && i.key_pressed(egui::Key::Backspace),
+                )
+            });
+            if esc {
+                self.open = false;
+            }
+            if (down || up) && !names.is_empty() {
+                let current = self
+                    .selected
+                    .iter()
+                    .next()
+                    .and_then(|n| names.iter().position(|x| x == n));
+                let next = match current {
+                    Some(i) if down => (i + 1).min(names.len() - 1),
+                    Some(i) => i.saturating_sub(1),
+                    None => 0,
+                };
+                self.selected.clear();
+                self.selected.insert(names[next].clone());
+                self.anchor = Some(names[next].clone());
+            }
+            if enter && self.selected.len() == 1 {
+                if let Some(name) = self.selected.iter().next() {
+                    if let Some(entry) = self.entries.iter().find(|e| &e.file_name == name) {
+                        action = Some(LibraryAction::Open(entry.path(&self.dir)));
+                    }
+                }
+            }
+            if delete && !self.read_only && !self.selected.is_empty() {
+                self.confirm_delete = true;
+            }
+        }
 
         ui.horizontal(|ui| {
             let summary = if self.scanning {
@@ -596,8 +641,10 @@ impl Library {
         );
 
         let painter = ui.painter();
+        // A solid accent fill made the row name and meta line unreadable; the
+        // selected state is a light wash plus an accent edge instead.
         let fill = if selected {
-            theme::accent_blue_soft()
+            theme::accent_alpha(36)
         } else if resp.hovered() {
             theme::bg_pill_hover()
         } else {
@@ -607,7 +654,14 @@ impl Library {
         painter.rect_stroke(
             rect,
             CornerRadius::same(8),
-            egui::Stroke::new(1.0, theme::border_subtle()),
+            egui::Stroke::new(
+                if selected { 1.5 } else { 1.0 },
+                if selected {
+                    theme::accent_blue()
+                } else {
+                    theme::border_subtle()
+                },
+            ),
             egui::StrokeKind::Inside,
         );
 
@@ -839,8 +893,11 @@ impl Library {
                         .color(theme::text_tertiary()),
                 );
                 ui.add_space(qs_theme::space::MD as f32);
+                // `components::button` stretches to the full width, which in a
+                // horizontal row pushed the destructive button outside the
+                // window and clipped the question text with it.
                 ui.horizontal(|ui| {
-                    if components::button(ui, "Cancel", ButtonVariant::Tonal, "").clicked() {
+                    if ui.button("Cancel").clicked() {
                         decision = Some(false);
                     }
                     let trash = egui::Button::new(
@@ -851,8 +908,19 @@ impl Library {
                     }
                 });
             });
-        if !open {
+        // The dialog is keyboard-complete too: ⌘⌫ opened it, so Enter must be
+        // able to confirm and Escape to back out without a mouse.
+        let (enter, esc) = ctx.input(|i| {
+            (
+                i.key_pressed(egui::Key::Enter),
+                i.key_pressed(egui::Key::Escape),
+            )
+        });
+        if !open || esc {
             decision = Some(false);
+        }
+        if enter {
+            decision = Some(true);
         }
         match decision {
             Some(true) => {
