@@ -88,6 +88,7 @@ pub struct EditorApp {
     window_title: Option<String>,
     needs_initial_fit: bool,
     last_canvas_rect: Option<Rect>,
+    fit_memo: Option<crate::canvas::FitMemo>,
     saw_drag_press: bool,
     toast: Option<(String, std::time::Instant)>,
     canvas_dialog_open: bool,
@@ -184,6 +185,7 @@ impl EditorApp {
             window_title: None,
             needs_initial_fit: true,
             last_canvas_rect: None,
+            fit_memo: None,
             saw_drag_press: false,
             toast: None,
             canvas_dialog_open: false,
@@ -375,6 +377,7 @@ impl EditorApp {
             window_title: None,
             needs_initial_fit: true,
             last_canvas_rect: None,
+            fit_memo: None,
             saw_drag_press: false,
             show_layers: true,
             show_inspector: true,
@@ -1137,7 +1140,8 @@ impl EditorApp {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             for (key, label) in qs_theme::THEMES.iter().rev() {
                                 let active = self.prefs.theme == *key;
-                                if crate::components::status_pill(ui, label, active, "") {
+                                let tip = format!("Zoom to {label}");
+                            if crate::components::status_pill(ui, label, active, &tip) {
                                     self.prefs.theme = (*key).into();
                                     dirty = true;
                                 }
@@ -1439,6 +1443,7 @@ impl EditorApp {
             ZoomCmd::Fit => {
                 self.view.sync(self.editor.doc());
                 self.view.fit_to(self.view.display_rect(), rect, 40.0);
+                self.fit_memo = Some(crate::canvas::FitMemo::of(&self.view, rect.size(), 1.5));
             }
         }
     }
@@ -1613,6 +1618,10 @@ impl EditorApp {
                 // content and both keep stealing the keyboard.
                 self.find.open = false;
                 self.library.toggle();
+            }
+
+            if i.consume_key(Modifiers::COMMAND, Key::N) || i.consume_key(Modifiers::CTRL, Key::N) {
+                spawn_capture();
             }
 
             if i.consume_key(Modifiers::COMMAND, Key::F) || i.consume_key(Modifiers::CTRL, Key::F) {
@@ -2084,6 +2093,14 @@ impl eframe::App for EditorApp {
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if crate::components::status_pill(
+                            ui,
+                            "New capture",
+                            false,
+                            "Capture a new screenshot (\u{2318}N)",
+                        ) {
+                            spawn_capture();
+                        }
                         if self.editor.region().is_some()
                             && crate::components::status_pill(
                                 ui,
@@ -2114,13 +2131,12 @@ impl eframe::App for EditorApp {
                             self.settings_open = !self.settings_open;
                         }
                         let is_dark = qs_theme::pal().dark;
-                        let theme_lbl = if is_dark { "Dark" } else { "Light" };
-                        if crate::components::status_pill(
-                            ui,
-                            theme_lbl,
-                            false,
-                            "Switch Light / Dark Glass theme",
-                        ) {
+                        let (theme_lbl, theme_tip) = if is_dark {
+                            ("Dark", "Theme: Dark \u{2014} click for Light")
+                        } else {
+                            ("Light", "Theme: Light \u{2014} click for Dark")
+                        };
+                        if crate::components::status_pill(ui, theme_lbl, false, theme_tip) {
                             let next = if is_dark { "light" } else { "dark" };
                             self.prefs.theme = next.into();
                             self.prefs.apply_live();
@@ -2786,14 +2802,25 @@ impl eframe::App for EditorApp {
                     None
                 };
 
-                if self.needs_initial_fit
-                    && screen_rect.width() > 32.0
-                    && screen_rect.height() > 32.0
-                {
-                    self.view
-                        .fit_to(self.view.display_rect(), screen_rect, 40.0);
-                    self.view.zoom = self.view.zoom.min(1.0);
-                    self.needs_initial_fit = false;
+                let fit_cap = if self.needs_initial_fit {
+                    Some(1.0)
+                } else {
+                    self.fit_memo
+                        .filter(|m| m.wants_refit(&self.view, screen_rect.size()))
+                        .map(|m| m.max_zoom)
+                };
+                if let Some(cap) = fit_cap {
+                    if screen_rect.width() > 32.0 && screen_rect.height() > 32.0 {
+                        self.view
+                            .fit_to(self.view.display_rect(), screen_rect, 40.0);
+                        self.view.zoom = self.view.zoom.min(cap);
+                        self.needs_initial_fit = false;
+                        self.fit_memo = Some(crate::canvas::FitMemo::of(
+                            &self.view,
+                            screen_rect.size(),
+                            cap,
+                        ));
+                    }
                 }
 
                 let mut painter = ui.painter_at(screen_rect);
@@ -3135,6 +3162,7 @@ mod tests {
             window_title: None,
             needs_initial_fit: true,
             last_canvas_rect: None,
+            fit_memo: None,
             saw_drag_press: false,
             show_layers: true,
             show_inspector: true,
@@ -3265,5 +3293,23 @@ fn load_document(p: &Path) -> anyhow::Result<(Document, RgbaImage, PathBuf)> {
         let (w, h) = (img.width(), img.height());
         let doc = Document::new(w, h, 1.0);
         Ok((doc, img, qsdoc::sibling_path(p)))
+    }
+}
+
+/// Starts a fresh region capture through the sibling `quickshort` binary, so
+/// the editor loops straight back to Capture without a trip to the tray.
+fn spawn_capture() {
+    let name = if cfg!(windows) {
+        "quickshort.exe"
+    } else {
+        "quickshort"
+    };
+    let exe = std::env::current_exe()
+        .ok()
+        .and_then(|e| Some(e.parent()?.join(name)))
+        .filter(|p| p.exists())
+        .unwrap_or_else(|| name.into());
+    if let Err(e) = std::process::Command::new(&exe).arg("--capture").spawn() {
+        eprintln!("new capture: failed to launch {}: {e}", exe.display());
     }
 }

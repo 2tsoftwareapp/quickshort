@@ -366,12 +366,57 @@ pub fn paint_handles(
     }
 }
 
+/// The view a fit produced. While the user hasn't zoomed or panned since,
+/// a viewport resize (maximize, panel toggle) refits instead of leaving the
+/// document stranded at the zoom that suited the old window size.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FitMemo {
+    pub zoom: f32,
+    pub center: PointF,
+    pub viewport: Vec2,
+    pub max_zoom: f32,
+}
+
+impl FitMemo {
+    pub fn of(view: &CanvasView, viewport: Vec2, max_zoom: f32) -> Self {
+        Self {
+            zoom: view.zoom,
+            center: view.center,
+            viewport,
+            max_zoom,
+        }
+    }
+
+    pub fn wants_refit(&self, view: &CanvasView, viewport: Vec2) -> bool {
+        let untouched = (view.zoom - self.zoom).abs() < 1e-4
+            && (view.center.x - self.center.x).abs() < 1e-3
+            && (view.center.y - self.center.y).abs() < 1e-3;
+        untouched && (viewport - self.viewport).length() > 0.5
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn screen() -> Rect {
         Rect::from_min_size(Pos2::new(0.0, 0.0), Vec2::new(800.0, 600.0))
+    }
+
+    #[test]
+    fn fit_memo_refits_only_an_untouched_view_on_resize() {
+        let mut v = CanvasView::default();
+        let doc = RectF::new(0.0, 0.0, 1600.0, 600.0);
+        v.fit_to(doc, screen(), 40.0);
+        let memo = FitMemo::of(&v, screen().size(), 1.0);
+        assert!(!memo.wants_refit(&v, screen().size()));
+        assert!(memo.wants_refit(&v, Vec2::new(1800.0, 1100.0)));
+        v.zoom_at(1.25, screen().center(), screen());
+        assert!(!memo.wants_refit(&v, Vec2::new(1800.0, 1100.0)));
+        v = CanvasView::default();
+        v.fit_to(doc, screen(), 40.0);
+        v.pan(Vec2::new(30.0, 0.0));
+        assert!(!memo.wants_refit(&v, Vec2::new(1800.0, 1100.0)));
     }
 
     fn close(a: PointF, b: PointF) -> bool {
