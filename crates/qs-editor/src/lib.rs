@@ -5,6 +5,7 @@ pub mod canvas;
 pub mod clipboard;
 pub mod components;
 pub mod filmstrip;
+pub mod filmstrip_keys;
 pub mod find;
 pub mod fonts;
 pub mod icons;

@@ -193,3 +193,66 @@ fn command_backspace_opens_the_delete_confirmation_and_escape_cancels() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Remove the test file from the OS trash so a test run leaves no litter.
+fn clean_trash(name: &str) {
+    let Ok(home) = std::env::var("HOME") else { return };
+    let trash = std::path::Path::new(&home).join(".Trash");
+    let Ok(entries) = std::fs::read_dir(&trash) else { return };
+    for entry in entries.flatten() {
+        let file = entry.file_name();
+        let file = file.to_string_lossy();
+        // The OS may suffix duplicates ("name 2.png").
+        if file == name || file.starts_with(&format!("{name} ")) {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
+#[test]
+fn confirming_the_delete_moves_the_file_to_the_trash() {
+    let dir = sample_dir("trash");
+    let (ctx, mut library) = scanned(&dir);
+
+    frame(&ctx, &mut library, 900.0, 700.0, vec![key_event(Key::ArrowDown)]);
+    let selected = library.selected_names();
+    assert_eq!(selected.len(), 1);
+    let victim = dir.join(&selected[0]);
+    assert!(victim.exists());
+
+    frame(
+        &ctx,
+        &mut library,
+        900.0,
+        700.0,
+        vec![
+            Event::ModifiersChanged(Modifiers::COMMAND),
+            Event::Key {
+                key: Key::Backspace,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::COMMAND,
+            },
+        ],
+    );
+    assert!(library.is_confirming_delete());
+
+    // Enter confirms; the row disappears and the file leaves the folder.
+    frame(
+        &ctx,
+        &mut library,
+        900.0,
+        700.0,
+        vec![Event::ModifiersChanged(Modifiers::NONE), key_event(Key::Enter)],
+    );
+    assert!(!library.is_confirming_delete(), "dialog closes after deleting");
+    assert!(
+        !victim.exists(),
+        "the confirmed file must leave the capture folder"
+    );
+    assert_eq!(library.len(), 2, "the row is gone from the list");
+
+    clean_trash(&selected[0]);
+    let _ = std::fs::remove_dir_all(&dir);
+}

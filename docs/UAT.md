@@ -238,3 +238,9 @@ rm "$HOME/Library/Application Support/quickshort/config.toml"
   hiện thành hàng, thumbnail rơi về placeholder và view không sập.
 - Lưu ý khi viết test bàn phím: `InputState::modifiers` chỉ đổi qua `Event::ModifiersChanged`, nên
   một tổ hợp phím phải gửi kèm event đó **trước** `Event::Key` trong cùng frame.
+
+- Test xoá thật: ⌘⌫ → Enter → file rời thư mục, hàng biến mất; test dọn lại entry trong `~/.Trash`
+  để không để rác lại trên máy.
+- Logic phím của tray tách thành `qs-editor/src/filmstrip_keys.rs` (hàm thuần + 4 unit test): mũi tên
+  di chuyển và kẹp hai đầu, lần bấm đầu chọn item đầu tiên, Space đánh dấu, Enter mở Combine khi ≥2.
+  App chỉ còn dịch `TrayAction` sang hành động.

@@ -2030,42 +2030,47 @@ impl eframe::App for EditorApp {
                     // was mouse-only.
                     if ui.ctx().memory(|m| m.focused().is_none()) {
                         let n = self.filmstrip.items.len();
-                        if n > 0 {
-                            let (left, right, space, enter) = ui.input(|i| {
-                                (
-                                    i.key_pressed(egui::Key::ArrowLeft),
-                                    i.key_pressed(egui::Key::ArrowRight),
-                                    i.key_pressed(egui::Key::Space),
-                                    i.key_pressed(egui::Key::Enter),
-                                )
-                            });
-                            let mut idx = self.filmstrip_focus.unwrap_or(0).min(n - 1);
-                            if right {
-                                idx = (idx + 1).min(n - 1);
-                            } else if left {
-                                idx = idx.saturating_sub(1);
-                            }
-                            if left || right {
-                                self.filmstrip_focus = Some(idx);
-                            }
-                            if let Some(item) = self.filmstrip.items.get(idx) {
-                                let path = item.path.clone();
-                                if space {
+                        let (left, right, space, enter) = ui.input(|i| {
+                            (
+                                i.key_pressed(egui::Key::ArrowLeft),
+                                i.key_pressed(egui::Key::ArrowRight),
+                                i.key_pressed(egui::Key::Space),
+                                i.key_pressed(egui::Key::Enter),
+                            )
+                        });
+                        let (focus, action) = crate::filmstrip_keys::tray_keys(
+                            self.filmstrip_focus,
+                            n,
+                            self.tray_selected.len(),
+                            crate::filmstrip_keys::TrayInput {
+                                left,
+                                right,
+                                space,
+                                enter,
+                            },
+                        );
+                        self.filmstrip_focus = focus;
+                        match action {
+                            crate::filmstrip_keys::TrayAction::None => {}
+                            crate::filmstrip_keys::TrayAction::ToggleMark(index) => {
+                                if let Some(item) = self.filmstrip.items.get(index) {
+                                    let path = item.path.clone();
                                     if let Some(pos) =
                                         self.tray_selected.iter().position(|p| p == &path)
                                     {
                                         self.tray_selected.remove(pos);
                                     } else {
-                                        self.tray_selected.push(path.clone());
+                                        self.tray_selected.push(path);
                                     }
                                 }
-                                if enter {
-                                    if self.tray_selected.len() >= 2 {
-                                        self.combine_dialog_open = true;
-                                    } else {
-                                        switch_target = Some(path);
-                                    }
+                            }
+                            crate::filmstrip_keys::TrayAction::Open(index) => {
+                                if let Some(item) = self.filmstrip.items.get(index) {
+                                    switch_target = Some(item.path.clone());
                                 }
+                            }
+                            crate::filmstrip_keys::TrayAction::OpenCombine => {
+                                self.combine_dialog_open = true;
                             }
                         }
                     }
