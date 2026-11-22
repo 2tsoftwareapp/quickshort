@@ -436,6 +436,15 @@ impl Host {
                     }
                 }
             }
+            tray::ID_GDRIVE => {
+                self.cfg.share_to_drive = !self.cfg.share_to_drive;
+                self.cfg.save();
+                self.rebuild_menu();
+            }
+            tray::ID_GDRIVE_DISCONNECT => {
+                crate::gdrive::disconnect();
+                self.rebuild_menu();
+            }
             tray::ID_LOGIN => {
                 self.cfg.launch_at_login = !self.cfg.launch_at_login;
                 if let Err(e) = tray::set_launch_at_login(self.cfg.launch_at_login) {
@@ -1246,7 +1255,7 @@ impl ApplicationHandler<HostEvent> for Host {
                             );
                             self.toast_done(
                                 el,
-                                format!("Link copied — expires in {}d", link.expires_s / 86400),
+                                format!("Link copied — {}", link.note()),
                                 true,
                             );
                         }
@@ -1343,8 +1352,7 @@ impl ApplicationHandler<HostEvent> for Host {
                         }
                         c.set_shared(true);
                         c.notify(&format!(
-                            "Link copied — expires in {}d (Share again to revoke)",
-                            link.expires_s / 86400
+                            "Link copied — {} (Share again to revoke)", link.note()
                         ));
                     }
                     Err(e) => c.notify(&format!("Share failed: {e}")),
@@ -1368,7 +1376,7 @@ impl ApplicationHandler<HostEvent> for Host {
                     }
                     self.toast_done(
                         el,
-                        format!("Link copied — expires in {}d", link.expires_s / 86400),
+                        format!("Link copied — {}", link.note()),
                         true,
                     );
                 }

@@ -19,6 +19,8 @@ pub const ID_QUIT: &str = "quit";
 pub const ID_RECENT_PREFIX: &str = "recent:";
 pub const ID_UPDATE: &str = "update";
 pub const ID_DONATE: &str = "donate";
+pub const ID_GDRIVE: &str = "gdrive";
+pub const ID_GDRIVE_DISCONNECT: &str = "gdrive_disconnect";
 pub const ID_EVIDENCE_START: &str = "evidence_start";
 pub const ID_EVIDENCE_NEXT: &str = "evidence_next";
 pub const ID_EVIDENCE_END: &str = "evidence_end";
@@ -64,6 +66,19 @@ pub fn build_menu(
     let login =
         CheckMenuItem::with_id(ID_LOGIN, "Launch at Login", true, cfg.launch_at_login, None);
     let settings = MenuItem::with_id(ID_SETTINGS, "Settings…", true, None);
+    let drive = CheckMenuItem::with_id(
+        ID_GDRIVE,
+        "Share Links via Google Drive",
+        crate::gdrive::available(),
+        cfg.share_to_drive,
+        None,
+    );
+    let drive_off = MenuItem::with_id(
+        ID_GDRIVE_DISCONNECT,
+        "Disconnect Google Drive",
+        crate::gdrive::connected(),
+        None,
+    );
     let update = MenuItem::with_id(
         ID_UPDATE,
         match pending_update {
@@ -97,6 +112,8 @@ pub fn build_menu(
         &PredefinedMenuItem::separator(),
         &open,
         &settings,
+        &drive,
+        &drive_off,
         &login,
         &PredefinedMenuItem::separator(),
         &update,

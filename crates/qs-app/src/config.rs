@@ -93,6 +93,9 @@ pub struct Config {
     pub accent: String,
     /// Also put the PNG on the clipboard after a Save.
     pub copy_after_save: bool,
+    /// Share uploads to the user's own Google Drive instead of the
+    /// 3-day quick-link worker (needs a build with a Drive OAuth client).
+    pub share_to_drive: bool,
     /// Auto-delete captures older than this many days; 0 = keep forever.
     pub keep_days: u32,
     /// Overlay ⌘+key triggers — single chars (see `overlay_prefs`).
@@ -148,6 +151,7 @@ impl Default for Config {
             recent_max: 8,
             accent: "blue".into(),
             copy_after_save: true,
+            share_to_drive: false,
             keep_days: 0,
             key_save: "s".into(),
             key_copy: "c".into(),

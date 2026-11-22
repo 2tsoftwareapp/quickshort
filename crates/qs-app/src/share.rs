@@ -31,6 +31,17 @@ pub struct SharedLink {
 /// host and one-shot CLI paths already hold it that way.
 pub struct ShareManager;
 
+impl SharedLink {
+    /// Toast/notification tail: how long the link lives.
+    pub fn note(&self) -> String {
+        if self.delete_key.starts_with(crate::gdrive::KEY_PREFIX) {
+            "saved to your Google Drive".into()
+        } else {
+            format!("expires in {}d", self.expires_s / 86400)
+        }
+    }
+}
+
 impl ShareManager {
     pub fn new() -> Arc<Self> {
         Arc::new(Self)
@@ -39,6 +50,9 @@ impl ShareManager {
     /// Upload `img` and return its public URL. Blocks for the encode +
     /// upload — the caller runs this on a worker thread.
     pub fn share(&self, img: &RgbaImage) -> Result<SharedLink> {
+        if crate::gdrive::available() && crate::config::Config::load().share_to_drive {
+            return crate::gdrive::share(img);
+        }
         let endpoint = std::env::var("QS_SHARE_URL").unwrap_or_else(|_| ENDPOINT.into());
         let webp = webp::Encoder::from_rgba(img.as_raw(), img.width(), img.height())
             .encode(WEBP_QUALITY)
@@ -63,6 +77,9 @@ impl ShareManager {
     /// `delete_key` the token returned at upload. Idempotent — deleting
     /// an already-expired link is a silent no-op.
     pub fn revoke(&self, url: &str, delete_key: &str) -> Result<()> {
+        if let Some(id) = delete_key.strip_prefix(crate::gdrive::KEY_PREFIX) {
+            return crate::gdrive::delete(id);
+        }
         let endpoint = std::env::var("QS_SHARE_URL").unwrap_or_else(|_| ENDPOINT.into());
         // strip the endpoint origin so an override still lands on /s/…
         let path = url
@@ -208,6 +225,11 @@ pub fn entry(path: PathBuf, link: &SharedLink) -> ShareEntry {
         path,
         url: link.url.clone(),
         delete_key: link.delete_key.clone(),
-        expires_at: unix_now() + link.expires_s,
+        // Drive links never expire on their own — keep them revocable
+        expires_at: if link.expires_s == 0 && !link.delete_key.is_empty() {
+            u64::MAX
+        } else {
+            unix_now() + link.expires_s
+        },
     }
 }

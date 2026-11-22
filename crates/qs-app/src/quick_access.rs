@@ -545,8 +545,7 @@ pub fn standalone(
                 Ok(l) => {
                     crate::actions::copy_text(&l.url, self.wait);
                     c.notify(&format!(
-                        "Link copied — expires in {}d",
-                        l.expires_s / 86400
+                        "Link copied — {}", l.note()
                     ));
                 }
                 Err(e) => c.notify(&format!("Share failed: {e}")),
