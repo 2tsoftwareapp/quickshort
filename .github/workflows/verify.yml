@@ -12,7 +12,7 @@ on:
 
 jobs:
   linux:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -32,7 +32,7 @@ jobs:
   # root window is screenshotted — the artifact is the visual proof
   # that the X11 backend renders the fan.
   linux-x11-smoke:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -70,7 +70,7 @@ jobs:
   # Same idea on the compositor side: headless Weston hosts the demo,
   # weston-screenshooter grabs the output — proves the wl_shm layer.
   linux-wayland-smoke:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
