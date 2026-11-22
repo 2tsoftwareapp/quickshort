@@ -72,7 +72,7 @@ impl Toast {
             .with_window_level(WindowLevel::AlwaysOnTop)
             .with_inner_size(LogicalSize::new(W, H));
         let win = Rc::new(el.create_window(attrs).context("toast window")?);
-        crate::widgets::round_window(&win, 11.0);
+        crate::widgets::round_window(&win, qs_theme::radius::XL);
         crate::widgets::place_popup(&win, el, pos, W, H);
         let surf = SbContext::new(win.clone())
             .and_then(|c| Surface::new(&c, win.clone()))
@@ -220,7 +220,7 @@ impl Toast {
             &mut cv,
             W,
             H,
-            11.0,
+            qs_theme::radius::XL,
             qs_theme::pal().popover,
             qs_theme::pal().popover_border,
             qs_theme::pal().fringe,
