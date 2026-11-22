@@ -254,3 +254,12 @@ rm "$HOME/Library/Application Support/quickshort/config.toml"
   không được cập nhật ngay sau khi tạo sheet.
 - Chưa test được `close_guard`: `ViewportInfo.close_requested` chỉ có getter, test không dựng được
   trạng thái "người dùng bấm đóng cửa sổ" — cần backend thật.
+
+- Smart Move hover (đề xuất khung) đã kiểm trên app thật: mở ảnh screenshot, bật **Y**, rê chuột lên
+  dòng "General" → khung accent bao đúng dòng đó. Ảnh: `.zwork/uat/147-hover-proposal.png`.
+- Giới hạn môi trường: trên máy này **chuột di chuyển tới app nhưng nút bấm thì không**
+  (`CGEvent` move → tooltip/hover hoạt động; down/up → không có tác dụng, ảnh trước/sau giống hệt
+  từng byte). Vì vậy hover-test được còn click-test thì không; `close_guard` vẫn chưa kiểm được vì
+  cần sự kiện đóng cửa sổ.
+- Trong stack này **không có "agent desktop" của Vercel Labs**: `tool_search` cho desktop/computer-use
+  trả 0 tool (đã thử 2 truy vấn), và `orca-computer-use` bị cấm dùng.
