@@ -205,12 +205,11 @@ rm "$HOME/Library/Application Support/quickshort/config.toml"
 | Export & Share | ✓ | ✓ | ✓ | ✓ |
 | Flatten | ✓ | ✓ | ✓ | ✓ |
 | Settings | ✓ | ✓ | ✓ | ✓ |
-| Align & Distribute | — | ✓ | ✓ | ✓ |
-| Layers panel | ✓ | ✓ | — | ✓ |
+| Align & Distribute | ✓ | ✓ | ✓ | ✓ |
+| Layers panel | ✓ | ✓ | ✓ | ✓ |
 
-Ảnh nằm trong `.zwork/uat/` (không commit). Ô trống duy nhất còn lại: Combine (cần chọn ≥2 ảnh
-trong filmstrip bằng chuột — macOS chặn tổng hợp click trên máy này) và Find ở 720×600 Light đã có
-nhưng chưa chụp lại sau vòng slider; Layers ở 720×600 Dark chưa có.
+Ảnh nằm trong `.zwork/uat/` (không commit). Ô trống duy nhất còn lại: **Combine** — cần chọn ≥2 ảnh trong filmstrip bằng chuột, mà macOS chặn
+tổng hợp click trên máy này.
 
 - Slider/ComboBox dùng style chung: rail 84 px, knob tròn, chiều cao `CONTROL_H` 26, rail lấy
   `bg_pill_track`, phần đã kéo tô accent (`slider_trailing_fill`). Nhãn dài được rút ("Corner radius"

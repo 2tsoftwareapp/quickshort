@@ -2415,17 +2415,30 @@ impl eframe::App for EditorApp {
                 .collapsible(false)
                 .resizable(false)
                 .show(&ctx, |ui| {
-                    ui.horizontal_wrapped(|ui| {
+                    // One row per axis: wrapping all six mixed them up at 720.
+                    ui.horizontal(|ui| {
                         for (label, a) in [
                             ("Left", Alignment::Left),
                             ("Center X", Alignment::HCenter),
                             ("Right", Alignment::Right),
+                        ] {
+                            if crate::components::pill_button(ui, label, "") {
+                                if self.editor.align_selected(a) {
+                                    self.touch();
+                                }
+                            }
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        for (label, a) in [
                             ("Top", Alignment::Top),
                             ("Center Y", Alignment::VCenter),
                             ("Bottom", Alignment::Bottom),
                         ] {
-                            if ui.button(label).clicked() && self.editor.align_selected(a) {
-                                self.touch();
+                            if crate::components::pill_button(ui, label, "") {
+                                if self.editor.align_selected(a) {
+                                    self.touch();
+                                }
                             }
                         }
                     });
@@ -2433,12 +2446,12 @@ impl eframe::App for EditorApp {
                     ui.horizontal(|ui| {
                         let enabled = self.editor.selection().len() >= 3;
                         ui.add_enabled_ui(enabled, |ui| {
-                            if ui.button("Distribute horizontally").clicked()
+                            if crate::components::pill_button(ui, "Distribute horizontally", "")
                                 && self.editor.distribute_selected(Axis::Horizontal)
                             {
                                 self.touch();
                             }
-                            if ui.button("Distribute vertically").clicked()
+                            if crate::components::pill_button(ui, "Distribute vertically", "")
                                 && self.editor.distribute_selected(Axis::Vertical)
                             {
                                 self.touch();
