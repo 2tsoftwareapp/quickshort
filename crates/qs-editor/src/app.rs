@@ -1128,7 +1128,10 @@ impl EditorApp {
         let (mut copy, mut print) = (false, false);
         let area = egui::Area::new(egui::Id::unique("export_menu"))
             .order(egui::Order::Foreground)
-            .fixed_pos(anchor.left_bottom() + Vec2::new(0.0, qs_theme::space::XS as f32))
+            // right-aligned under Export, as macOS toolbar menus are, so it
+            // keeps clear of the window edge
+            .pivot(egui::Align2::RIGHT_TOP)
+            .fixed_pos(anchor.right_bottom() + Vec2::new(0.0, qs_theme::space::XS as f32))
             .show(ctx, |ui| {
                 egui::Frame::menu(ui.style()).show(ui, |ui| {
                     ui.set_min_width(200.0);
