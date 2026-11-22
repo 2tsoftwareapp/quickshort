@@ -137,6 +137,8 @@ pub struct Library {
     confirm_delete: bool,
     /// Last persistence failure, shown until the next successful write.
     write_error: Option<String>,
+    /// Viewport size of the frame being drawn, so the list can cap itself.
+    viewport: Option<Vec2>,
 }
 
 impl Default for Library {
@@ -158,6 +160,7 @@ impl Default for Library {
             tag_draft: String::new(),
             confirm_delete: false,
             write_error: None,
+            viewport: None,
         }
     }
 }
@@ -328,6 +331,7 @@ impl Library {
         // Leave a real margin: at 720x600 the old default filled the window and
         // covered the status bar.
         let avail = ctx.content_rect().size();
+        self.viewport = Some(avail);
         let size = Vec2::new(
             (avail.x - 2.0 * MARGIN).clamp(420.0, 860.0),
             (avail.y - 2.0 * MARGIN).clamp(320.0, 620.0),
@@ -338,6 +342,9 @@ impl Library {
             .collapsible(false)
             .resizable(true)
             .default_size(size)
+            // `default_size` is only the first frame: a long list used to grow
+            // the window past the screen bottom. Cap it and let the list scroll.
+            .max_height((avail.y - 2.0 * MARGIN).max(320.0))
             .min_size(Vec2::new(420.0, 320.0))
             .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
             .show(ctx, |ui| {
@@ -469,7 +476,13 @@ impl Library {
             let mut star_hit: Option<String> = None;
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
-                .max_height((ui.available_height() - 56.0).max(80.0))
+                // 210 px covers the title bar, the toolbar block and the footer;
+                // without the cap the list grew the whole window past the screen.
+                .max_height(
+                    self.viewport
+                        .map(|v| (v.y - 2.0 * MARGIN - 210.0).max(120.0))
+                        .unwrap_or(240.0),
+                )
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 4.0;
                     for name in &names {
