@@ -248,3 +248,9 @@ rm "$HOME/Library/Application Support/quickshort/config.toml"
 - Test app-level (`tests/ui_app.rs`) dùng `EditorApp::for_tests` + `handle_dialog_keys`: ⌘⇧C/E/⌥⌘F/⌘⇧A/⌘,
   mở đúng dialog và **đóng cái trước**, Esc đóng dialog trên cùng, ⌘⇧T bật/tắt tray. Qua đó phát hiện
   Align/Settings trước đây không đóng dialog khác nên chồng lên nhau.
+
+- Test Combine tạo sheet thật: hai ảnh tạm → `create_combined_sheet()` → tài liệu có thêm object, có
+  Step badge, canvas rộng hơn một ảnh, và được đánh dấu chưa lưu. Qua đó sửa luôn việc `unsaved`
+  không được cập nhật ngay sau khi tạo sheet.
+- Chưa test được `close_guard`: `ViewportInfo.close_requested` chỉ có getter, test không dựng được
+  trạng thái "người dùng bấm đóng cửa sổ" — cần backend thật.

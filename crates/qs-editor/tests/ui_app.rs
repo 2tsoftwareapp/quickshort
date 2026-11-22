@@ -100,3 +100,42 @@ fn cmd_shift_t_toggles_the_filmstrip() {
     press(&mut app, &ctx, Key::T, Modifiers::COMMAND | Modifiers::SHIFT);
     assert!(!app.filmstrip_visible(), "tray closes again");
 }
+
+#[test]
+fn combine_builds_a_sheet_from_two_captures() {
+    let dir = std::env::temp_dir().join(format!("qs_combine_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut paths = Vec::new();
+    for i in 0..2u32 {
+        let p = dir.join(format!("shot-{i}.png"));
+        image::RgbaImage::from_pixel(80 + i, 60, image::Rgba([250, 251, 253, 255]))
+            .save(&p)
+            .unwrap();
+        paths.push(p);
+    }
+
+    let mut app = app();
+    let before = app.document().objects.len();
+    app.set_tray_selection(paths.clone());
+    app.create_combined_sheet().expect("combine should succeed");
+
+    let doc = app.document();
+    assert!(
+        doc.objects.len() > before,
+        "the sheet carries the captures as objects"
+    );
+    assert!(
+        doc.objects
+            .iter()
+            .any(|o| matches!(o.kind, qs_doc::ObjectKind::Step { .. })),
+        "numbered step badges are added"
+    );
+    assert!(
+        doc.base_size.w > 80.0,
+        "the canvas is the combined width, not one capture"
+    );
+    assert!(app.has_unsaved_edits(), "the new sheet is unsaved");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

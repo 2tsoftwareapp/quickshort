@@ -314,6 +314,45 @@ impl EditorApp {
     }
 
     /// Swaps in another document, dropping the current one and its history.
+    /// Build a combined sheet from the marked captures and open it as the
+    /// current document. Split out of the dialog so the flow is reachable
+    /// without a frame.
+    pub fn create_combined_sheet(&mut self) -> anyhow::Result<()> {
+        let (doc, base) = templates::build_combined_document(
+            &self.tray_selected,
+            self.combine_layout,
+            self.editor.doc().background,
+        )?;
+        self.doc_path = None;
+        self.apply_document(doc, base);
+        self.editor.mark_modified();
+        self.touch();
+        // The sheet is a new unsaved document; state it here instead of waiting
+        // for the next frame's sync.
+        self.sync_unsaved();
+        self.tray_selected.clear();
+        self.combine_dialog_open = false;
+        Ok(())
+    }
+
+    /// Mark captures for Combine, for tests.
+    #[doc(hidden)]
+    pub fn set_tray_selection(&mut self, paths: Vec<std::path::PathBuf>) {
+        self.tray_selected = paths;
+    }
+
+    /// True when the current document has unsaved edits, for tests.
+    #[doc(hidden)]
+    pub fn has_unsaved_edits(&self) -> bool {
+        self.unsaved
+    }
+
+    /// Current document, for tests.
+    #[doc(hidden)]
+    pub fn document(&self) -> &Document {
+        self.editor.doc()
+    }
+
     /// Blank editor for tests: same field set as the internal test fixture,
     /// without needing an eframe `CreationContext`.
     #[doc(hidden)]
@@ -1353,23 +1392,9 @@ impl EditorApp {
         self.combine_dialog_open = open;
 
         if create {
-            match templates::build_combined_document(
-                &self.tray_selected,
-                self.combine_layout,
-                self.editor.doc().background,
-            ) {
-                Ok((doc, base)) => {
-                    self.doc_path = None;
-                    self.apply_document(doc, base);
-                    self.editor.mark_modified();
-                    self.touch();
-                    self.tray_selected.clear();
-                    self.combine_dialog_open = false;
-                    self.show_toast("Created combined template");
-                }
-                Err(e) => {
-                    self.show_toast(format!("Combine failed: {e}"));
-                }
+            match self.create_combined_sheet() {
+                Ok(()) => self.show_toast("Created combined template"),
+                Err(e) => self.show_toast(format!("Combine failed: {e}")),
             }
         }
     }
