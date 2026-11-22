@@ -13,27 +13,48 @@
   <img src="assets/screenshot.png" width="640" alt="Quickshort overlay: region selection with annotation toolbar">
 </div>
 
-Press the global hotkey, drag a region — even across monitors — then save a
-pixel-perfect PNG, copy it, or pull its text out with the OS-native OCR
-engine. Draw on it first if you like. No Electron, no runtime, no model
+One flow: **capture → quick look → (optional) edit**. Press the global
+hotkey, drag a region — even across monitors — mark it up right on the
+overlay, then press **Done**: the PNG is saved *and* on your clipboard.
+Need more? **Edit** opens the same capture in the editor with every
+annotation still an editable layer. No Electron, no runtime, no model
 downloads.
 
 ## Features
 
+- **One capture flow** — no Quick/Editor mode to pick. Done (Enter) saves
+  and copies; Edit (`E`) continues in the editor; Esc cancels. On Linux,
+  Quickshort's own notifications are closed before the overlay opens, so
+  they never end up in the shot
 - **Multi-monitor selection** — drag across monitor boundaries; per-monitor
   crops are stitched through a virtual coordinate space
 - **Full physical resolution** — Retina and mixed-DPI displays are captured
   and stitched at native framebuffer pixels, never downsampled
-- **Annotations** — pen, arrow, rect, ellipse, marker, text, pixelate,
-  undo/redo, stroke sizes, color palette — rendered at output resolution and
+- **Annotations** — rect, arrow, numbered step badges (①②③), text, blur
+  on the main row; select, pen, ellipse, highlight behind **⋯**; undo/redo, stroke sizes, color palette — rendered at output resolution and
   confined to the captured region. Text gets real font sizes (12–48), a bold
   toggle, a proper editing box (arrows, selection, ⌘A) and Vietnamese IME
   input. Shapes and text stay editable blocks: the Select tool picks, drags
-  and deletes them
+  and deletes them. The overlay re-arms the tool you used last
+- **Editor** — opens captures as `.qsdoc` documents with layers, an
+  Inspector (style, Canvas, Align cards), Library inside the canvas, a
+  pinned Find bar, an Export dropdown (PNG/JPEG/WebP, Copy image, Print)
+  and undoable Flatten/Trash instead of confirmation dialogs. `⌘N` starts a
+  new capture, the image refits as the window resizes
+- **Evidence sessions** — for manual testers: tray → *Start Evidence
+  Session*, then capture as usual. Each Done is saved as `TC-001_01.png`,
+  `TC-001_02.png`… in an `evidence-<ts>` folder (still copied too); *Next
+  Test Case* stitches the case into one tall `TC-001_all.png` and moves to
+  TC-002; *End* stitches and opens the folder
 - **Link sharing** — one click uploads the shot as WebP (q95, roughly
   half a PNG's size) to a Cloudflare Worker (`relay/share/`) and copies
   an unguessable URL that expires in 3 days. No account, no local
-  server, and the process does not need to stay alive
+  server, and the process does not need to stay alive. Opt in to
+  **Google Drive** instead (tray → *Share Links via Google Drive*): you sign
+  in with your own Google account once, the image goes to a `Quickshort`
+  folder in *your* Drive with an anyone-with-the-link URL, and sharing
+  again revokes it. Scope is `drive.file` only — the app sees nothing but
+  the files it created
 - **OCR with per-OS engines** — Vision `VNRecognizeTextRequest` on macOS,
   `Windows.Media.Ocr` on Windows, Tesseract on Linux with script
   auto-detection (`ocr_lang = "auto"`, OSD pass picks eng/jpn/vie/…);
@@ -50,6 +71,9 @@ downloads.
   corners and a drop shadow
 - **Resident tray app** — menu-bar icon, global hotkey, launch at login,
   recent captures, auto-update
+- **macOS 26 look** — neutral greys, Apple's dark-mode accent colors,
+  concentric corner radii, a capsule capture HUD, floating Editor toolbar
+  groups and inset glass panels; SF Pro on macOS, Be Vietnam Pro elsewhere
 - **Settings window** — paged preferences (Capture, General, Shortcuts,
   Appearance, Storage, About): rebindable ⌘-action keys, accent color,
   retention policy for old captures, one-click update install
@@ -143,8 +167,8 @@ quickshort --capture-full               # save the whole screen, no selection
 | Anywhere | `⌘⇧S` macOS/Linux, `PrintScreen` Windows (configurable) | Start a selection |
 | Anywhere | `⌘⇧F` (configurable, `hotkey_full`) | Save the whole screen — no overlay |
 | Selection made | `Enter` or `⌘C` (rebindable) | Done — copy to clipboard and save |
-| Selection made | `A` `R` `T` `H` `B` · `V` `P` `O` | Arrow, Rect, Text, Highlight, Blur · Select, Pen, Ellipse (same letters as the editor) |
-| Selection made | `⌘E` | Open in the editor, annotations still editable |
+| Selection made | `R` `A` `N` `T` `B` · `V` `P` `O` `H` | Rect, Arrow, Step, Text, Blur · Select, Pen, Ellipse, Highlight (same letters as the editor) |
+| Selection made | `E` or `⌘E` (rebindable, `key_edit`) | Open in the editor, annotations still editable |
 | Selection made | `⌘S` / `⌘T` / `⌘K` (rebindable) | Save only / OCR / share link → clipboard |
 | Selection made | `⌘G` / `⌘R` (rebindable) | Scrolling capture / record region to mp4 |
 | Selection made | `⌘Z` / `⌘⇧Z` (rebindable key) | Undo / redo an edit |
@@ -154,8 +178,9 @@ quickshort --capture-full               # save the whole screen, no selection
 | Selection made | `Esc` | Cancel |
 
 The tray menu offers Capture Region, Capture Full Screen, Recent Captures,
-Open Screenshots Folder, Check for Updates, Launch at Login, Settings and
-Quit. Settings also live in `~/.config/quickshort/config.toml`:
+Open Screenshots Folder, Start Evidence Session (then Next Test Case / End
+Evidence Session), Share Links via Google Drive, Disconnect Google Drive,
+Check for Updates, Launch at Login, Settings and Quit. Settings also live in `~/.config/quickshort/config.toml`:
 
 ```toml
 hotkey = "CmdOrCtrl+Shift+S"   # global-hotkey syntax; "PrintScreen" is
@@ -169,6 +194,9 @@ auto_update = true
 recent_max = 8                 # entries in the tray menu
 accent = "blue"                # blue/purple/pink/orange/green/gray
 copy_after_save = true         # also put the PNG on the clipboard
+share_to_drive = false         # Share uploads to your Google Drive
+                               # (needs a build with QS_GDRIVE_CLIENT_ID)
+theme = "light"                # light/dark
 ocr_lang = "auto"              # Linux tesseract: "auto" detects the
                                # script, or pin e.g. "eng+jpn"
 keep_days = 0                  # auto-delete captures older than N days
@@ -179,15 +207,18 @@ key_share = "k"
 key_scroll = "g"               # scrolling capture
 key_record = "r"               # screen recording (needs ffmpeg on PATH)
 key_undo = "z"                 # ⌘z undo, ⌘⇧z redo
+key_edit = "e"                 # open the capture in the editor
 popup_pos = "top-right"        # toast/card/REC dock corner: top-left,
                                # top-center, top-right, bottom-* too
 ```
 
 The selection toolbar docks to whichever edge of the region has room.
-It shows the everyday tools plus **Done** (highlighted): Enter or a click
-copies the capture and saves it, so nothing exists only in memory. **⋯**
-opens Select, Pen, Ellipse, Scroll, Record, OCR and Share; **Edit** hands
-the capture, annotations still editable, to the editor. Clicking away
+Its main row is Rect, Arrow, Step, Text, Blur · Undo, Redo · **⋯**,
+**Edit** and **Done** (highlighted): Enter or a click copies the capture
+and saves it, so nothing exists only in memory. **⋯** opens Select, Pen,
+Ellipse, Highlight, Scroll, Record, OCR and Share; **Edit** hands the
+capture, annotations still editable, to the editor. Before you drag, a
+hint reads *Drag to select an area · Esc to cancel*. Clicking away
 starts a new selection; Esc or a click without dragging cancels. Saved files go to `~/Pictures/quickshort/quickshort-<ts>.png`.
 
 ## How it works
@@ -206,7 +237,12 @@ capture every monitor into RAM
 | `qs-capture` | per-OS backends behind `ScreenCapture` |
 | `qs-overlay` | winit + softbuffer, SDF-drawn toolbar, annotation layers, text via embedded Inter (ab_glyph) |
 | `qs-ocr` | native text extraction |
-| `qs-app` | CLI + resident tray app (`tray-icon`/`muda`/`global-hotkey`), updates |
+| `qs-doc` | `.qsdoc` vector document schema |
+| `qs-edit` | headless editing engine, undo history |
+| `qs-render` | rasterization and effects (`tiny-skia`) |
+| `qs-editor` | annotation editor (`eframe`/`egui`) |
+| `qs-theme` | shared palette, accent, radius, type and spacing tokens |
+| `qs-app` | CLI + resident tray app (`tray-icon`/`muda`/`global-hotkey`), toasts, evidence sessions, share/Drive, updates |
 
 Capture backends:
 
@@ -252,7 +288,8 @@ does the same and publishes a GitHub Release.
 
 Everything runs locally — captures, OCR, settings never leave your
 machine. The only outbound traffic is a share upload you trigger (image
-lives 3 days on a Cloudflare Worker), an opt-in bug report (posted as a
+lives 3 days on a Cloudflare Worker — or, if you opted in, goes to your
+own Google Drive), an opt-in bug report (posted as a
 public GitHub issue), and a daily GitHub release check. No analytics,
 no accounts. Full policy: [docs/privacy.html](docs/privacy.html) ·
 [quickshort site](https://truongnat.github.io/quickshort/privacy.html).
