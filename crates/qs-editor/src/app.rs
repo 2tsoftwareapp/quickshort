@@ -1017,9 +1017,14 @@ impl EditorApp {
                     ui.set_min_width(200.0);
                     ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
                         for fmt in [ExportFormat::Png, ExportFormat::Jpeg, ExportFormat::Webp] {
-                            let mut label = format!("Save as {}\u{2026}", fmt.label());
+                            let mut label = egui::RichText::new(format!(
+                                "Save as {}\u{2026}",
+                                fmt.label()
+                            ));
+                            // the bundled font has no check mark glyph, so the
+                            // last-used format is marked by weight and accent
                             if fmt == self.export_format {
-                                label.push_str("  \u{2713}");
+                                label = label.strong().color(theme::accent_blue());
                             }
                             if ui.add(egui::Button::new(label).frame(false)).clicked() {
                                 pick = Some(fmt);
@@ -1306,6 +1311,8 @@ impl EditorApp {
                     self.combine_dialog_open = false;
                 } else if self.alignment_open {
                     self.alignment_open = false;
+                } else if self.library.open {
+                    self.library.open = false;
                 }
             }
             // Settings has the standard macOS shortcut; Align needs a panel that
