@@ -659,7 +659,7 @@ impl EditorApp {
                 });
                 let [r, g, b, a] = color.to_srgba_unmultiplied();
                 self.canvas_background = u32::from_be_bytes([a, r, g, b]);
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     if crate::components::pill_button(ui, "Transparent", "") {
                         self.canvas_background = 0;
                     }
@@ -695,7 +695,7 @@ impl EditorApp {
                 ui.add_space(qs_theme::space::SM as f32);
                 ui.separator();
                 ui.label("Resample image (px)");
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     let (bw, bh) = (self.base.width().max(1), self.base.height().max(1));
                     let aspect = bw as f32 / bh as f32;
                     let w_resp = ui.add(
@@ -990,7 +990,7 @@ impl EditorApp {
     /// more objects are selected.
     fn align_section(&mut self, ui: &mut egui::Ui) {
                     // One row per axis: wrapping all six mixed them up at 720.
-                    ui.horizontal(|ui| {
+                    ui.horizontal_wrapped(|ui| {
                         for (label, a) in [
                             ("Left", Alignment::Left),
                             ("Center X", Alignment::HCenter),
@@ -1003,7 +1003,7 @@ impl EditorApp {
                             }
                         }
                     });
-                    ui.horizontal(|ui| {
+                    ui.horizontal_wrapped(|ui| {
                         for (label, a) in [
                             ("Top", Alignment::Top),
                             ("Center Y", Alignment::VCenter),
@@ -1017,7 +1017,7 @@ impl EditorApp {
                         }
                     });
                     ui.separator();
-                    ui.horizontal(|ui| {
+                    ui.horizontal_wrapped(|ui| {
                         let enabled = self.editor.selection().len() >= 3;
                         ui.add_enabled_ui(enabled, |ui| {
                             if crate::components::pill_button(ui, "Distribute horizontally", "")
@@ -1431,6 +1431,9 @@ impl EditorApp {
                     self.alignment_open = false;
                 } else if self.library.open {
                     self.library.open = false;
+                } else if self.find.open {
+                    self.find.open = false;
+                    self.last_find_focus = None;
                 }
             }
             // Settings has the standard macOS shortcut; Align needs a panel that
