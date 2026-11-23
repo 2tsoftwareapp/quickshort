@@ -366,6 +366,17 @@ impl Library {
     }
 }
 
+/// Cheap zero-allocation check for whether the quick-style bar has any presets
+/// for the active tool.
+pub fn has_presets_for(editor: &Editor, library: &Library) -> bool {
+    let tool = editor.tool();
+    let has_defaults = !matches!(
+        tool,
+        Tool::Select | Tool::SmartMove | Tool::Crop | Tool::Cutout | Tool::SelectRegion
+    );
+    has_defaults || !library.for_tool(tool).is_empty()
+}
+
 /// Everything the quick-style bar shows for the current tool.
 pub fn presets_for(editor: &Editor, library: &Library) -> Vec<QuickStyle> {
     let tool = editor.tool();

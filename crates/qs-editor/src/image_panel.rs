@@ -56,7 +56,6 @@ pub fn render(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
                         );
                     if resp.changed() {
                         editor.style.fill_tolerance = tolerance.clamp(0, 255) as u8;
-                        changed = true;
                     }
                 });
             });
@@ -129,14 +128,14 @@ fn object_ui(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
             .on_hover_text("Ctrl+G")
             .clicked()
         {
-            changed |= editor.group_selected();
+            editor.group_selected();
         }
         if ui
             .add_enabled(editor.selection_grouped(), egui::Button::new("Ungroup"))
             .on_hover_text("Ctrl+Shift+G")
             .clicked()
         {
-            changed |= editor.ungroup_selected();
+            editor.ungroup_selected();
         }
     });
 

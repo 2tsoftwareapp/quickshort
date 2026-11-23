@@ -148,14 +148,33 @@ fn stamp(img: &mut RgbaImage, wm: &qs_doc::WatermarkEffect, scale: f32) {
 /// Straight-RGBA per-pixel adjustment; alpha is untouched.
 fn adjust(img: &mut RgbaImage, c: &qs_doc::ColorAdjustEffect) {
     let k = if c.contrast >= 0.0 { 1.0 + c.contrast * 3.0 } else { 1.0 + c.contrast };
-    for p in img.pixels_mut() {
-        let (r, g, b) = (p[0] as f32, p[1] as f32, p[2] as f32);
-        let luma = 0.299 * r + 0.587 * g + 0.114 * b;
-        for (i, v) in [r, g, b].into_iter().enumerate() {
-            let v = luma + (v - luma) * c.saturation;
-            let v = (v - 128.0) * k + 128.0 + c.brightness * 255.0;
-            p[i] = v.round().clamp(0.0, 255.0) as u8;
+    let bright = c.brightness * 255.0;
+    // Fast 256-entry LUT when saturation is neutral (only brightness/contrast).
+    if (c.saturation - 1.0).abs() < 1e-4 {
+        let mut lut = [0u8; 256];
+        for (i, slot) in lut.iter_mut().enumerate() {
+            let v = (i as f32 - 128.0) * k + 128.0 + bright;
+            *slot = v.round().clamp(0.0, 255.0) as u8;
         }
+        for px in img.as_mut().chunks_exact_mut(4) {
+            px[0] = lut[px[0] as usize];
+            px[1] = lut[px[1] as usize];
+            px[2] = lut[px[2] as usize];
+        }
+        return;
+    }
+    for px in img.as_mut().chunks_exact_mut(4) {
+        let (r, g, b) = (px[0] as f32, px[1] as f32, px[2] as f32);
+        let luma = 0.299 * r + 0.587 * g + 0.114 * b;
+        px[0] = ((luma + (r - luma) * c.saturation - 128.0) * k + 128.0 + bright)
+            .round()
+            .clamp(0.0, 255.0) as u8;
+        px[1] = ((luma + (g - luma) * c.saturation - 128.0) * k + 128.0 + bright)
+            .round()
+            .clamp(0.0, 255.0) as u8;
+        px[2] = ((luma + (b - luma) * c.saturation - 128.0) * k + 128.0 + bright)
+            .round()
+            .clamp(0.0, 255.0) as u8;
     }
 }
 
@@ -260,70 +279,91 @@ fn apply_filter(img: &mut RgbaImage, filter: qs_doc::ColorFilter) {
     match filter {
         qs_doc::ColorFilter::None => {}
         qs_doc::ColorFilter::Grayscale => {
-            for p in img.pixels_mut() {
-                let l = (0.299 * p[0] as f32 + 0.587 * p[1] as f32 + 0.114 * p[2] as f32)
-                    .round()
-                    .clamp(0.0, 255.0) as u8;
-                p[0] = l;
-                p[1] = l;
-                p[2] = l;
+            for px in img.as_mut().chunks_exact_mut(4) {
+                let l = ((77 * px[0] as u32 + 150 * px[1] as u32 + 29 * px[2] as u32 + 128) >> 8)
+                    as u8;
+                px[0] = l;
+                px[1] = l;
+                px[2] = l;
             }
         }
         qs_doc::ColorFilter::Sepia => {
-            for p in img.pixels_mut() {
-                let (r, g, b) = (p[0] as f32, p[1] as f32, p[2] as f32);
-                p[0] = (0.393 * r + 0.769 * g + 0.189 * b).round().clamp(0.0, 255.0) as u8;
-                p[1] = (0.349 * r + 0.686 * g + 0.168 * b).round().clamp(0.0, 255.0) as u8;
-                p[2] = (0.272 * r + 0.534 * g + 0.131 * b).round().clamp(0.0, 255.0) as u8;
+            for px in img.as_mut().chunks_exact_mut(4) {
+                let (r, g, b) = (px[0] as u32, px[1] as u32, px[2] as u32);
+                px[0] = (((101 * r + 197 * g + 48 * b + 128) >> 8).min(255)) as u8;
+                px[1] = (((89 * r + 176 * g + 43 * b + 128) >> 8).min(255)) as u8;
+                px[2] = (((70 * r + 137 * g + 34 * b + 128) >> 8).min(255)) as u8;
             }
         }
         qs_doc::ColorFilter::Invert => {
-            for p in img.pixels_mut() {
-                p[0] = 255 - p[0];
-                p[1] = 255 - p[1];
-                p[2] = 255 - p[2];
+            for px in img.as_mut().chunks_exact_mut(4) {
+                px[0] = 255 - px[0];
+                px[1] = 255 - px[1];
+                px[2] = 255 - px[2];
             }
         }
     }
 }
 
 fn apply_page_curl(img: &mut RgbaImage, pc: &qs_doc::PageCurlEffect, scale: f32) {
-    let (w, h) = (img.width() as f32, img.height() as f32);
+    let (iw, ih) = img.dimensions();
+    let (w, h) = (iw as f32, ih as f32);
     let sz = (pc.size * scale).min(w * 0.45).min(h * 0.45).max(4.0);
     if w < 8.0 || h < 8.0 {
         return;
     }
     let sh_w = (sz * 0.25).max(2.0);
-    for (x, y, p) in img.enumerate_pixels_mut() {
-        let px = x as f32 + 0.5;
+    // Only scan the corner bounding box that can actually satisfy cx + cy < sz + sh_w.
+    let span = (sz + sh_w).ceil() as u32 + 1;
+    let (x0, x1) = match pc.corner {
+        qs_doc::Anchor::TopLeft | qs_doc::Anchor::BottomLeft => (0, span.min(iw)),
+        _ => (iw.saturating_sub(span), iw),
+    };
+    let (y0, y1) = match pc.corner {
+        qs_doc::Anchor::TopLeft | qs_doc::Anchor::TopRight => (0, span.min(ih)),
+        _ => (ih.saturating_sub(span), ih),
+    };
+    for y in y0..y1 {
         let py = y as f32 + 0.5;
-        // Distance from the corner in normalized corner-local coords (0..sz)
-        let (cx, cy) = match pc.corner {
-            qs_doc::Anchor::TopLeft => (px, py),
-            qs_doc::Anchor::TopRight => (w - px, py),
-            qs_doc::Anchor::BottomLeft => (px, h - py),
-            _ => (w - px, h - py),
+        let cy = match pc.corner {
+            qs_doc::Anchor::TopLeft | qs_doc::Anchor::TopRight => py,
+            _ => h - py,
         };
-        if cx < 0.0 || cy < 0.0 {
+        if cy < 0.0 || cy >= sz + sh_w {
             continue;
         }
-        let sum = cx + cy;
-        if sum < sz {
-            // Inside the curled-away corner: either paper back (inside triangle) or cut away
-            let in_fold = cx <= sz * 0.5 && cy <= sz * 0.5 && sum >= sz * 0.5;
-            if in_fold || (cx < sz && cy < sz && (cx - sz * 0.5).abs() + (cy - sz * 0.5).abs() <= sz * 0.5 && sum >= sz * 0.55) {
-                let shade = (225.0 + 25.0 * ((sz - sum) / sz)).clamp(190.0, 250.0) as u8;
-                *p = Rgba([shade, shade, shade.saturating_sub(4), 255]);
-            } else {
-                *p = Rgba([0, 0, 0, 0]);
+        for x in x0..x1 {
+            let px = x as f32 + 0.5;
+            let cx = match pc.corner {
+                qs_doc::Anchor::TopLeft | qs_doc::Anchor::BottomLeft => px,
+                _ => w - px,
+            };
+            if cx < 0.0 {
+                continue;
             }
-        } else if sum < sz + sh_w && pc.shadow > 0.0 {
-            // Subtle fold shadow along the diagonal
-            let t = 1.0 - (sum - sz) / sh_w;
-            let dim = 1.0 - 0.35 * pc.shadow * t;
-            p[0] = (p[0] as f32 * dim).round() as u8;
-            p[1] = (p[1] as f32 * dim).round() as u8;
-            p[2] = (p[2] as f32 * dim).round() as u8;
+            let sum = cx + cy;
+            if sum < sz {
+                let p = img.get_pixel_mut(x, y);
+                let in_fold = cx <= sz * 0.5 && cy <= sz * 0.5 && sum >= sz * 0.5;
+                if in_fold
+                    || (cx < sz
+                        && cy < sz
+                        && (cx - sz * 0.5).abs() + (cy - sz * 0.5).abs() <= sz * 0.5
+                        && sum >= sz * 0.55)
+                {
+                    let shade = (225.0 + 25.0 * ((sz - sum) / sz)).clamp(190.0, 250.0) as u8;
+                    *p = Rgba([shade, shade, shade.saturating_sub(4), 255]);
+                } else {
+                    *p = Rgba([0, 0, 0, 0]);
+                }
+            } else if sum < sz + sh_w && pc.shadow > 0.0 {
+                let p = img.get_pixel_mut(x, y);
+                let t = 1.0 - (sum - sz) / sh_w;
+                let dim = 1.0 - 0.35 * pc.shadow * t;
+                p[0] = (p[0] as f32 * dim).round() as u8;
+                p[1] = (p[1] as f32 * dim).round() as u8;
+                p[2] = (p[2] as f32 * dim).round() as u8;
+            }
         }
     }
 }
@@ -358,6 +398,112 @@ fn colorize(img: &mut RgbaImage, eff: &qs_doc::ColorizeEffect) {
             (orig as f32 + (want as f32 - orig as f32) * strength).round() as u8
         };
         p.0 = [mix(r, rr), mix(g, rg), mix(b, rb), a];
+    }
+}
+
+/// O(W*H) 3-pass prefix-sum box blur on a 1-channel alpha buffer (Gaussian
+/// approximation, independent of blur radius).
+fn blur_alpha(alpha: &mut image::GrayImage, sigma: f32) {
+    let (w, h) = (alpha.width() as usize, alpha.height() as usize);
+    if w == 0 || h == 0 || sigma <= 0.0 {
+        return;
+    }
+    // 3 box passes of radius r have variance r*(r+1); match sigma^2.
+    let r = (((sigma * sigma + 0.25).sqrt() - 0.5).round().max(1.0)) as usize;
+    let buf = alpha.as_mut();
+    let mut pre = vec![0u32; w.max(h) + 1];
+    for _ in 0..3 {
+        // Horizontal pass
+        for y in 0..h {
+            let row = &mut buf[y * w..(y + 1) * w];
+            pre[0] = 0;
+            for x in 0..w {
+                pre[x + 1] = pre[x] + row[x] as u32;
+            }
+            for x in 0..w {
+                let lo = x.saturating_sub(r);
+                let hi = (x + r).min(w - 1);
+                let cnt = (hi - lo + 1) as u32;
+                row[x] = ((pre[hi + 1] - pre[lo] + cnt / 2) / cnt) as u8;
+            }
+        }
+        // Vertical pass
+        for x in 0..w {
+            pre[0] = 0;
+            for y in 0..h {
+                pre[y + 1] = pre[y] + buf[y * w + x] as u32;
+            }
+            for y in 0..h {
+                let lo = y.saturating_sub(r);
+                let hi = (y + r).min(h - 1);
+                let cnt = (hi - lo + 1) as u32;
+                buf[y * w + x] = ((pre[hi + 1] - pre[lo] + cnt / 2) / cnt) as u8;
+            }
+        }
+    }
+}
+
+/// Copy `src` directly into a blank `dst` at `(ox, oy)` using row memcpy.
+fn blit_copy(dst: &mut RgbaImage, src: &RgbaImage, ox: u32, oy: u32) {
+    let (sw, sh) = (src.width() as usize, src.height() as usize);
+    let dw = dst.width() as usize;
+    let src_raw = src.as_raw();
+    let dst_raw = dst.as_mut();
+    let ox = ox as usize;
+    let oy = oy as usize;
+    for y in 0..sh {
+        let s0 = y * sw * 4;
+        let d0 = ((oy + y) * dw + ox) * 4;
+        dst_raw[d0..d0 + sw * 4].copy_from_slice(&src_raw[s0..s0 + sw * 4]);
+    }
+}
+
+/// Fast straight-alpha composite of `src` over `dst` at `(fx, fy)`.
+/// Skips transparent source pixels and copies opaque pixels directly.
+fn blit_over(dst: &mut RgbaImage, src: &RgbaImage, fx: i64, fy: i64) {
+    let (sw, sh) = (src.width() as i64, src.height() as i64);
+    let (dw, dh) = (dst.width() as i64, dst.height() as i64);
+    let sx0 = (-fx).max(0);
+    let sy0 = (-fy).max(0);
+    let sx1 = sw.min(dw - fx);
+    let sy1 = sh.min(dh - fy);
+    if sx0 >= sx1 || sy0 >= sy1 {
+        return;
+    }
+    let src_raw = src.as_raw();
+    let dst_raw = dst.as_mut();
+    let sw_u = sw as usize;
+    let dw_u = dw as usize;
+    for sy in sy0..sy1 {
+        let dy = (sy + fy) as usize;
+        let s_row = sy as usize * sw_u * 4;
+        let d_row = dy * dw_u * 4;
+        for sx in sx0..sx1 {
+            let si = s_row + sx as usize * 4;
+            let sa = src_raw[si + 3];
+            if sa == 0 {
+                continue;
+            }
+            let di = d_row + (sx + fx) as usize * 4;
+            if sa == 255 || dst_raw[di + 3] == 0 {
+                dst_raw[di..di + 4].copy_from_slice(&src_raw[si..si + 4]);
+            } else {
+                let sa_f = sa as f32 / 255.0;
+                let da_f = dst_raw[di + 3] as f32 / 255.0;
+                let oa = sa_f + da_f * (1.0 - sa_f);
+                let inv_oa = 1.0 / oa;
+                let da_rem = da_f * (1.0 - sa_f);
+                dst_raw[di] = ((src_raw[si] as f32 * sa_f + dst_raw[di] as f32 * da_rem) * inv_oa)
+                    .round() as u8;
+                dst_raw[di + 1] =
+                    ((src_raw[si + 1] as f32 * sa_f + dst_raw[di + 1] as f32 * da_rem) * inv_oa)
+                        .round() as u8;
+                dst_raw[di + 2] =
+                    ((src_raw[si + 2] as f32 * sa_f + dst_raw[di + 2] as f32 * da_rem) * inv_oa)
+                        .round() as u8;
+                dst_raw[di + 3] = (oa * 255.0).round() as u8;
+            }
+        }
     }
 }
 
@@ -397,29 +543,62 @@ pub fn apply(doc: &Document, mut content: RgbaImage) -> RgbaImage {
         .as_ref()
         .filter(|b| !b.inset)
         .map_or(0, |b| (b.width * scale).ceil() as u32);
-    let mut frame = RgbaImage::new(content.width() + bw * 2, content.height() + bw * 2);
-    image::imageops::overlay(&mut frame, &content, bw as i64, bw as i64);
+    let mut frame = if bw == 0 {
+        content
+    } else {
+        let mut f = RgbaImage::new(content.width() + bw * 2, content.height() + bw * 2);
+        blit_copy(&mut f, &content, bw, bw);
+        f
+    };
     if let Some(b) = &doc.effects.border {
         let width = if b.inset { b.width * scale } else { bw as f32 };
-        let (w, h) = (frame.width() as f32, frame.height() as f32);
-        for (x, y, p) in frame.enumerate_pixels_mut() {
-            let outer = coverage(x, y, 0.0, w, h, b.radius * scale);
-            let inner = coverage(x, y, width, w, h, (b.radius * scale - width).max(0.0));
-            let ring = (outer - inner).max(0.0);
-            let ink = rgba(b.color, 1.0);
-            let ba = ink[3] as f32 / 255.0;
-            let ca = p[3] as f32 / 255.0;
-            let content_coverage = if b.inset { outer - ring * ba } else { inner };
-            let a = ca * content_coverage + ba * ring;
-            for k in 0..3 {
-                p[k] = if a > 0.0 {
-                    ((p[k] as f32 * ca * content_coverage + ink[k] as f32 * ba * ring) / a).round()
-                        as u8
-                } else {
-                    0
-                };
+        let (fw, fh) = frame.dimensions();
+        let (w, h) = (fw as f32, fh as f32);
+        let rad = b.radius * scale;
+        let inner_rad = (rad - width).max(0.0);
+        let ink = rgba(b.color, 1.0);
+        let ba = ink[3] as f32 / 255.0;
+        // Pixels strictly inside the safe interior have outer == 1 && inner == 1
+        // (ring == 0) and are completely untouched — skip >95% of all pixels.
+        let safe_margin = (width.max(rad) + 1.0).ceil() as u32;
+        let safe_x0 = safe_margin;
+        let safe_x1 = fw.saturating_sub(safe_margin);
+        let safe_y0 = safe_margin;
+        let safe_y1 = fh.saturating_sub(safe_margin);
+        let has_interior = safe_x0 < safe_x1 && safe_y0 < safe_y1;
+        for y in 0..fh {
+            let in_safe_y = has_interior && y >= safe_y0 && y < safe_y1;
+            let mut x = 0;
+            while x < fw {
+                if in_safe_y && x == safe_x0 {
+                    x = safe_x1;
+                    continue;
+                }
+                let outer = coverage(x, y, 0.0, w, h, rad);
+                let inner = coverage(x, y, width, w, h, inner_rad);
+                let ring = (outer - inner).max(0.0);
+                if outer < 1.0 || ring > 0.0 {
+                    let p = frame.get_pixel_mut(x, y);
+                    let ca = p[3] as f32 / 255.0;
+                    let content_coverage = if b.inset { outer - ring * ba } else { inner };
+                    let a = ca * content_coverage + ba * ring;
+                    if a > 0.0 {
+                        let inv_a = 1.0 / a;
+                        for k in 0..3 {
+                            p[k] = ((p[k] as f32 * ca * content_coverage
+                                + ink[k] as f32 * ba * ring)
+                                * inv_a)
+                                .round() as u8;
+                        }
+                    } else {
+                        p[0] = 0;
+                        p[1] = 0;
+                        p[2] = 0;
+                    }
+                    p[3] = (a * 255.0).round() as u8;
+                }
+                x += 1;
             }
-            p[3] = (a * 255.0).round() as u8;
         }
     }
     let layout = doc.effect_layout();
@@ -431,6 +610,15 @@ pub fn apply(doc: &Document, mut content: RgbaImage) -> RgbaImage {
         (layout.content_origin.x * scale).round() as i64 - bw as i64,
         (layout.content_origin.y * scale).round() as i64 - bw as i64,
     );
+    // Fast path: border-only (no shadow, no reflection, exact same dimensions).
+    if doc.effects.shadow.is_none()
+        && doc.effects.reflection.is_none()
+        && fx == 0
+        && fy == 0
+        && frame.dimensions() == (w, h)
+    {
+        return frame;
+    }
     let mut out = RgbaImage::new(w, h);
     if let Some(s) = &doc.effects.shadow {
         if s.opacity > 0.0 && s.color >> 24 != 0 {
@@ -439,23 +627,47 @@ pub fn apply(doc: &Document, mut content: RgbaImage) -> RgbaImage {
                 (s.offset.x * scale).round() as i64,
                 (s.offset.y * scale).round() as i64,
             );
-            for (x, y, p) in frame.enumerate_pixels() {
-                let (xx, yy) = (x as i64 + fx + dx, y as i64 + fy + dy);
-                if xx >= 0 && yy >= 0 && xx < w as i64 && yy < h as i64 {
-                    alpha.put_pixel(xx as u32, yy as u32, image::Luma([p[3]]));
+            let (fw, fh) = (frame.width() as i64, frame.height() as i64);
+            let (wi, hi) = (w as i64, h as i64);
+            let ox = fx + dx;
+            let oy = fy + dy;
+            let sx0 = (-ox).max(0);
+            let sy0 = (-oy).max(0);
+            let sx1 = fw.min(wi - ox);
+            let sy1 = fh.min(hi - oy);
+            if sx0 < sx1 && sy0 < sy1 {
+                let fraw = frame.as_raw();
+                let araw = alpha.as_mut();
+                let fwu = fw as usize;
+                let wu = w as usize;
+                for sy in sy0..sy1 {
+                    let s_row = sy as usize * fwu * 4;
+                    let d_row = (sy + oy) as usize * wu;
+                    for sx in sx0..sx1 {
+                        araw[d_row + (sx + ox) as usize] = fraw[s_row + sx as usize * 4 + 3];
+                    }
                 }
             }
-            let blurred = if s.blur_radius > 0.0 {
-                image::imageops::blur(&alpha, s.blur_radius * scale)
-            } else {
-                alpha
-            };
-            for (p, a) in out.pixels_mut().zip(blurred.pixels()) {
-                *p = rgba(s.color, s.opacity * a[0] as f32 / 255.0);
+            if s.blur_radius > 0.0 {
+                blur_alpha(&mut alpha, s.blur_radius * scale);
+            }
+            let (sr, sg, sb, sa_base) = (
+                (s.color >> 16) as u8,
+                (s.color >> 8) as u8,
+                s.color as u8,
+                ((s.color >> 24) as f32) * s.opacity / 255.0,
+            );
+            for (p, &a) in out.as_mut().chunks_exact_mut(4).zip(alpha.as_raw().iter()) {
+                if a != 0 {
+                    p[0] = sr;
+                    p[1] = sg;
+                    p[2] = sb;
+                    p[3] = (a as f32 * sa_base).round() as u8;
+                }
             }
         }
     }
-    image::imageops::overlay(&mut out, &frame, fx, fy);
+    blit_over(&mut out, &frame, fx, fy);
     if let Some(rf) = &doc.effects.reflection {
         if rf.opacity > 0.0 && rf.height > 0.0 {
             let rh = ((rf.height * scale).round() as u32).min(frame.height());

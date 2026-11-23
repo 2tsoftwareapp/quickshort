@@ -769,26 +769,44 @@ fn box_pass(buf: &mut [u8], w: usize, h: usize, r: usize, horizontal: bool) {
     }
 }
 
-fn to_pixmap(img: &RgbaImage) -> Option<Pixmap> {
+fn to_pixmap_with_opaque(img: &RgbaImage) -> Option<(Pixmap, bool)> {
     let mut data = img.as_raw().clone();
+    let mut opaque = true;
     for p in data.chunks_exact_mut(4) {
         let a = p[3] as u32;
         if a != 255 {
-            for c in &mut p[..3] {
-                *c = ((*c as u32 * a + 127) / 255) as u8;
+            opaque = false;
+            if a == 0 {
+                p[0] = 0;
+                p[1] = 0;
+                p[2] = 0;
+            } else {
+                p[0] = ((p[0] as u32 * a + 127) / 255) as u8;
+                p[1] = ((p[1] as u32 * a + 127) / 255) as u8;
+                p[2] = ((p[2] as u32 * a + 127) / 255) as u8;
             }
         }
     }
-    Pixmap::from_vec(data, IntSize::from_wh(img.width(), img.height())?)
+    let pm = Pixmap::from_vec(data, IntSize::from_wh(img.width(), img.height())?)?;
+    Some((pm, opaque))
 }
 
 fn to_image(pm: &Pixmap) -> RgbaImage {
-    let mut out = RgbaImage::new(pm.width(), pm.height());
-    for (o, p) in out.pixels_mut().zip(pm.pixels()) {
-        let c = p.demultiply();
-        *o = image::Rgba([c.red(), c.green(), c.blue(), c.alpha()]);
+    let src = pm.data();
+    let mut raw = vec![0u8; src.len()];
+    for (dst, px) in raw.chunks_exact_mut(4).zip(src.chunks_exact(4)) {
+        let a = px[3];
+        if a == 255 {
+            dst.copy_from_slice(px);
+        } else if a != 0 {
+            let a32 = a as u32;
+            dst[0] = ((px[0] as u32 * 255 + a32 / 2) / a32).min(255) as u8;
+            dst[1] = ((px[1] as u32 * 255 + a32 / 2) / a32).min(255) as u8;
+            dst[2] = ((px[2] as u32 * 255 + a32 / 2) / a32).min(255) as u8;
+            dst[3] = a;
+        }
     }
-    out
+    RgbaImage::from_raw(pm.width(), pm.height(), raw).unwrap_or_else(|| RgbaImage::new(1, 1))
 }
 
 /// Output size in physical px for `doc`.
@@ -817,6 +835,17 @@ pub fn orient(img: &RgbaImage, o: Orientation) -> RgbaImage {
     if o == Orientation::Normal {
         return img.clone();
     }
+    orient_remap(img, o)
+}
+
+fn orient_owned(img: RgbaImage, o: Orientation) -> RgbaImage {
+    if o == Orientation::Normal {
+        return img;
+    }
+    orient_remap(&img, o)
+}
+
+fn orient_remap(img: &RgbaImage, o: Orientation) -> RgbaImage {
     let (w, h) = img.dimensions();
     let s = SizeF::new(w as f32, h as f32);
     let out_s = o.output_size(s);
@@ -828,10 +857,72 @@ pub fn orient(img: &RgbaImage, o: Orientation) -> RgbaImage {
     out
 }
 
+/// Reusable scratch + cached premultiplied base pixmap for interactive editor
+/// rendering. Eliminates per-frame 16MB+ base premultiplication and pixmap
+/// reallocation during drag gestures.
+#[derive(Default)]
+pub struct RenderCache {
+    base_key: Option<(usize, u32, u32)>,
+    base_pm: Option<Pixmap>,
+    base_opaque: bool,
+    work_pm: Option<Pixmap>,
+}
+
+impl RenderCache {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Call whenever the underlying `base` image buffer is replaced or mutated.
+    pub fn invalidate_base(&mut self) {
+        self.base_key = None;
+        self.base_pm = None;
+        self.base_opaque = false;
+    }
+
+    /// Flatten `doc` over `base`, reusing cached base pixmap and working buffer.
+    pub fn render(&mut self, doc: &Document, base: &RgbaImage) -> RgbaImage {
+        if checked_output_size(doc).is_none() {
+            return RgbaImage::new(1, 1);
+        }
+        let key = (base.as_raw().as_ptr() as usize, base.width(), base.height());
+        if self.base_key != Some(key) {
+            match to_pixmap_with_opaque(base) {
+                Some((pm, opaque)) => {
+                    self.base_pm = Some(pm);
+                    self.base_opaque = opaque;
+                    self.base_key = Some(key);
+                }
+                None => {
+                    self.invalidate_base();
+                }
+            }
+        }
+        let (w, h) = content_size(doc);
+        let reuse = self
+            .work_pm
+            .as_ref()
+            .is_some_and(|pm| pm.width() == w && pm.height() == h);
+        if !reuse {
+            self.work_pm = Pixmap::new(w, h);
+        }
+        let Some(pm) = self.work_pm.as_mut() else {
+            return RgbaImage::new(1, 1);
+        };
+        let content = render_into_pixmap(
+            pm,
+            doc,
+            self.base_pm.as_ref(),
+            self.base_opaque,
+        );
+        crate::effects::apply(doc, orient_owned(content, doc.orientation))
+    }
+}
+
 /// Flatten `doc` over `base` into a bitmap.
 pub fn render(doc: &Document, base: &RgbaImage) -> RgbaImage {
     if checked_output_size(doc).is_none() { return RgbaImage::new(1,1); }
-    crate::effects::apply(doc, orient(&render_content(doc, base), doc.orientation))
+    crate::effects::apply(doc, orient_owned(render_content(doc, base), doc.orientation))
 }
 
 /// Render only `region` (document coordinates, clipped to `view`) with the
@@ -860,30 +951,71 @@ fn render_content(doc: &Document, base: &RgbaImage) -> RgbaImage {
     let Some(mut pm) = Pixmap::new(w, h) else {
         return RgbaImage::new(1, 1);
     };
-    let bg = doc.background;
-    pm.fill(Color::from_rgba8((bg >> 16) as u8, (bg >> 8) as u8, bg as u8, (bg >> 24) as u8));
+    let (bp, opaque) = match to_pixmap_with_opaque(base) {
+        Some((p, o)) => (Some(p), o),
+        None => (None, false),
+    };
+    render_into_pixmap(&mut pm, doc, bp.as_ref(), opaque)
+}
+
+fn render_into_pixmap(
+    pm: &mut Pixmap,
+    doc: &Document,
+    base_pm: Option<&Pixmap>,
+    base_opaque: bool,
+) -> RgbaImage {
     let xf = Xf {
         s: doc.scale,
         ox: (-doc.view.x * doc.scale).round(),
         oy: (-doc.view.y * doc.scale).round(),
     };
-    if let Some(bp) = to_pixmap(base) {
-        pm.draw_pixmap(xf.ox as i32, xf.oy as i32, bp.as_ref(), &PixmapPaint::default(), Transform::identity(), None);
+    let fast_blit = base_opaque
+        && xf.ox == 0.0
+        && xf.oy == 0.0
+        && base_pm.is_some_and(|bp| bp.width() == pm.width() && bp.height() == pm.height());
+    if fast_blit {
+        pm.data_mut().copy_from_slice(base_pm.unwrap().data());
+    } else {
+        let bg = doc.background;
+        pm.fill(Color::from_rgba8(
+            (bg >> 16) as u8,
+            (bg >> 8) as u8,
+            bg as u8,
+            (bg >> 24) as u8,
+        ));
+        if let Some(bp) = base_pm {
+            pm.draw_pixmap(
+                xf.ox as i32,
+                xf.oy as i32,
+                bp.as_ref(),
+                &PixmapPaint::default(),
+                Transform::identity(),
+                None,
+            );
+        }
     }
-    // Snapshot the composited canvas (background + base image) so the
-    // eraser reveals exactly what was there before annotations.
-    let bg_snap: Vec<u8> = pm.data().to_vec();
+    // Only snapshot the composited canvas when an Eraser object is visible;
+    // avoids a 16MB+ allocation/copy on every interactive frame otherwise.
+    let needs_snap = doc
+        .objects
+        .iter()
+        .any(|o| o.visible && matches!(o.kind, ObjectKind::Eraser { .. }));
+    let bg_snap: Vec<u8> = if needs_snap {
+        pm.data().to_vec()
+    } else {
+        Vec::new()
+    };
     let mut step_no = doc.step_start;
     for o in &doc.objects {
         let is_step = matches!(o.kind, ObjectKind::Step { .. });
         if o.visible {
-            draw_with_opacity(&mut pm, &xf, &o.kind, o.opacity, step_no, &bg_snap);
+            draw_with_opacity(pm, &xf, &o.kind, o.opacity, step_no, &bg_snap);
         }
         if is_step {
             step_no += 1;
         }
     }
-    to_image(&pm)
+    to_image(pm)
 }
 
 /// Kinds that only add paint. Everything else (blur, magnify, eraser) reads
@@ -917,13 +1049,32 @@ fn draw_with_opacity(
     if opacity <= 0.0 {
         return;
     }
-    let Some(mut layer) = Pixmap::new(pm.width(), pm.height()) else {
+    // Allocate only the object's clipped bounding box instead of a full-canvas
+    // 16MB+ Pixmap so dragging the Opacity slider stays fast on 4K images.
+    let bb = crate::bounds::bounds(kind).inflate(24.0);
+    let x0 = (bb.x * xf.s + xf.ox).floor().max(0.0) as i32;
+    let y0 = (bb.y * xf.s + xf.oy).floor().max(0.0) as i32;
+    let x1 = ((bb.x + bb.w) * xf.s + xf.ox)
+        .ceil()
+        .min(pm.width() as f32) as i32;
+    let y1 = ((bb.y + bb.h) * xf.s + xf.oy)
+        .ceil()
+        .min(pm.height() as f32) as i32;
+    if x1 <= x0 || y1 <= y0 {
+        return;
+    }
+    let Some(mut layer) = Pixmap::new((x1 - x0) as u32, (y1 - y0) as u32) else {
         return;
     };
-    draw_object(&mut layer, xf, kind, step_no, snap);
+    let local_xf = Xf {
+        s: xf.s,
+        ox: xf.ox - x0 as f32,
+        oy: xf.oy - y0 as f32,
+    };
+    draw_object(&mut layer, &local_xf, kind, step_no, snap);
     pm.draw_pixmap(
-        0,
-        0,
+        x0,
+        y0,
         layer.as_ref(),
         &PixmapPaint {
             opacity,

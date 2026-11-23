@@ -173,28 +173,22 @@ pub fn paint_document_shadow(painter: &egui::Painter, doc_screen_rect: Rect) {
     theme::paint_soft_shadow(painter, doc_screen_rect, 4.0, 6.0, 22.0, alpha);
 }
 
-/// Paint a checkerboard pattern strictly inside `doc_rect` for transparent areas.
-pub fn paint_checkerboard(painter: &egui::Painter, doc_rect: Rect) {
-    let clipped = painter.with_clip_rect(doc_rect);
-    let size = 10.0;
-    let c1 = theme::bg_toolbar_bot();
-    let c2 = theme::bg_btn_secondary_top();
-    clipped.rect_filled(doc_rect, 0.0, c1);
-    let mut y = doc_rect.min.y;
-    let mut row = 0;
-    while y < doc_rect.max.y {
-        let mut x = doc_rect.min.x + if row % 2 == 1 { size } else { 0.0 };
-        while x < doc_rect.max.x {
-            let tile = Rect::from_min_size(
-                Pos2::new(x, y),
-                Vec2::new(size.min(doc_rect.max.x - x), size.min(doc_rect.max.y - y)),
-            );
-            clipped.rect_filled(tile, 0.0, c2);
-            x += size * 2.0;
-        }
-        y += size;
-        row += 1;
-    }
+/// Paint a checkerboard pattern strictly inside `doc_rect` for transparent areas
+/// using a single repeating 2x2 GPU texture (2 triangles instead of thousands).
+pub fn paint_checkerboard(
+    painter: &egui::Painter,
+    doc_rect: Rect,
+    checker_tex: egui::TextureId,
+) {
+    let tile_px = 10.0;
+    let uv = Rect::from_min_max(
+        Pos2::ZERO,
+        Pos2::new(
+            doc_rect.width() / (tile_px * 2.0),
+            doc_rect.height() / (tile_px * 2.0),
+        ),
+    );
+    painter.image(checker_tex, doc_rect, uv, Color32::WHITE);
 }
 
 /// Paint crisp hairline document rim so light or dark screenshots separate cleanly.

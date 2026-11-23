@@ -21,6 +21,10 @@ use image::RgbaImage;
 use qs_doc::{Document, ObjectId, PointF, RectF, qsdoc};
 use qs_edit::{Alignment, Axis, Editor, Motion, Tool};
 use std::path::{Path, PathBuf};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 
 /// What the user picked in the "unsaved changes" dialog.
 enum CloseDecision {
@@ -69,6 +73,12 @@ pub struct EditorApp {
     doc_path: Option<PathBuf>,
     view: CanvasView,
     texture: Option<TextureHandle>,
+    /// Reusable CPU render cache (premultiplied base pixmap + scratch pixmap).
+    render_cache: qs_render::RenderCache,
+    /// Cached 2x2 repeating checkerboard texture keyed by `pal().dark`.
+    checker_tex: Option<(bool, TextureHandle)>,
+    /// Prevents overlapping background autosave threads.
+    autosave_busy: Arc<AtomicBool>,
     /// The rendered texture is stale and must be rebuilt this frame.
     needs_render: bool,
     /// The document holds edits that are not on disk yet.
@@ -178,6 +188,9 @@ impl EditorApp {
             doc_path,
             view,
             texture: None,
+            render_cache: qs_render::RenderCache::new(),
+            checker_tex: None,
+            autosave_busy: Arc::new(AtomicBool::new(false)),
             needs_render: true,
             unsaved: false,
             saved_rev: 0,
@@ -259,6 +272,7 @@ impl EditorApp {
             .min(500.0 / doc.base_size.h.max(1.0))
             .clamp(0.2, 1.0);
         self.base = base;
+        self.render_cache.invalidate_base();
         self.editor = Editor::new(doc);
         self.pre_flatten = None;
         // A different document can share the previous one's size, scale and
@@ -373,6 +387,9 @@ impl EditorApp {
             doc_path: None,
             view: CanvasView::default(),
             texture: None,
+            render_cache: qs_render::RenderCache::new(),
+            checker_tex: None,
+            autosave_busy: Arc::new(AtomicBool::new(false)),
             needs_render: true,
             unsaved: false,
             saved_rev: 0,
@@ -463,6 +480,7 @@ impl EditorApp {
         if let Some(cached) = self.session_cache.remove(path) {
             self.editor = cached.editor;
             self.base = cached.base;
+            self.render_cache.invalidate_base();
             self.doc_path = cached.doc_path;
             self.view = cached.view;
             self.unsaved = cached.unsaved;
@@ -491,8 +509,28 @@ impl EditorApp {
         self.toast = Some((msg.into(), std::time::Instant::now()));
     }
 
+    fn checker_texture_id(&mut self, ctx: &egui::Context) -> egui::TextureId {
+        let dark = qs_theme::pal().dark;
+        if let Some((cached_dark, tex)) = &self.checker_tex {
+            if *cached_dark == dark {
+                return tex.id();
+            }
+        }
+        let c1 = theme::bg_toolbar_bot();
+        let c2 = theme::bg_btn_secondary_top();
+        let img = ColorImage {
+            size: [2, 2],
+            source_size: Vec2::new(2.0, 2.0),
+            pixels: vec![c1, c2, c2, c1],
+        };
+        let tex = ctx.load_texture("editor_checkerboard", img, TextureOptions::NEAREST_REPEAT);
+        let id = tex.id();
+        self.checker_tex = Some((dark, tex));
+        id
+    }
+
     fn update_texture(&mut self, ctx: &egui::Context) {
-        let flat = qs_render::render(self.editor.doc(), &self.base);
+        let flat = self.render_cache.render(self.editor.doc(), &self.base);
         let size = [flat.width() as usize, flat.height() as usize];
         let color_img = ColorImage::from_rgba_unmultiplied(size, flat.as_raw());
         if let Some(tex) = &mut self.texture {
@@ -821,7 +859,8 @@ impl EditorApp {
     }
 
     /// Refreshes the recovery copy, at most once per
-    /// [`recovery::AUTOSAVE_INTERVAL`].
+    /// [`recovery::AUTOSAVE_INTERVAL`], on a background thread so PNG encoding
+    /// and fsync never stall the UI thread.
     fn autosave_tick(&mut self) {
         if !self.unsaved {
             return;
@@ -833,11 +872,25 @@ impl EditorApp {
         {
             return;
         }
+        if self
+            .autosave_busy
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return;
+        }
         self.autosave_at = Some(now);
         let Some(slot) = recovery::slot_path(self.doc_path.as_deref()) else {
+            self.autosave_busy.store(false, Ordering::Release);
             return;
         };
-        let _ = qsdoc::write(&slot, self.editor.doc(), &self.base, None);
+        let doc = self.editor.doc().clone();
+        let base = self.base.clone();
+        let busy = Arc::clone(&self.autosave_busy);
+        std::thread::spawn(move || {
+            let _ = qsdoc::write(&slot, &doc, &base, None);
+            busy.store(false, Ordering::Release);
+        });
     }
 
     /// Keeps the window title in step with the file name and the unsaved mark.
@@ -1912,7 +1965,7 @@ impl eframe::App for EditorApp {
         if top_res.mutated || prop_mutated {
             self.touch();
         }
-        let styles_mutated = if !styles::presets_for(&self.editor, &self.styles).is_empty() {
+        let styles_mutated = if styles::has_presets_for(&self.editor, &self.styles) {
             egui::Panel::top("quick_style_bar")
                 // Without an explicit fill the panel rendered as a black strip
                 // in the light theme.
@@ -2384,15 +2437,13 @@ impl eframe::App for EditorApp {
                                 "Ungroup",
                                 "Ungroup (Ctrl+Shift+G)",
                             )
-                            && self.editor.ungroup_selected()
                         {
-                            self.touch();
+                            self.editor.ungroup_selected();
                         }
                         if self.editor.selection().len() >= 2
                             && crate::components::pill_button(ui, "Group", "Group (Ctrl+G)")
-                            && self.editor.group_selected()
                         {
-                            self.touch();
+                            self.editor.group_selected();
                         }
                     });
                 });
@@ -2506,7 +2557,7 @@ impl eframe::App for EditorApp {
                                         })
                                         .clicked()
                                     {
-                                        changed |= self.editor.set_locked(id, !locked);
+                                        self.editor.set_locked(id, !locked);
                                     }
                                     let text = if grouped {
                                         format!("▦ {label}  #{}", id.0)
@@ -2756,21 +2807,40 @@ impl eframe::App for EditorApp {
                     self.saw_drag_press = true;
                     if let Some(pos) = response.interact_pointer_pos() {
                         let doc_p = self.view.screen_to_doc(pos, screen_rect);
+                        let rev_before = self.editor.revision();
                         self.editor.pointer_down_mod(doc_p, shift_held);
-                        self.touch();
+                        if self.editor.revision() != rev_before {
+                            self.touch();
+                        }
                     }
                 } else if response.dragged() {
-                    if let Some(pos) = response.interact_pointer_pos() {
-                        let doc_p = self.view.screen_to_doc(pos, screen_rect);
-                        self.editor.pointer_move(doc_p, shift_held);
-                        self.touch();
+                    if response.drag_delta() != Vec2::ZERO {
+                        if let Some(pos) = response.interact_pointer_pos() {
+                            let doc_p = self.view.screen_to_doc(pos, screen_rect);
+                            self.editor.pointer_move(doc_p, shift_held);
+                            // Marquee, Crop, Cutout, SelectRegion and SmartMove source
+                            // drags only draw transient egui overlays — skip full bitmap
+                            // re-rendering until release.
+                            let overlay_only = self.editor.marquee_rect().is_some()
+                                || self.editor.crop_rect().is_some()
+                                || self.editor.cutout_rect().is_some()
+                                || self.editor.tool() == Tool::SelectRegion
+                                || (self.editor.tool() == Tool::SmartMove
+                                    && self.editor.move_src_rect().is_some());
+                            if !overlay_only {
+                                self.touch();
+                            }
+                        }
                     }
                 } else if response.drag_stopped() {
                     self.saw_drag_press = false;
                     if let Some(pos) = response.interact_pointer_pos() {
                         let doc_p = self.view.screen_to_doc(pos, screen_rect);
+                        let was_marquee = self.editor.marquee_rect().is_some();
                         self.editor.pointer_up(doc_p);
-                        self.touch();
+                        if !was_marquee {
+                            self.touch();
+                        }
                     }
                 } else if response.clicked() && !self.saw_drag_press {
                     if let Some(pos) = response.interact_pointer_pos() {
@@ -2784,12 +2854,15 @@ impl eframe::App for EditorApp {
                         } else {
                             None
                         };
+                        let rev_before = self.editor.revision();
                         let armed = arm.is_some_and(|r| self.editor.begin_smart_move(r));
                         if !armed {
                             self.editor.pointer_down_mod(doc_p, shift_held);
                             self.editor.pointer_up(doc_p);
                         }
-                        self.touch();
+                        if self.editor.revision() != rev_before {
+                            self.touch();
+                        }
                     }
                 }
 
@@ -2811,7 +2884,8 @@ impl eframe::App for EditorApp {
                 canvas::paint_document_shadow(&painter, img_screen_rect);
 
                 // 3. Checkerboard strictly inside document bounds (visible only through alpha)
-                canvas::paint_checkerboard(&painter, img_screen_rect);
+                let checker_id = self.checker_texture_id(&ctx);
+                canvas::paint_checkerboard(&painter, img_screen_rect, checker_id);
 
                 // 4. Rendered flattened document
                 if let Some(tex) = &self.texture {
@@ -3018,7 +3092,13 @@ impl eframe::App for EditorApp {
                                 alpha_fg,
                             ),
                         );
-                        ctx.request_repaint();
+                        if elapsed < 2.2 {
+                            ctx.request_repaint_after(std::time::Duration::from_secs_f32(
+                                (2.2 - elapsed).max(0.016),
+                            ));
+                        } else {
+                            ctx.request_repaint();
+                        }
                     }
                 }
             });
@@ -3047,6 +3127,9 @@ mod tests {
             doc_path: None,
             view: CanvasView::default(),
             texture: None,
+            render_cache: qs_render::RenderCache::new(),
+            checker_tex: None,
+            autosave_busy: Arc::new(AtomicBool::new(false)),
             needs_render: true,
             unsaved: false,
             saved_rev: 0,
