@@ -2047,6 +2047,18 @@ impl Editor {
         count
     }
 
+    /// Select every visible, unlocked object on the canvas (Ctrl+A).
+    pub fn select_all(&mut self) -> usize {
+        self.selection = self
+            .doc
+            .objects
+            .iter()
+            .filter(|o| o.visible && !o.locked)
+            .map(|o| o.id)
+            .collect();
+        self.selection.len()
+    }
+
     /// Place a pill-styled caption right beside a Step badge and select it for editing.
     pub fn add_step_caption(
         &mut self,

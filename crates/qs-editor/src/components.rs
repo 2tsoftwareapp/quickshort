@@ -607,8 +607,9 @@ pub fn prop_row<R>(
     .inner
 }
 
-/// Sleek Apple/Linear-style slider row: label on left, formatted numeric value
-/// on right, thin 4px rounded track with accent fill and clean circular knob.
+/// Sleek Apple/Linear-style slider row: label on left, click-to-edit formatted
+/// numeric value on right, thin 4px rounded track with accent fill and clean
+/// circular knob. Hold Shift while dragging for fine precision.
 pub fn slider_row(
     ui: &mut egui::Ui,
     label: &str,
@@ -625,6 +626,10 @@ pub fn slider_row(
     } else {
         format!("{:.prec$}{suffix}", *value, prec = decimals)
     };
+    let edit_id = ui.auto_id_with(("slider_edit", label));
+    let mut editing: Option<String> = ui.data_mut(|d| d.get_temp(edit_id));
+    let mut changed = false;
+
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new(label)
@@ -632,12 +637,56 @@ pub fn slider_row(
                 .color(theme::text_secondary()),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.label(
-                egui::RichText::new(formatted)
-                    .size(fs(font::SMALL))
-                    .monospace()
-                    .color(theme::text_primary()),
-            );
+            if let Some(mut buf) = editing.take() {
+                let te = ui.add(
+                    egui::TextEdit::singleline(&mut buf)
+                        .desired_width(54.0)
+                        .font(egui::FontId::monospace(fs(font::SMALL))),
+                );
+                let enter = te.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                let esc = ui.input(|i| i.key_pressed(egui::Key::Escape));
+                if enter || (te.lost_focus() && !esc) {
+                    let clean = buf.trim().trim_end_matches(suffix.trim()).trim();
+                    if let Ok(parsed) = clean.parse::<f32>() {
+                        let clamped = parsed.clamp(min, max);
+                        if (clamped - *value).abs() > f32::EPSILON {
+                            *value = clamped;
+                            changed = true;
+                        }
+                    }
+                    ui.data_mut(|d| d.remove::<String>(edit_id));
+                } else if esc {
+                    ui.data_mut(|d| d.remove::<String>(edit_id));
+                } else {
+                    if !te.has_focus() {
+                        te.request_focus();
+                    }
+                    ui.data_mut(|d| d.insert_temp(edit_id, buf));
+                }
+            } else {
+                let val_resp = ui
+                    .add(
+                        egui::Label::new(
+                            egui::RichText::new(&formatted)
+                                .size(fs(font::SMALL))
+                                .monospace()
+                                .color(theme::text_primary()),
+                        )
+                        .sense(Sense::click()),
+                    )
+                    .on_hover_text("Click to type a value");
+                if val_resp.hovered() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
+                }
+                if val_resp.clicked() {
+                    let raw = if decimals == 0 {
+                        format!("{:.0}", *value)
+                    } else {
+                        format!("{:.prec$}", *value, prec = decimals)
+                    };
+                    ui.data_mut(|d| d.insert_temp(edit_id, raw));
+                }
+            }
         });
     });
 
@@ -649,15 +698,36 @@ pub fn slider_row(
     let track_right = (rect.right() - pad).max(track_left + 1.0);
     let track_w = track_right - track_left;
 
-    let mut changed = false;
-    if (resp.dragged() || resp.clicked()) && resp.interact_pointer_pos().is_some() {
-        let px = resp.interact_pointer_pos().unwrap().x;
-        let t = ((px - track_left) / track_w).clamp(0.0, 1.0);
-        let next = min + t * span;
-        let next = if decimals == 0 { next.round() } else { next };
-        if (next - *value).abs() > f32::EPSILON {
-            *value = next;
-            changed = true;
+    if resp.dragged() {
+        let fine = ui.input(|i| i.modifiers.shift);
+        if fine {
+            let dx = resp.drag_delta().x;
+            if dx.abs() > 0.0 {
+                let next = (*value + (dx / track_w) * span * 0.25).clamp(min, max);
+                let next = if decimals == 0 { next.round() } else { next };
+                if (next - *value).abs() > f32::EPSILON {
+                    *value = next;
+                    changed = true;
+                }
+            }
+        } else if let Some(pos) = resp.interact_pointer_pos() {
+            let t = ((pos.x - track_left) / track_w).clamp(0.0, 1.0);
+            let next = min + t * span;
+            let next = if decimals == 0 { next.round() } else { next };
+            if (next - *value).abs() > f32::EPSILON {
+                *value = next;
+                changed = true;
+            }
+        }
+    } else if resp.clicked() {
+        if let Some(pos) = resp.interact_pointer_pos() {
+            let t = ((pos.x - track_left) / track_w).clamp(0.0, 1.0);
+            let next = min + t * span;
+            let next = if decimals == 0 { next.round() } else { next };
+            if (next - *value).abs() > f32::EPSILON {
+                *value = next;
+                changed = true;
+            }
         }
     }
 

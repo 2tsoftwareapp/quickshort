@@ -143,6 +143,10 @@ pub struct EditorApp {
     last_find_focus: Option<(String, usize)>,
     /// Capture library browser (search, tags, favourites, pruning).
     library: crate::library::Library,
+    /// Right-click context menu on canvas: `(screen_pos, clicked_object_id)`.
+    context_menu: Option<(Pos2, Option<ObjectId>)>,
+    /// Keyboard shortcuts cheat sheet modal (`?` or Status Bar button).
+    shortcuts_open: bool,
 }
 
 fn anchored_insets(vertical: f32, horizontal: f32, anchor: (usize, usize)) -> [f32; 4] {
@@ -238,6 +242,8 @@ impl EditorApp {
             ocr_hints: crate::ocr_hint::OcrHints::default(),
             find: crate::find::FindState::default(),
             last_find_focus: None,
+            context_menu: None,
+            shortcuts_open: false,
         };
         app.update_texture(&cc.egui_ctx);
         app
@@ -454,6 +460,8 @@ impl EditorApp {
             ocr_hints: crate::ocr_hint::OcrHints::default(),
             find: crate::find::FindState::default(),
             last_find_focus: None,
+            context_menu: None,
+            shortcuts_open: false,
         }
     }
 
@@ -969,6 +977,12 @@ impl EditorApp {
             },
         );
 
+        if decision.is_none()
+            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter))
+        {
+            decision = Some(CloseDecision::Save);
+        }
+
         match decision {
             // a cancelled Save-As leaves the document unsaved: keep the window
             Some(CloseDecision::Save) => {
@@ -1444,6 +1458,177 @@ impl EditorApp {
         }
     }
 
+    /// Right-click context menu on the canvas (object actions or viewport actions).
+    fn canvas_context_menu(&mut self, ctx: &egui::Context) {
+        let Some((pos, hit_id)) = self.context_menu else {
+            return;
+        };
+        let mut close = false;
+        let has_sel = hit_id.is_some() || !self.editor.selection().is_empty();
+        let multi = self.editor.selection().len() >= 2;
+        let grouped = self.editor.selection_grouped();
+        let area = egui::Area::new(egui::Id::unique("canvas_ctx_menu"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(pos)
+            .show(ctx, |ui| {
+                theme::popover_frame().show(ui, |ui| {
+                    ui.set_width(210.0);
+                    ui.spacing_mut().item_spacing.y = 2.0;
+                    if has_sel {
+                        if crate::components::menu_item(ui, "Duplicate", Some("Ctrl+D"), false, true, false) {
+                            if self.editor.duplicate_selected().is_some() {
+                                self.touch();
+                            }
+                            close = true;
+                        }
+                        if crate::components::menu_item(ui, "Bring to Front", None, false, true, false) {
+                            if self.editor.reorder(qs_edit::ZOrder::Front) {
+                                self.touch();
+                            }
+                            close = true;
+                        }
+                        if crate::components::menu_item(ui, "Send to Back", None, false, true, false) {
+                            if self.editor.reorder(qs_edit::ZOrder::Back) {
+                                self.touch();
+                            }
+                            close = true;
+                        }
+                        if multi {
+                            ui.separator();
+                            if crate::components::menu_item(ui, "Group", Some("Ctrl+G"), false, true, false) {
+                                self.editor.group_selected();
+                                close = true;
+                            }
+                        }
+                        if grouped {
+                            if crate::components::menu_item(ui, "Ungroup", Some("Ctrl+Shift+G"), false, true, false) {
+                                self.editor.ungroup_selected();
+                                close = true;
+                            }
+                        }
+                        ui.separator();
+                        if crate::components::menu_item(ui, "Delete", Some("Del"), false, true, true) {
+                            if self.editor.delete_selected() {
+                                self.touch();
+                            }
+                            close = true;
+                        }
+                    } else {
+                        if crate::components::menu_item(ui, "Copy image", Some("Ctrl+C"), false, true, false) {
+                            let _ = self.copy_to_clipboard();
+                            close = true;
+                        }
+                        if crate::components::menu_item(ui, "Fit to window", Some("Ctrl+0"), false, true, false) {
+                            self.apply_zoom_cmd(ZoomCmd::Fit);
+                            close = true;
+                        }
+                        if crate::components::menu_item(ui, "Zoom 100%", Some("Ctrl+1"), false, true, false) {
+                            self.apply_zoom_cmd(ZoomCmd::Set(1.0));
+                            close = true;
+                        }
+                        ui.separator();
+                        if crate::components::menu_item(ui, "Canvas & Resize…", Some("Ctrl+Shift+C"), false, true, false) {
+                            self.canvas_dialog_open = true;
+                            self.show_inspector = true;
+                            self.canvas_background = self.editor.doc().background;
+                            self.resize_w = self.base.width().max(1);
+                            self.resize_h = self.base.height().max(1);
+                            close = true;
+                        }
+                        if crate::components::menu_item(ui, "Find text (OCR)…", Some("Ctrl+F"), false, true, false) {
+                            self.find.open = true;
+                            self.find.focus_pending = true;
+                            close = true;
+                        }
+                    }
+                });
+            });
+        let r = area.response.rect;
+        let outside = ctx.input(|i| {
+            i.pointer.any_pressed()
+                && i.pointer.interact_pos().is_some_and(|p| !r.contains(p))
+        });
+        if close || outside {
+            self.context_menu = None;
+        }
+    }
+
+    /// Keyboard shortcuts cheat sheet modal (`?` or Status Bar `?` button).
+    fn shortcuts_dialog(&mut self, ctx: &egui::Context) {
+        if !self.shortcuts_open {
+            return;
+        }
+        let mut close = false;
+        crate::components::modal_window(
+            ctx,
+            "shortcuts_modal",
+            "Keyboard Shortcuts",
+            420.0,
+            |ui| {
+                let groups: &[(&str, &[(&str, &str)])] = &[
+                    (
+                        "Editing",
+                        &[
+                            ("Undo / Redo", "Ctrl+Z / Ctrl+Y"),
+                            ("Select all", "Ctrl+A"),
+                            ("Duplicate / Delete", "Ctrl+D / Del"),
+                            ("Group / Ungroup", "Ctrl+G / Ctrl+Shift+G"),
+                            ("Stroke width - / +", "[ / ]"),
+                            ("Nudge 1px / 10px", "Arrows / Shift+Arrows"),
+                        ],
+                    ),
+                    (
+                        "Navigation & Color",
+                        &[
+                            ("Pan canvas", "Space+Drag / Middle-Drag"),
+                            ("Zoom In / Out / Fit / 100%", "Ctrl+± / Ctrl+0 / Ctrl+1"),
+                            ("Sample color (Eyedropper)", "Alt+Click on canvas"),
+                            ("Right-click menu", "Right-click canvas"),
+                        ],
+                    ),
+                    (
+                        "Files & Panels",
+                        &[
+                            ("Save / Save As / Quick PNG", "Ctrl+S / Ctrl+Shift+S / Ctrl+E"),
+                            ("Copy image / Find OCR", "Ctrl+C / Ctrl+F"),
+                            ("Library / Recent strip", "Ctrl+L / Ctrl+Shift+T"),
+                            ("Close window", "Ctrl+W"),
+                        ],
+                    ),
+                ];
+                for (title, items) in groups {
+                    crate::components::section_header(ui, title);
+                    for &(action, keys) in *items {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new(action)
+                                    .size(qs_theme::font::SMALL as f32)
+                                    .color(theme::text_secondary()),
+                            );
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.label(
+                                    egui::RichText::new(keys)
+                                        .size(qs_theme::font::CAPTION as f32 + 0.5)
+                                        .monospace()
+                                        .color(theme::text_primary()),
+                                );
+                            });
+                        });
+                    }
+                    ui.add_space(qs_theme::space::SM as f32);
+                }
+                crate::components::dialog_actions(ui, |ui| {
+                    if crate::components::pill_button_primary(ui, "Done", "Close (Esc)") {
+                        close = true;
+                    }
+                });
+            },
+        );
+        if close {
+            self.shortcuts_open = false;
+        }
+    }
+
     fn combine_dialog(&mut self, ctx: &egui::Context) {
         if !self.combine_dialog_open {
             return;
@@ -1506,6 +1691,12 @@ impl EditorApp {
                 });
             },
         );
+        if !create
+            && open
+            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter))
+        {
+            create = true;
+        }
         self.combine_dialog_open = open;
 
         if create {
@@ -1560,6 +1751,10 @@ impl EditorApp {
                 self.view.fit_to(self.view.display_rect(), rect, 40.0);
                 self.fit_memo = Some(crate::canvas::FitMemo::of(&self.view, rect.size(), 1.5));
             }
+            ZoomCmd::Set(target) => {
+                let factor = target / self.view.zoom.max(0.01);
+                self.view.zoom_at(factor, center, rect);
+            }
         }
     }
 
@@ -1592,10 +1787,15 @@ impl EditorApp {
             if i.consume_key(Modifiers::COMMAND, Key::W) {
                 close_requested = true;
             }
-            // Escape closes whichever dialog is on top. Without this the panels
-            // could only be dismissed by hitting their small close button.
+            // Escape closes whichever dialog or popup is on top.
             if i.consume_key(Modifiers::NONE, Key::Escape) {
-                if self.app_menu_open {
+                if self.context_menu.is_some() {
+                    self.context_menu = None;
+                } else if self.shortcuts_open {
+                    self.shortcuts_open = false;
+                } else if self.confirm_close {
+                    self.confirm_close = false;
+                } else if self.app_menu_open {
                     self.app_menu_open = false;
                 } else if self.export_menu_open {
                     self.export_menu_open = false;
@@ -1689,48 +1889,85 @@ impl EditorApp {
         let mut copy = false;
         let mut save = false;
         let mut save_as = false;
+        let mut quick_export = false;
         let mut open = false;
         let mut del = false;
         let mut dup = false;
+        let mut select_all = false;
         let mut esc = false;
         let mut tool = None;
         let mut nudge = None;
         let mut orient = None;
         let mut zoom_cmd = ZoomCmd::None;
+        let mut width_delta: f32 = 0.0;
         let mut group = false;
         let mut ungroup = false;
 
         // An open overlay owns the navigation keys: otherwise the canvas nudge
         // and the Escape-to-deselect path swallow them before the dialog sees
         // them, which made the Library keyboard route dead on arrival.
-        let overlay_keys = self.library.open || self.find.open;
-        // A focused text field owns plain keystrokes: typing "e" in Find or in
-        // the tag box used to switch the active tool as well.
+        let overlay_keys = self.library.open || self.find.open || self.shortcuts_open;
+        // A focused text field owns plain keystrokes AND standard text-editing
+        // chords (Backspace, Delete, Ctrl+C, Ctrl+Z, Ctrl+A) so typing in Find,
+        // Watermark, Zoom %, or Sliders never mutates the canvas underneath.
         let typing = ctx.memory(|m| m.focused().is_some());
         ctx.input_mut(|i| {
             if self.find.open && i.consume_key(Modifiers::NONE, Key::Escape) {
                 self.find.open = false;
             }
+            // While inline-editing a Text/Callout on canvas: still allow Save
+            // (Ctrl+S), Undo/Redo (commits edit first), and Ctrl+Enter to finish.
             if self.editor.edit().is_some() {
+                if i.consume_key(Modifiers::COMMAND, Key::S) || i.consume_key(Modifiers::CTRL, Key::S)
+                {
+                    save = true;
+                }
+                if i.consume_key(Modifiers::COMMAND, Key::Enter)
+                    || i.consume_key(Modifiers::CTRL, Key::Enter)
+                {
+                    self.editor.end_text_edit();
+                    self.touch();
+                } else if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z)
+                    || i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::Z)
+                    || i.consume_key(Modifiers::COMMAND, Key::Y)
+                    || i.consume_key(Modifiers::CTRL, Key::Y)
+                {
+                    self.editor.end_text_edit();
+                    redo = true;
+                } else if i.consume_key(Modifiers::COMMAND, Key::Z)
+                    || i.consume_key(Modifiers::CTRL, Key::Z)
+                {
+                    self.editor.end_text_edit();
+                    undo = true;
+                }
                 return;
             }
 
-            if i.consume_key(Modifiers::COMMAND, Key::Z) || i.consume_key(Modifiers::CTRL, Key::Z) {
-                if i.modifiers.shift {
+            if !typing {
+                if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z)
+                    || i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::Z)
+                    || i.consume_key(Modifiers::COMMAND, Key::Y)
+                    || i.consume_key(Modifiers::CTRL, Key::Y)
+                {
                     redo = true;
-                } else {
+                } else if i.consume_key(Modifiers::COMMAND, Key::Z)
+                    || i.consume_key(Modifiers::CTRL, Key::Z)
+                {
                     undo = true;
                 }
-                self.touch();
-            } else if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z)
-                || i.consume_key(Modifiers::CTRL, Key::Y)
-            {
-                redo = true;
-                self.touch();
+
+                if i.consume_key(Modifiers::COMMAND, Key::C) || i.consume_key(Modifiers::CTRL, Key::C)
+                {
+                    copy = true;
+                }
+                if i.consume_key(Modifiers::COMMAND, Key::A) || i.consume_key(Modifiers::CTRL, Key::A)
+                {
+                    select_all = true;
+                }
             }
 
-            if i.consume_key(Modifiers::COMMAND, Key::C) || i.consume_key(Modifiers::CTRL, Key::C) {
-                copy = true;
+            if i.consume_key(Modifiers::COMMAND, Key::E) || i.consume_key(Modifiers::CTRL, Key::E) {
+                quick_export = true;
             }
 
             if i.consume_key(Modifiers::COMMAND, Key::L) || i.consume_key(Modifiers::CTRL, Key::L) {
@@ -1749,7 +1986,6 @@ impl EditorApp {
                 self.find.open = true;
                 self.find.focus_pending = true;
             }
-
 
             if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::S)
                 || i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::S)
@@ -1790,15 +2026,24 @@ impl EditorApp {
                 || i.consume_key(Modifiers::CTRL, Key::Num0)
             {
                 zoom_cmd = ZoomCmd::Fit;
+            } else if i.consume_key(Modifiers::COMMAND, Key::Num1)
+                || i.consume_key(Modifiers::CTRL, Key::Num1)
+            {
+                zoom_cmd = ZoomCmd::Set(1.0);
             }
 
-            if i.consume_key(Modifiers::NONE, Key::Delete)
-                || i.consume_key(Modifiers::NONE, Key::Backspace)
+            if !typing
+                && !overlay_keys
+                && (i.consume_key(Modifiers::NONE, Key::Delete)
+                    || i.consume_key(Modifiers::NONE, Key::Backspace))
             {
                 del = true;
             }
 
-            if i.consume_key(Modifiers::COMMAND, Key::D) || i.consume_key(Modifiers::CTRL, Key::D) {
+            if !typing
+                && (i.consume_key(Modifiers::COMMAND, Key::D)
+                    || i.consume_key(Modifiers::CTRL, Key::D))
+            {
                 dup = true;
             }
 
@@ -1812,8 +2057,21 @@ impl EditorApp {
                 group = true;
             }
 
-            if !overlay_keys && i.consume_key(Modifiers::NONE, Key::Escape) {
+            if !overlay_keys && !typing && i.consume_key(Modifiers::NONE, Key::Escape) {
                 esc = true;
+            }
+
+            if !typing && !overlay_keys {
+                if i.consume_key(Modifiers::NONE, Key::OpenBracket) {
+                    width_delta = -1.0;
+                } else if i.consume_key(Modifiers::NONE, Key::CloseBracket) {
+                    width_delta = 1.0;
+                } else if i.consume_key(Modifiers::SHIFT, Key::Questionmark)
+                    || i.consume_key(Modifiers::NONE, Key::Questionmark)
+                    || i.consume_key(Modifiers::NONE, Key::F1)
+                {
+                    self.shortcuts_open = !self.shortcuts_open;
+                }
             }
 
             if !typing && i.modifiers.is_none() {
@@ -1889,21 +2147,40 @@ impl EditorApp {
         });
 
         if undo {
-            if !self.editor.undo() {
-                if let Some((doc, base)) = self.pre_flatten.take() {
-                    self.apply_document(doc, base);
-                    self.editor.mark_modified();
-                    self.show_toast("Flatten undone");
-                }
+            if self.editor.undo() {
+                self.touch();
+                self.show_toast("Undo");
+            } else if let Some((doc, base)) = self.pre_flatten.take() {
+                self.apply_document(doc, base);
+                self.editor.mark_modified();
+                self.touch();
+                self.show_toast("Flatten undone");
             }
-            self.touch();
         }
         if redo {
-            self.editor.redo();
-            self.touch();
+            if self.editor.redo() {
+                self.touch();
+                self.show_toast("Redo");
+            }
         }
         if copy {
             let _ = self.copy_to_clipboard();
+        }
+        if select_all {
+            let n = self.editor.select_all();
+            if n > 0 {
+                self.show_toast(format!("Selected {n} object(s)"));
+            }
+        }
+        if quick_export {
+            if let Err(e) = self.export_png(None) {
+                self.show_toast(format!("Export failed: {e}"));
+            }
+        }
+        if width_delta != 0.0 {
+            let next = (self.editor.style.width + width_delta).clamp(1.0, 24.0);
+            self.editor.set_stroke_width(next);
+            self.touch();
         }
         if save {
             let _ = self.save();
@@ -2154,6 +2431,8 @@ impl eframe::App for EditorApp {
         self.app_menu(&ctx);
         self.combine_dialog(&ctx);
         self.find_dialog(&ctx);
+        self.canvas_context_menu(&ctx);
+        self.shortcuts_dialog(&ctx);
 
         // Bottom Studio Status Bar (32px = 4px + 24px hit target + 4px, single top hairline)
         let status_resp = egui::Panel::bottom("status_bar")
@@ -2197,15 +2476,32 @@ impl eframe::App for EditorApp {
                     status_divider(ui);
 
                     let view_r = self.view.display_rect();
-                    ui.label(
-                        egui::RichText::new(format!(
-                            "{} × {} px",
-                            view_r.w.round() as i32,
-                            view_r.h.round() as i32
-                        ))
-                        .size(qs_theme::font::SMALL as f32)
-                        .color(theme::text_secondary()),
-                    );
+                    let dim_resp = ui
+                        .add(
+                            egui::Label::new(
+                                egui::RichText::new(format!(
+                                    "{} × {} px",
+                                    view_r.w.round() as i32,
+                                    view_r.h.round() as i32
+                                ))
+                                .size(qs_theme::font::SMALL as f32)
+                                .color(theme::text_secondary()),
+                            )
+                            .sense(egui::Sense::click()),
+                        )
+                        .on_hover_text("Click to open Canvas & Resize (Ctrl+Shift+C)");
+                    if dim_resp.hovered() {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                    }
+                    if dim_resp.clicked() {
+                        self.canvas_dialog_open = !self.canvas_dialog_open;
+                        if self.canvas_dialog_open {
+                            self.show_inspector = true;
+                        }
+                        self.canvas_background = self.editor.doc().background;
+                        self.resize_w = self.base.width().max(1);
+                        self.resize_h = self.base.height().max(1);
+                    }
 
                     if let Some(p) = self.last_cursor_doc {
                         status_divider(ui);
@@ -2240,6 +2536,14 @@ impl eframe::App for EditorApp {
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if crate::components::status_pill(
+                            ui,
+                            "?",
+                            self.shortcuts_open,
+                            "Keyboard shortcuts (?)",
+                        ) {
+                            self.shortcuts_open = !self.shortcuts_open;
+                        }
                         for (label, target_zoom) in [("200%", 2.0f32), ("100%", 1.0), ("50%", 0.5)]
                         {
                             let active = (self.view.zoom - target_zoom).abs() < 0.01;
@@ -3054,11 +3358,67 @@ impl eframe::App for EditorApp {
                     }
                 });
 
-                // Pointer interactions on canvas
-                let shift_held = ui.input(|i| i.modifiers.shift);
+                // Pointer interactions on canvas:
+                // - Middle-mouse drag or Space+drag pans canvas in any tool
+                // - Alt+click samples pixel color from screenshot (Eyedropper)
+                // - Right-click opens contextual canvas menu
+                let (shift_held, alt_held, space_held, mid_drag) = ui.input(|i| {
+                    (
+                        i.modifiers.shift,
+                        i.modifiers.alt,
+                        i.key_down(Key::Space)
+                            && self.editor.edit().is_none()
+                            && ctx.memory(|m| m.focused().is_none()),
+                        i.pointer.button_down(egui::PointerButton::Middle),
+                    )
+                });
+                let panning = mid_drag || (space_held && response.dragged());
+                if panning {
+                    let delta = ui.input(|i| i.pointer.delta());
+                    if delta != Vec2::ZERO {
+                        self.view.pan(delta);
+                    }
+                    ctx.set_cursor_icon(CursorIcon::Grabbing);
+                } else if space_held && screen_rect.contains(ui.input(|i| i.pointer.hover_pos().unwrap_or_default())) {
+                    ctx.set_cursor_icon(CursorIcon::Grab);
+                }
+
+                if response.secondary_clicked() {
+                    if let Some(pos) = response.interact_pointer_pos() {
+                        let doc_p = self.view.screen_to_doc(pos, screen_rect);
+                        let picked = self.editor.pick(doc_p);
+                        if let Some(id) = picked {
+                            if !self.editor.selection().contains(&id) {
+                                self.editor.select(Some(id));
+                            }
+                        }
+                        self.context_menu = Some((pos, picked));
+                    }
+                }
+
                 self.editor.hit_tol = 6.0 / self.view.zoom.max(0.1);
 
-                if response.double_clicked() {
+                if panning || space_held {
+                    // Handled by pan mode above.
+                } else if alt_held && response.clicked() {
+                    if let Some(pos) = response.interact_pointer_pos() {
+                        let doc_p = self.view.screen_to_doc(pos, screen_rect);
+                        let s = self.editor.doc().scale;
+                        let px = (doc_p.x * s).round() as i32;
+                        let py = (doc_p.y * s).round() as i32;
+                        if px >= 0
+                            && py >= 0
+                            && (px as u32) < self.base.width()
+                            && (py as u32) < self.base.height()
+                        {
+                            let p = self.base.get_pixel(px as u32, py as u32).0;
+                            let rgb = ((p[0] as u32) << 16) | ((p[1] as u32) << 8) | p[2] as u32;
+                            self.editor.set_color(rgb);
+                            self.touch();
+                            self.show_toast(format!("Sampled color #{rgb:06X}"));
+                        }
+                    }
+                } else if response.double_clicked() {
                     self.saw_drag_press = false;
                     if let Some(pos) = response.interact_pointer_pos() {
                         let doc_p = self.view.screen_to_doc(pos, screen_rect);
@@ -3401,20 +3761,40 @@ impl eframe::App for EditorApp {
                     );
                 }
 
-                // 7. Active text-edit caret
+                // 7. Active text-edit frame + blinking caret
                 if let Some(te) = self.editor.edit() {
                     if let Some(obj) = self.editor.doc().get(te.id) {
                         if let Some((origin, lay)) = qs_render::text_block(&obj.kind) {
-                            let (cx, cy) = lay.caret(te.caret);
-                            let p1 = self.view.doc_to_screen(
-                                PointF::new(origin.x + cx, origin.y + cy),
+                            let box_tl = self.view.doc_to_screen(origin, screen_rect);
+                            let box_br = self.view.doc_to_screen(
+                                PointF::new(
+                                    origin.x + lay.width.max(24.0),
+                                    origin.y + lay.height.max(20.0),
+                                ),
                                 screen_rect,
                             );
-                            let p2 = self.view.doc_to_screen(
-                                PointF::new(origin.x + cx, origin.y + cy + 18.0),
-                                screen_rect,
+                            let edit_rect = Rect::from_min_max(box_tl, box_br).expand(5.0);
+                            painter.rect_stroke(
+                                edit_rect,
+                                4.0,
+                                Stroke::new(1.25, theme::accent_alpha(180)),
+                                StrokeKind::Outside,
                             );
-                            painter.line_segment([p1, p2], Stroke::new(2.0, accent_blue()));
+                            let t = ctx.input(|i| i.time);
+                            let show_caret = ((t * 2.0) as u64) % 2 == 0;
+                            if show_caret {
+                                let (cx, cy) = lay.caret(te.caret);
+                                let p1 = self.view.doc_to_screen(
+                                    PointF::new(origin.x + cx, origin.y + cy),
+                                    screen_rect,
+                                );
+                                let p2 = self.view.doc_to_screen(
+                                    PointF::new(origin.x + cx, origin.y + cy + 18.0),
+                                    screen_rect,
+                                );
+                                painter.line_segment([p1, p2], Stroke::new(2.0, accent_blue()));
+                            }
+                            ctx.request_repaint_after(std::time::Duration::from_millis(500));
                         }
                     }
                 }
@@ -3600,6 +3980,8 @@ mod tests {
             ocr_hints: crate::ocr_hint::OcrHints::default(),
             find: crate::find::FindState::default(),
             last_find_focus: None,
+            context_menu: None,
+            shortcuts_open: false,
         };
         app.editor.preview_effects(qs_doc::Effects {
             border: Some(qs_doc::BorderEffect::default()),

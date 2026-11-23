@@ -13,12 +13,14 @@ use qs_doc::{
 use qs_edit::{Editor, Tool, ZOrder};
 use std::path::Path;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ZoomCmd {
     None,
     Out,
     In,
     Fit,
+    /// Set zoom directly to a specific scale factor (e.g. 1.0 = 100%).
+    Set(f32),
 }
 
 #[derive(Default)]
@@ -313,26 +315,59 @@ pub fn render_top_bar(
         }
 
         let zoom_pct = format!("{:.0}%", zoom * 100.0);
-        let z_mid_id = ui.auto_id_with("tb_zfit");
-        let z_mid_resp = ui
-            .interact(z_mid_rect, z_mid_id, Sense::click())
-            .on_hover_text("Fit Document to Window");
-        if z_mid_resp.hovered() {
-            ui.painter().rect_filled(z_mid_rect, 4.0, bg_pill_hover());
-        }
-        ui.painter().text(
-            z_mid_rect.center(),
-            egui::Align2::CENTER_CENTER,
-            &zoom_pct,
-            FontId::proportional(qs_theme::font::SMALL as f32),
-            if z_mid_resp.hovered() {
-                text_primary()
+        let z_edit_id = ui.auto_id_with("tb_zedit");
+        let z_editing: Option<String> = ui.data_mut(|d| d.get_temp(z_edit_id));
+        if let Some(mut buf) = z_editing {
+            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(z_mid_rect));
+            let te = child.add(
+                egui::TextEdit::singleline(&mut buf)
+                    .desired_width(z_mid_rect.width())
+                    .align(egui::Align2::CENTER_CENTER)
+                    .font(FontId::monospace(qs_theme::font::SMALL as f32)),
+            );
+            let enter = te.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            let esc = ui.input(|i| i.key_pressed(egui::Key::Escape));
+            if enter || (te.lost_focus() && !esc) {
+                let clean = buf.trim().trim_end_matches('%').trim();
+                if let Ok(pct) = clean.parse::<f32>() {
+                    if pct.is_finite() && pct > 0.0 {
+                        res.zoom = ZoomCmd::Set((pct / 100.0).clamp(0.1, 16.0));
+                    }
+                }
+                ui.data_mut(|d| d.remove::<String>(z_edit_id));
+            } else if esc {
+                ui.data_mut(|d| d.remove::<String>(z_edit_id));
             } else {
-                text_secondary()
-            },
-        );
-        if z_mid_resp.clicked() {
-            res.zoom = ZoomCmd::Fit;
+                if !te.has_focus() {
+                    te.request_focus();
+                }
+                ui.data_mut(|d| d.insert_temp(z_edit_id, buf));
+            }
+        } else {
+            let z_mid_id = ui.auto_id_with("tb_zfit");
+            let z_mid_resp = ui
+                .interact(z_mid_rect, z_mid_id, Sense::click())
+                .on_hover_text("Click to type zoom % · Double-click to Fit (Ctrl+0)");
+            if z_mid_resp.hovered() {
+                ui.painter().rect_filled(z_mid_rect, 4.0, bg_pill_hover());
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
+            }
+            ui.painter().text(
+                z_mid_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                &zoom_pct,
+                FontId::proportional(qs_theme::font::SMALL as f32),
+                if z_mid_resp.hovered() {
+                    text_primary()
+                } else {
+                    text_secondary()
+                },
+            );
+            if z_mid_resp.double_clicked() {
+                res.zoom = ZoomCmd::Fit;
+            } else if z_mid_resp.clicked() {
+                ui.data_mut(|d| d.insert_temp(z_edit_id, format!("{:.0}", zoom * 100.0)));
+            }
         }
 
         if icon_segment(
