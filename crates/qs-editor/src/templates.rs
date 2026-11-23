@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 pub enum CombineLayout {
     #[default]
     SideBySide,
+    BeforeAfter,
     VerticalSteps,
     Grid2x2,
 }
@@ -17,6 +18,7 @@ impl CombineLayout {
     pub fn label(self) -> &'static str {
         match self {
             Self::SideBySide => "Side-by-side",
+            Self::BeforeAfter => "Before / After comparison",
             Self::VerticalSteps => "Vertical steps",
             Self::Grid2x2 => "2×2 grid",
         }
@@ -68,7 +70,7 @@ pub fn build_combined_document(
 
     let mut placements: Vec<(u32, u32)> = Vec::with_capacity(imgs.len());
     let (total_w, total_h) = match layout {
-        CombineLayout::SideBySide => {
+        CombineLayout::SideBySide | CombineLayout::BeforeAfter => {
             let mut x = pad;
             let mut max_h = 0u32;
             for im in &imgs {
@@ -128,13 +130,38 @@ pub fn build_combined_document(
     doc.background = backdrop_argb;
     let step_rgb = PALETTE[4]; // accent blue
     let text_rgb = PALETTE[6]; // white
-    for &(px, py) in &placements {
-        doc.push(ObjectKind::Step {
-            center: PointF::new(px as f32 + 18.0, py as f32 + 18.0),
-            radius: 13.0,
-            rgb: step_rgb,
-            text_rgb,
-        });
+    if layout == CombineLayout::BeforeAfter {
+        for (i, &(px, py)) in placements.iter().enumerate() {
+            let (tag, fill_rgb) = match i {
+                0 => ("BEFORE", 0x52525B),
+                1 => ("AFTER", 0x16A34A),
+                _ => ("STEP", step_rgb),
+            };
+            doc.push(ObjectKind::Text {
+                pos: PointF::new(px as f32 + 14.0, py as f32 + 12.0),
+                text: tag.to_owned(),
+                style: qs_doc::TextStyle {
+                    px: 13.0,
+                    bold: true,
+                    rgb: text_rgb,
+                    ..Default::default()
+                },
+                wrap_w: None,
+                fill: qs_doc::Fill::Solid {
+                    rgb: fill_rgb,
+                    alpha: 0.94,
+                },
+            });
+        }
+    } else {
+        for &(px, py) in &placements {
+            doc.push(ObjectKind::Step {
+                center: PointF::new(px as f32 + 18.0, py as f32 + 18.0),
+                radius: 13.0,
+                rgb: step_rgb,
+                text_rgb,
+            });
+        }
     }
 
     Ok((doc, canvas))

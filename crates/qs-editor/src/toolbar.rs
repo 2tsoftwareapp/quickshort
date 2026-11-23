@@ -436,63 +436,39 @@ pub fn render_top_bar(
         res.close = true;
     }
 
-    // --- Center Zone: Responsive Tool Segmented Capsule ---
-    let tools_group1 = [
-        (Tool::Select, "Select (V)"),
-        (Tool::SelectRegion, "Select Region (M)"),
-    ];
-    let tools_group2 = [
-        (Tool::Pen, "Pen (P)"),
-        (Tool::Highlighter, "Highlight (H)"),
-        (Tool::Arrow, "Arrow (A)"),
-        (Tool::Line, "Line (L)"),
-        (Tool::Rect, "Rectangle (R)"),
-        (Tool::Ellipse, "Ellipse (O)"),
-    ];
-    let tools_group3 = [
-        (Tool::Text, "Text (T)"),
-        (Tool::Callout, "Callout Bubble (C)"),
-        (Tool::Step, "Step Counter (S)"),
-        (Tool::Blur, "Blur (B)"),
-        (Tool::Magnify, "Magnify Lens (I)"),
-        (Tool::Spotlight, "Spotlight (F)"),
-        (Tool::Stamp, "Stamp (G)"),
-        (Tool::Eraser, "Eraser (E)"),
-        (Tool::Crop, "Crop / Trim (K)"),
-        (Tool::Cutout, "Cutout Strip (X)"),
-        (Tool::Fill, "Paint Bucket (U)"),
-        (Tool::SmartMove, "Smart Move (Y)"),
-    ];
-
+    // --- Center Zone: Focused 10-tool core capsule + More overflow ---
+    // Keeps the toolbar calm and readable at every window width instead of
+    // crowding all 20 tools into one long bar.
+    let compact_tools = true;
     let tool_w = 29.0;
     let tool_h = 26.0;
     let div_w = 9.0;
-    let full_n = (tools_group1.len() + tools_group2.len() + tools_group3.len()) as f32;
-    let full_w = 6.0 + full_n * tool_w + 2.0 * div_w;
-    let avail_mid = (right_start - left_end - 20.0).max(200.0);
-    let compact_tools = avail_mid < full_w;
+    let tools_group1 = [(Tool::Select, "Select (V)")];
+    let tools_group2 = [(Tool::Arrow, "Arrow (A)")];
+    let tools_group3 = [(Tool::Crop, "Crop / Trim (K)")];
+    let full_w = 6.0 + 3.0 * tool_w + 2.0 * div_w;
 
-    let primary_compact: [(Tool, &str); 11] = [
+    let primary_compact: [(Tool, &str); 10] = [
         (Tool::Select, "Select (V)"),
-        (Tool::SelectRegion, "Select Region (M)"),
-        (Tool::Pen, "Pen (P)"),
-        (Tool::Highlighter, "Highlight (H)"),
         (Tool::Arrow, "Arrow (A)"),
         (Tool::Rect, "Rectangle (R)"),
+        (Tool::Ellipse, "Ellipse (O)"),
         (Tool::Text, "Text (T)"),
         (Tool::Callout, "Callout Bubble (C)"),
         (Tool::Step, "Step Counter (S)"),
-        (Tool::Blur, "Blur (B)"),
+        (Tool::Blur, "Blur / Redact (B)"),
+        (Tool::Highlighter, "Highlight (H)"),
         (Tool::Crop, "Crop / Trim (K)"),
     ];
-    let overflow_tools: [(Tool, &str); 9] = [
+    let overflow_tools: [(Tool, &str); 10] = [
+        (Tool::Pen, "Pen (P)"),
         (Tool::Line, "Line (L)"),
-        (Tool::Ellipse, "Ellipse (O)"),
         (Tool::Magnify, "Magnify Lens (I)"),
         (Tool::Spotlight, "Spotlight (F)"),
         (Tool::Stamp, "Stamp (G)"),
         (Tool::Eraser, "Eraser (E)"),
         (Tool::Cutout, "Cutout Strip (X)"),
+        (Tool::SelectRegion, "Select Region (M)"),
         (Tool::Fill, "Paint Bucket (U)"),
         (Tool::SmartMove, "Smart Move (Y)"),
     ];
@@ -1246,6 +1222,12 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
                         rgb: 0xFFFFFF, // allow-hex: document fill data, not UI chrome
                         alpha: 1.0,
                     }
+                } else if ctx_kind == ContextKind::Text {
+                    // Solid pill badge with automatic high-contrast text color.
+                    Fill::Solid {
+                        rgb: eff_rgb,
+                        alpha: 0.94,
+                    }
                 } else {
                     Fill::Solid {
                         rgb: eff_rgb,
@@ -1254,6 +1236,11 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
                 };
                 if ctx_kind == ContextKind::Callout {
                     editor.set_callout_fill_and_contrast(next_fill);
+                } else if ctx_kind == ContextKind::Text {
+                    editor.set_fill(next_fill);
+                    if let Fill::Solid { rgb, .. } = next_fill {
+                        editor.set_color(qs_edit::contrast(rgb));
+                    }
                 } else {
                     editor.set_fill(next_fill);
                 }
@@ -1323,6 +1310,11 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
                     ActionIcon::ArrowFilled,
                     "Filled Arrowhead",
                 ),
+                (
+                    ArrowHead::Curved,
+                    ActionIcon::Redo,
+                    "Curved Arrow (Bezier)",
+                ),
             ];
             let seg_w = 28.0;
             let tw = 6.0 + heads.len() as f32 * seg_w;
@@ -1334,9 +1326,14 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
                         Pos2::new(tr.left() + 3.0 + i as f32 * seg_w, tr.top() + 3.0),
                         Vec2::new(seg_w, 20.0),
                     );
+                    let id = match i {
+                        0 => "ins_ah0",
+                        1 => "ins_ah1",
+                        _ => "ins_ah2",
+                    };
                     if icon_segment(
                         ui,
-                        if i == 0 { "ins_ah0" } else { "ins_ah1" },
+                        id,
                         sr,
                         ic,
                         eff_arrow == hd,
@@ -1361,6 +1358,11 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
                     ActionIcon::BlurSmooth,
                     "Smooth Gaussian Blur",
                 ),
+                (
+                    BlurMode::Solid,
+                    ActionIcon::Fill,
+                    "Solid Blackout (Redaction)",
+                ),
             ];
             let seg_w = 28.0;
             let tw = 6.0 + modes.len() as f32 * seg_w;
@@ -1372,9 +1374,14 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
                         Pos2::new(tr.left() + 3.0 + i as f32 * seg_w, tr.top() + 3.0),
                         Vec2::new(seg_w, 20.0),
                     );
+                    let id = match i {
+                        0 => "ins_bm0",
+                        1 => "ins_bm1",
+                        _ => "ins_bm2",
+                    };
                     if icon_segment(
                         ui,
-                        if i == 0 { "ins_bm0" } else { "ins_bm1" },
+                        id,
                         sr,
                         ic,
                         eff_blur_mode == md,

@@ -184,6 +184,68 @@ impl OcrHints {
         // glyph box is easy to miss and the user meant it anyway.
         tightest(0.0).or_else(|| tightest(2.0))
     }
+
+    /// Detect lines likely containing sensitive PII / credentials (emails,
+    /// IPv4 addresses, API keys / tokens, phone-like digit runs) for 1-click
+    /// Auto-Redact.
+    pub fn sensitive_rects(&self) -> Vec<RectF> {
+        self.lines
+            .iter()
+            .filter(|h| is_sensitive_text(&h.text))
+            .map(|h| h.rect)
+            .collect()
+    }
+}
+
+fn is_sensitive_text(text: &str) -> bool {
+    let t = text.trim();
+    if t.is_empty() {
+        return false;
+    }
+    let lower = t.to_lowercase();
+    // Explicit secret / token prefixes
+    for prefix in [
+        "sk-", "pk_", "ghp_", "gho_", "ghu_", "ghs_", "xoxb-", "xoxp-", "akia", "eyj",
+        "bearer ", "token=", "apikey=", "api_key=", "password=", "secret=",
+    ] {
+        if lower.contains(prefix) {
+            return true;
+        }
+    }
+    for tok in t.split_whitespace() {
+        let tok = tok.trim_matches(|c: char| ",;:\"'()[]{}<>".contains(c));
+        // Email address: local@domain.tld
+        if let Some((local, domain)) = tok.split_once('@') {
+            if !local.is_empty() && domain.contains('.') && domain.len() >= 4 {
+                return true;
+            }
+        }
+        // IPv4 address: a.b.c.d
+        let parts: Vec<&str> = tok.split('.').collect();
+        if parts.len() == 4 && parts.iter().all(|p| !p.is_empty() && p.parse::<u8>().is_ok()) {
+            return true;
+        }
+        // Long high-entropy secret/key token (>= 24 hex/alnum chars with digits)
+        if tok.len() >= 24
+            && tok.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+            && tok.chars().any(|c| c.is_ascii_digit())
+            && tok.chars().any(|c| c.is_ascii_alphabetic())
+        {
+            return true;
+        }
+    }
+    // Phone number pattern: >= 9 digits in a short line
+    let digits = t.chars().filter(|c| c.is_ascii_digit()).count();
+    if digits >= 9 && digits <= 15 && t.len() <= 24 {
+        let non_phone = t
+            .chars()
+            .filter(|c| !c.is_ascii_digit() && !" +-().".contains(*c))
+            .count();
+        if non_phone == 0 {
+            return true;
+        }
+    }
+    false
 }
 
 fn area(r: &RectF) -> f32 {

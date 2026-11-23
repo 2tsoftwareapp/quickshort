@@ -24,6 +24,8 @@ pub struct AppPrefs {
     /// `ocr_lang` from the shared config; the Smart Move hints recognize with
     /// it. `auto` lets the engine detect.
     pub ocr_lang: String,
+    /// Saved default watermark text so toggling Watermark on pre-fills it.
+    pub watermark_text: String,
 }
 
 impl Default for AppPrefs {
@@ -35,6 +37,7 @@ impl Default for AppPrefs {
             copy_after_save: true,
             save_dir: None,
             ocr_lang: "auto".into(),
+            watermark_text: String::new(),
         }
     }
 }
@@ -83,6 +86,7 @@ impl AppPrefs {
                 "after_capture" => prefs.after_capture = val.to_owned(),
                 "copy_after_save" => prefs.copy_after_save = val == "true",
                 "ocr_lang" => prefs.ocr_lang = val.to_owned(),
+                "watermark_text" => prefs.watermark_text = val.to_owned(),
                 "save_dir" => {
                     if !val.is_empty() {
                         prefs.save_dir = Some(PathBuf::from(val));
@@ -129,6 +133,7 @@ fn patch_toml(existing: &str, prefs: &AppPrefs) -> String {
     let mut seen_accent = false;
     let mut seen_after = false;
     let mut seen_copy = false;
+    let mut seen_wm = false;
     let mut in_section = false;
     let mut insert_at = None;
 
@@ -161,6 +166,12 @@ fn patch_toml(existing: &str, prefs: &AppPrefs) -> String {
                         seen_copy = true;
                         continue;
                     }
+                    "watermark_text" => {
+                        let escaped = prefs.watermark_text.replace('"', "\\\"");
+                        out.push(format!("watermark_text = \"{escaped}\""));
+                        seen_wm = true;
+                        continue;
+                    }
                     _ => {}
                 }
             }
@@ -180,6 +191,10 @@ fn patch_toml(existing: &str, prefs: &AppPrefs) -> String {
     }
     if !seen_copy {
         missing.push(format!("copy_after_save = {}", prefs.copy_after_save));
+    }
+    if !seen_wm && !prefs.watermark_text.is_empty() {
+        let escaped = prefs.watermark_text.replace('"', "\\\"");
+        missing.push(format!("watermark_text = \"{escaped}\""));
     }
 
     if !missing.is_empty() {

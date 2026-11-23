@@ -369,6 +369,38 @@ fn draw_object(pm: &mut Pixmap, xf: &Xf, kind: &ObjectKind, step_no: u32, snap: 
                         stroke_path(pm, xf, &tri, stroke, LineJoin::Round);
                     }
                 }
+                ArrowHead::Curved => {
+                    let dx = b.x - a.x;
+                    let dy = b.y - a.y;
+                    let len = dx.hypot(dy).max(1.0);
+                    // Graceful perpendicular arc control point (22% bow).
+                    let bow = (len * 0.22).clamp(14.0, 96.0);
+                    let ctrl = PointF::new(
+                        (a.x + b.x) * 0.5 - (dy / len) * bow,
+                        (a.y + b.y) * 0.5 + (dx / len) * bow,
+                    );
+                    // Align arrowhead with the Bezier tangent at `b` (ctrl -> b).
+                    let Some((_, cw)) = arrow_geometry(ctrl, *b, stroke.width) else {
+                        return;
+                    };
+                    let tip_base = PointF::new((cw[0].x + cw[1].x) * 0.5, (cw[0].y + cw[1].y) * 0.5);
+                    let mut pb = PathBuilder::new();
+                    pb.move_to(a.x, a.y);
+                    pb.quad_to(ctrl.x, ctrl.y, tip_base.x, tip_base.y);
+                    if let Some(path) = pb.finish() {
+                        stroke_path(pm, xf, &path, stroke, LineJoin::Round);
+                    }
+                    if let Some(tri) = poly_path(&[*b, cw[0], cw[1]], true) {
+                        pm.fill_path(
+                            &tri,
+                            &paint(stroke.rgb, stroke.alpha),
+                            FillRule::Winding,
+                            xf.ts(),
+                            None,
+                        );
+                        stroke_path(pm, xf, &tri, stroke, LineJoin::Round);
+                    }
+                }
             }
         }
         ObjectKind::Rect { r, stroke, fill, radius } => {
@@ -386,8 +418,8 @@ fn draw_object(pm: &mut Pixmap, xf: &Xf, kind: &ObjectKind, step_no: u32, snap: 
         ObjectKind::Text { pos, text, style, wrap_w, fill } => {
             let lay = text::layout(text, style, *wrap_w);
             if !fill.is_none() {
-                let bg = RectF::new(pos.x, pos.y, lay.width, lay.height).inflate(3.0);
-                if let Some(path) = poly_path(&rrect_poly(bg, 2.0), true) {
+                let bg = RectF::new(pos.x, pos.y, lay.width, lay.height).inflate(6.0);
+                if let Some(path) = poly_path(&rrect_poly(bg, 6.0), true) {
                     fill_path(pm, xf, &path, fill);
                 }
             }
@@ -488,6 +520,18 @@ fn draw_object(pm: &mut Pixmap, xf: &Xf, kind: &ObjectKind, step_no: u32, snap: 
             match mode {
                 BlurMode::Pixelate => pixelate(pm, x0, y0, x1, y1, amount),
                 BlurMode::Gaussian => gaussian(pm, x0, y0, x1, y1, amount),
+                BlurMode::Solid => {
+                    if let Some((cx0, cy0, cx1, cy1)) = clip(pm, x0, y0, x1, y1) {
+                        let stride = pm.width() as usize * 4;
+                        let raw = pm.data_mut();
+                        for y in cy0..cy1 {
+                            for x in cx0..cx1 {
+                                let i = y * stride + x * 4;
+                                raw[i..i + 4].copy_from_slice(&[20, 20, 24, 255]);
+                            }
+                        }
+                    }
+                }
             }
         }
         ObjectKind::Fill { seed, rgb, tolerance } => {

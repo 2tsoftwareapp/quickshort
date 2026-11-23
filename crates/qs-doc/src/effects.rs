@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 pub struct Effects {
     pub border: Option<BorderEffect>,
     pub shadow: Option<ShadowEffect>,
+    pub background: Option<BackgroundEffect>,
     pub watermark: Option<WatermarkEffect>,
     pub edge: Option<EdgeEffect>,
     pub color_adjust: Option<ColorAdjustEffect>,
@@ -14,6 +15,28 @@ pub struct Effects {
     pub page_curl: Option<PageCurlEffect>,
     pub reflection: Option<ReflectionEffect>,
     pub colorize: Option<ColorizeEffect>,
+}
+
+/// Gradient backdrop behind the framed screenshot (1-click Beautify).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BackgroundEffect {
+    /// Logical pixel padding around the content on all four sides.
+    pub padding: f32,
+    /// Top-left gradient color (`0xRRGGBB`).
+    pub color_a: u32,
+    /// Bottom-right gradient color (`0xRRGGBB`).
+    pub color_b: u32,
+}
+
+impl Default for BackgroundEffect {
+    fn default() -> Self {
+        Self {
+            padding: 48.0,
+            color_a: 0x3B82F6,
+            color_b: 0x8B5CF6,
+        }
+    }
 }
 
 /// Replaces a colour throughout the image: every pixel within `tolerance` of
@@ -254,6 +277,9 @@ impl Effects {
                 "invalid page curl"
             );
         }
+        if let Some(bg) = &self.background {
+            anyhow::ensure!(range(bg.padding, 0.0, 512.0), "invalid background padding");
+        }
         if let Some(rf) = &self.reflection {
             anyhow::ensure!(
                 range(rf.height, 4.0, 512.0)
@@ -289,6 +315,13 @@ impl Effects {
             if rf.opacity > 0.0 && rf.height > 0.0 {
                 b += ((rf.gap + rf.height) * scale).ceil();
             }
+        }
+        if let Some(bg) = &self.background {
+            let pad = (bg.padding * scale).ceil();
+            l = l.max(pad);
+            r = r.max(pad);
+            t = t.max(pad);
+            b = b.max(pad);
         }
         EffectLayout {
             size: SizeF::new(content.w + (l + r) / scale, content.h + (t + b) / scale),

@@ -14,8 +14,9 @@ mod orient;
 pub mod qsdoc;
 
 pub use effects::{
-    Anchor, BorderEffect, ColorAdjustEffect, ColorFilter, ColorizeEffect, EdgeEffect,
-    EffectLayout, Effects, PageCurlEffect, ReflectionEffect, ShadowEffect, WatermarkEffect,
+    Anchor, BackgroundEffect, BorderEffect, ColorAdjustEffect, ColorFilter, ColorizeEffect,
+    EdgeEffect, EffectLayout, Effects, PageCurlEffect, ReflectionEffect, ShadowEffect,
+    WatermarkEffect,
 };
 pub use geom::{PointF, RectF, SizeF};
 pub use orient::Orientation;
@@ -183,6 +184,8 @@ pub enum ArrowHead {
     Open,
     /// solid triangle
     Filled,
+    /// smooth quadratic Bezier curved arrow with filled head
+    Curved,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -190,6 +193,8 @@ pub enum BlurMode {
     #[default]
     Pixelate,
     Gaussian,
+    /// Solid opaque blackout bar for irreversible-looking redaction.
+    Solid,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

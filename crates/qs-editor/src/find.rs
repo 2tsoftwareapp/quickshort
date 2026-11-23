@@ -25,6 +25,8 @@ pub enum FindAction {
     None,
     /// Move through the matches: `-1` previous, `1` next.
     Step(i32),
+    /// Redact every matching line with a solid blackout bar.
+    RedactAll,
     Close,
 }
 
@@ -76,6 +78,16 @@ pub fn render(
                 }
                 if crate::components::pill_button(ui, "Next", "Next match") {
                     action = FindAction::Step(1);
+                }
+                if matches > 0
+                    && crate::components::pill_button_colored(
+                        ui,
+                        "Redact all",
+                        "Cover every matching line with a blackout bar",
+                        theme::danger_red(),
+                    )
+                {
+                    action = FindAction::RedactAll;
                 }
                 if crate::components::pill_button(ui, "Close", "Close find (Esc)") {
                     open = false;

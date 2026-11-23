@@ -532,6 +532,7 @@ pub fn apply(doc: &Document, mut content: RgbaImage) -> RgbaImage {
     }
     if doc.effects.border.is_none()
         && doc.effects.shadow.is_none()
+        && doc.effects.background.is_none()
         && doc.effects.reflection.is_none()
     {
         return content;
@@ -610,8 +611,9 @@ pub fn apply(doc: &Document, mut content: RgbaImage) -> RgbaImage {
         (layout.content_origin.x * scale).round() as i64 - bw as i64,
         (layout.content_origin.y * scale).round() as i64 - bw as i64,
     );
-    // Fast path: border-only (no shadow, no reflection, exact same dimensions).
+    // Fast path: border-only (no shadow, no background, no reflection, exact same dimensions).
     if doc.effects.shadow.is_none()
+        && doc.effects.background.is_none()
         && doc.effects.reflection.is_none()
         && fx == 0
         && fy == 0
@@ -620,6 +622,32 @@ pub fn apply(doc: &Document, mut content: RgbaImage) -> RgbaImage {
         return frame;
     }
     let mut out = RgbaImage::new(w, h);
+    if let Some(bg) = &doc.effects.background {
+        let (r0, g0, b0) = (
+            ((bg.color_a >> 16) & 0xFF) as f32,
+            ((bg.color_a >> 8) & 0xFF) as f32,
+            (bg.color_a & 0xFF) as f32,
+        );
+        let (r1, g1, b1) = (
+            ((bg.color_b >> 16) & 0xFF) as f32,
+            ((bg.color_b >> 8) & 0xFF) as f32,
+            (bg.color_b & 0xFF) as f32,
+        );
+        let denom = ((w.saturating_sub(1) + h.saturating_sub(1)).max(1)) as f32;
+        let raw = out.as_mut();
+        let wu = w as usize;
+        for y in 0..h as usize {
+            let row_off = y * wu * 4;
+            for x in 0..wu {
+                let t = (x + y) as f32 / denom;
+                let i = row_off + x * 4;
+                raw[i] = (r0 + (r1 - r0) * t).round() as u8;
+                raw[i + 1] = (g0 + (g1 - g0) * t).round() as u8;
+                raw[i + 2] = (b0 + (b1 - b0) * t).round() as u8;
+                raw[i + 3] = 255;
+            }
+        }
+    }
     if let Some(s) = &doc.effects.shadow {
         if s.opacity > 0.0 && s.color >> 24 != 0 {
             let mut alpha = image::GrayImage::new(w, h);
@@ -657,12 +685,22 @@ pub fn apply(doc: &Document, mut content: RgbaImage) -> RgbaImage {
                 s.color as u8,
                 ((s.color >> 24) as f32) * s.opacity / 255.0,
             );
+            let has_bg = doc.effects.background.is_some();
             for (p, &a) in out.as_mut().chunks_exact_mut(4).zip(alpha.as_raw().iter()) {
                 if a != 0 {
-                    p[0] = sr;
-                    p[1] = sg;
-                    p[2] = sb;
-                    p[3] = (a as f32 * sa_base).round() as u8;
+                    let sa = (a as f32 * sa_base / 255.0).clamp(0.0, 1.0);
+                    if has_bg {
+                        let inv = 1.0 - sa;
+                        p[0] = (sr as f32 * sa + p[0] as f32 * inv).round() as u8;
+                        p[1] = (sg as f32 * sa + p[1] as f32 * inv).round() as u8;
+                        p[2] = (sb as f32 * sa + p[2] as f32 * inv).round() as u8;
+                        p[3] = 255;
+                    } else {
+                        p[0] = sr;
+                        p[1] = sg;
+                        p[2] = sb;
+                        p[3] = (sa * 255.0).round() as u8;
+                    }
                 }
             }
         }

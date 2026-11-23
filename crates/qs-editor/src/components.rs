@@ -769,7 +769,7 @@ pub fn toggle_chip(ui: &mut egui::Ui, on: &mut bool, label: &str) -> bool {
 /// Translucent full-viewport scrim painted behind modal alerts/dialogs.
 pub fn modal_backdrop(ctx: &egui::Context, id: &str) {
     let rect = ctx.content_rect();
-    egui::Area::new(egui::Id::new(id))
+    egui::Area::new(egui::Id::unique(id))
         .order(egui::Order::Middle)
         .fixed_pos(rect.min)
         .show(ctx, |ui| {
@@ -793,7 +793,7 @@ pub fn modal_window(
 ) {
     modal_backdrop(ctx, &format!("{id}_scrim"));
     egui::Window::new(title)
-        .id(egui::Id::new(id))
+        .id(egui::Id::unique(id))
         .title_bar(false)
         .order(egui::Order::Foreground)
         .frame(theme::modal_frame())

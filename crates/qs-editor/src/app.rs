@@ -10,7 +10,7 @@ use crate::{
     recovery,
     styles,
     templates::{self, CombineLayout},
-    theme::{self, accent_blue, border_subtle, success_green, text_primary},
+    theme::{self, accent_blue, success_green, text_primary},
     toolbar::{self, ZoomCmd},
 };
 use eframe::egui::{
@@ -181,6 +181,7 @@ impl EditorApp {
         view.zoom = initial_zoom;
 
         let (init_w, init_h) = (base.width().max(1), base.height().max(1));
+        let show_layers = doc.objects.len() >= 2;
         let filmstrip = Filmstrip::new(doc_path.as_deref());
         let mut app = Self {
             editor: Editor::new(doc),
@@ -221,7 +222,7 @@ impl EditorApp {
             combine_layout: CombineLayout::SideBySide,
             tray_selected: Vec::new(),
             canvas_anchor: (1, 1),
-            show_layers: true,
+            show_layers,
             show_inspector: true,
             show_filmstrip: false,
             filmstrip_focus: None,
@@ -1239,7 +1240,7 @@ impl EditorApp {
             Rect::from_min_size(egui::pos2(r.right() - 220.0, r.top()), Vec2::new(1.0, 36.0))
         });
         let mut pick: Option<ExportFormat> = None;
-        let (mut copy, mut print) = (false, false);
+        let (mut quick_png, mut copy, mut print) = (false, false, false);
         let area = egui::Area::new(egui::Id::unique("export_menu"))
             .order(egui::Order::Foreground)
             // right-aligned under Export, as macOS toolbar menus are, so it
@@ -1248,8 +1249,19 @@ impl EditorApp {
             .fixed_pos(anchor.right_bottom() + Vec2::new(0.0, qs_theme::space::XS as f32))
             .show(ctx, |ui| {
                 theme::popover_frame().show(ui, |ui| {
-                    ui.set_width(216.0);
+                    ui.set_width(224.0);
                     ui.spacing_mut().item_spacing.y = 2.0;
+                    if crate::components::menu_item(
+                        ui,
+                        "Quick export PNG",
+                        Some("Ctrl+E"),
+                        false,
+                        true,
+                        false,
+                    ) {
+                        quick_png = true;
+                    }
+                    ui.separator();
                     for fmt in [ExportFormat::Png, ExportFormat::Jpeg, ExportFormat::Webp] {
                         let label = format!("Save as {}\u{2026}", fmt.label());
                         if crate::components::menu_item(
@@ -1294,10 +1306,14 @@ impl EditorApp {
                     .interact_pos()
                     .is_some_and(|p| !menu_rect.contains(p) && !anchor.contains(p))
         });
-        if pick.is_some() || copy || print || clicked_outside {
+        if quick_png || pick.is_some() || copy || print || clicked_outside {
             self.export_menu_open = false;
         }
-        if let Some(fmt) = pick {
+        if quick_png {
+            if let Err(e) = self.export_png(None) {
+                self.show_toast(format!("Export failed: {e}"));
+            }
+        } else if let Some(fmt) = pick {
             if let Err(e) = self.export_with_dialog(fmt, self.export_quality) {
                 self.show_toast(format!("Export failed: {e}"));
             }
@@ -1332,6 +1348,17 @@ impl EditorApp {
                     let count = hits.len() as i32;
                     let current = self.find.index.min(hits.len() - 1) as i32;
                     self.find.index = (current + step).rem_euclid(count) as usize;
+                }
+            }
+            crate::find::FindAction::RedactAll => {
+                let rects: Vec<RectF> = hits
+                    .iter()
+                    .map(|&i| self.ocr_hints.lines()[i].rect)
+                    .collect();
+                let n = self.editor.add_redactions(&rects, qs_doc::BlurMode::Solid);
+                if n > 0 {
+                    self.touch();
+                    self.show_toast(format!("Redacted {n} match(es)"));
                 }
             }
         }
@@ -1440,6 +1467,7 @@ impl EditorApp {
                 ui.add_space(qs_theme::space::MD as f32);
                 for layout in [
                     CombineLayout::SideBySide,
+                    CombineLayout::BeforeAfter,
                     CombineLayout::VerticalSteps,
                     CombineLayout::Grid2x2,
                 ] {
@@ -1451,6 +1479,16 @@ impl EditorApp {
                         self.combine_layout = layout;
                     }
                     ui.add_space(qs_theme::space::XS as f32);
+                }
+                if self.tray_selected.len() >= 2 {
+                    ui.add_space(qs_theme::space::XS as f32);
+                    if crate::components::pill_button(
+                        ui,
+                        "Reverse order",
+                        "Flip the order of selected captures (e.g. swap Before / After)",
+                    ) {
+                        self.tray_selected.reverse();
+                    }
                 }
                 ui.add_space(qs_theme::space::SM as f32);
                 crate::components::dialog_actions(ui, |ui| {
@@ -2040,7 +2078,10 @@ impl eframe::App for EditorApp {
         if top_res.mutated || prop_mutated {
             self.touch();
         }
-        let styles_mutated = if styles::has_presets_for(&self.editor, &self.styles) {
+        // Only show Quick Styles bar when the user has saved custom presets for
+        // the active tool — hides the redundant 8-color bar that duplicated the
+        // swatches already shown in the Properties bar right above.
+        let styles_mutated = if !self.styles.for_tool(self.editor.tool()).is_empty() {
             egui::Panel::top("quick_style_bar")
                 // Without an explicit fill the panel rendered as a black strip
                 // in the light theme.
@@ -2227,6 +2268,7 @@ impl eframe::App for EditorApp {
         // Collapsible Recent Captures Filmstrip (sits cleanly above Status Bar)
         if self.show_filmstrip {
             let mut switch_target: Option<PathBuf> = None;
+            let mut copy_target: Option<(PathBuf, String)> = None;
             let mut refresh_tray = false;
             // Tall enough for the RECENT column (label + three pill buttons);
             // at 94 the thumbnails were clipped by the panel edge.
@@ -2438,6 +2480,38 @@ impl eframe::App for EditorApp {
                                                     theme::amber_orange(),
                                                 );
                                             }
+                                            // Quick Copy button on hover (top-left of thumbnail)
+                                            if resp.hovered() {
+                                                let copy_r = Rect::from_min_size(
+                                                    Pos2::new(rect.left() + 4.0, rect.top() + 4.0),
+                                                    Vec2::new(20.0, 20.0),
+                                                );
+                                                let copy_resp = ui
+                                                    .interact(
+                                                        copy_r,
+                                                        ui.auto_id_with(("tray_cp", item_idx)),
+                                                        egui::Sense::click(),
+                                                    )
+                                                    .on_hover_text("Copy image to clipboard");
+                                                ui.painter().rect_filled(
+                                                    copy_r,
+                                                    4.0,
+                                                    if copy_resp.hovered() {
+                                                        theme::accent_blue()
+                                                    } else {
+                                                        Color32::from_black_alpha(150)
+                                                    },
+                                                );
+                                                icons::draw_action_icon(
+                                                    ui.painter(),
+                                                    copy_r.center(),
+                                                    ActionIcon::Copy,
+                                                    Color32::WHITE,
+                                                );
+                                                if copy_resp.clicked() {
+                                                    copy_target = Some((item.path.clone(), item.label.clone()));
+                                                }
+                                            }
                                             if resp
                                                 .on_hover_text(format!(
                                                     "{} (Shift+Click to select for Combine)",
@@ -2467,6 +2541,14 @@ impl eframe::App for EditorApp {
                 });
             if refresh_tray {
                 self.filmstrip.refresh(self.doc_path.as_deref());
+            }
+            if let Some((path, label)) = copy_target {
+                if let Ok((doc, base, _)) = load_document(&path) {
+                    let flat = qs_render::render(&doc, &base);
+                    if clipboard::copy_image(&flat).is_ok() {
+                        self.show_toast(format!("Copied {label}"));
+                    }
+                }
             }
             if let Some(target) = switch_target {
                 if let Err(e) = self.switch_to_path(&target) {
@@ -2540,10 +2622,24 @@ impl eframe::App for EditorApp {
                     .enumerate()
                     .rev()
                     .map(|(index, o)| {
+                        let preview = match &o.kind {
+                            qs_doc::ObjectKind::Text { text, .. }
+                            | qs_doc::ObjectKind::Callout { text, .. } => {
+                                let t = text.trim().lines().next().unwrap_or("");
+                                if t.is_empty() {
+                                    format!("{} #{}", o.kind.label(), o.id.0)
+                                } else {
+                                    let short: String = t.chars().take(16).collect();
+                                    let ell = if t.chars().count() > 16 { "…" } else { "" };
+                                    format!("{}: “{short}{ell}”", o.kind.label())
+                                }
+                            }
+                            _ => format!("{} #{}", o.kind.label(), o.id.0),
+                        };
                         (
                             index,
                             o.id,
-                            o.kind.label(),
+                            preview,
                             o.visible,
                             o.locked,
                             o.group.is_some(),
@@ -2642,9 +2738,9 @@ impl eframe::App for EditorApp {
                                         self.editor.set_locked(id, !locked);
                                     }
                                     let text = if grouped {
-                                        format!("▦ {label}  #{}", id.0)
+                                        format!("▦ {label}")
                                     } else {
-                                        format!("{label}  #{}", id.0)
+                                        label
                                     };
                                     if ui
                                         .add(
@@ -2653,6 +2749,7 @@ impl eframe::App for EditorApp {
                                                     qs_theme::font::SMALL as f32,
                                                 ),
                                             )
+                                            .truncate()
                                             .sense(egui::Sense::click()),
                                         )
                                         .on_hover_text(format!(
@@ -2663,6 +2760,51 @@ impl eframe::App for EditorApp {
                                     {
                                         self.editor.select(Some(id));
                                     }
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            let (del_r, del_resp) = ui.allocate_exact_size(
+                                                egui::Vec2::splat(18.0),
+                                                egui::Sense::click(),
+                                            );
+                                            if del_resp.hovered() || selected {
+                                                crate::icons::draw_action_icon(
+                                                    ui.painter(),
+                                                    del_r.center(),
+                                                    ActionIcon::Trash,
+                                                    if del_resp.hovered() {
+                                                        theme::danger_red()
+                                                    } else {
+                                                        theme::text_tertiary()
+                                                    },
+                                                );
+                                            }
+                                            if del_resp.on_hover_text("Delete layer").clicked() {
+                                                self.editor.select(Some(id));
+                                                changed |= self.editor.delete_selected();
+                                            }
+                                            let (dup_r, dup_resp) = ui.allocate_exact_size(
+                                                egui::Vec2::splat(18.0),
+                                                egui::Sense::click(),
+                                            );
+                                            if dup_resp.hovered() || selected {
+                                                crate::icons::draw_action_icon(
+                                                    ui.painter(),
+                                                    dup_r.center(),
+                                                    ActionIcon::Duplicate,
+                                                    if dup_resp.hovered() {
+                                                        theme::text_primary()
+                                                    } else {
+                                                        theme::text_tertiary()
+                                                    },
+                                                );
+                                            }
+                                            if dup_resp.on_hover_text("Duplicate layer").clicked() {
+                                                self.editor.select(Some(id));
+                                                changed |= self.editor.duplicate_selected().is_some();
+                                            }
+                                        },
+                                    );
                                 });
                             })
                             .response;
@@ -2737,19 +2879,57 @@ impl eframe::App for EditorApp {
                                 });
                                 ui.add_space(qs_theme::space::MD as f32);
                             }
-                            let changed = image_panel::render(ui, &mut self.editor);
+                            let changed = image_panel::render(ui, &mut self.editor, &mut self.prefs);
                             ui.add_space(qs_theme::space::MD as f32);
                             crate::components::card(ui, |ui| {
                                 crate::components::section_header(ui, "Quick Actions");
                                 if crate::components::button(
                                     ui,
-                                    "Simplify UI",
+                                    "Auto-Redact (OCR)",
                                     crate::components::ButtonVariant::Tonal,
-                                    "Convert UI text/controls into clean editable blocks",
+                                    "Scan text with OCR and blackout emails, IPs, tokens, and phone numbers",
                                 )
                                 .clicked()
                                 {
-                                    let n = self.editor.simplify_from_image(&self.base);
+                                    self.ocr_hints.ensure(
+                                        self.editor.doc(),
+                                        &self.base,
+                                        &self.prefs.ocr_lang,
+                                    );
+                                    self.ocr_hints.poll();
+                                    if self.ocr_hints.is_scanning() {
+                                        self.show_toast("Scanning text with OCR… click again in a moment");
+                                    } else {
+                                        let rects = self.ocr_hints.sensitive_rects();
+                                        let n = self.editor.add_redactions(&rects, qs_doc::BlurMode::Solid);
+                                        if n > 0 {
+                                            self.touch();
+                                            self.show_toast(format!("Auto-redacted {n} sensitive item(s)"));
+                                        } else {
+                                            self.show_toast("No sensitive text detected");
+                                        }
+                                    }
+                                }
+                                ui.add_space(qs_theme::space::SM as f32);
+                                if crate::components::button(
+                                    ui,
+                                    "Simplify UI",
+                                    crate::components::ButtonVariant::Secondary,
+                                    "Convert UI text/controls into clean editable wireframe blocks (uses OCR if scanned)",
+                                )
+                                .clicked()
+                                {
+                                    let ocr_rects: Vec<RectF> = self
+                                        .ocr_hints
+                                        .lines()
+                                        .iter()
+                                        .map(|h| h.rect)
+                                        .collect();
+                                    let n = if !ocr_rects.is_empty() {
+                                        self.editor.simplify_from_rects(&ocr_rects, self.editor.region())
+                                    } else {
+                                        self.editor.simplify_from_image(&self.base)
+                                    };
                                     if n > 0 {
                                         self.touch();
                                         self.show_toast(format!("Simplified {n} UI block(s)"));
@@ -2998,11 +3178,81 @@ impl eframe::App for EditorApp {
                     }
                 }
 
-                // 5b. Crop / Cutout preview
+                // 5b. Crop / Cutout preview + Crop aspect ratio presets bar
                 if self.editor.tool() == Tool::Crop {
                     if let Some(crop) = self.editor.crop_rect() {
                         let crop_screen = self.view.doc_rect_to_screen(crop, screen_rect);
                         canvas::paint_crop_overlay(&mut painter, crop_screen, screen_rect);
+                    }
+                    let mut ratio_pick: Option<f32> = None;
+                    let mut auto_trim = false;
+                    let mut reset_view = false;
+                    egui::Area::new(egui::Id::unique("crop_presets_bar"))
+                        .order(egui::Order::Foreground)
+                        .pivot(egui::Align2::CENTER_TOP)
+                        .fixed_pos(Pos2::new(screen_rect.center().x, screen_rect.top() + 10.0))
+                        .show(&ctx, |ui| {
+                            theme::popover_frame().show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.spacing_mut().item_spacing.x = 4.0;
+                                    for (lbl, ratio) in [
+                                        ("16:9", 16.0 / 9.0),
+                                        ("4:3", 4.0 / 3.0),
+                                        ("1:1", 1.0),
+                                    ] {
+                                        if crate::components::pill_button(
+                                            ui,
+                                            lbl,
+                                            &format!("Center-crop to {lbl} aspect ratio"),
+                                        ) {
+                                            ratio_pick = Some(ratio);
+                                        }
+                                    }
+                                    if crate::components::pill_button(
+                                        ui,
+                                        "Auto-trim",
+                                        "Trim uniform outer borders",
+                                    ) {
+                                        auto_trim = true;
+                                    }
+                                    if crate::components::pill_button(
+                                        ui,
+                                        "Reset",
+                                        "Restore full original frame",
+                                    ) {
+                                        reset_view = true;
+                                    }
+                                });
+                            });
+                        });
+                    if let Some(ratio) = ratio_pick {
+                        let v = self.editor.doc().view.normalized();
+                        let cur = v.w / v.h.max(1.0);
+                        let (nw, nh) = if cur > ratio {
+                            (v.h * ratio, v.h)
+                        } else {
+                            (v.w, v.w / ratio)
+                        };
+                        let nx = v.x + (v.w - nw) * 0.5;
+                        let ny = v.y + (v.h - nh) * 0.5;
+                        self.editor.set_view(RectF::new(nx, ny, nw, nh));
+                        self.touch();
+                        self.show_toast("Cropped to aspect ratio");
+                    } else if auto_trim {
+                        if let Some(rect) =
+                            qs_edit::trim::calculate_trim_rect(self.editor.doc(), &self.base, 6)
+                        {
+                            self.editor.set_view(rect);
+                            self.touch();
+                            self.show_toast("Trimmed uniform edges");
+                        } else {
+                            self.show_toast("No uniform edges to trim");
+                        }
+                    } else if reset_view {
+                        let sz = self.editor.doc().base_size;
+                        self.editor.set_view(RectF::new(0.0, 0.0, sz.w, sz.h));
+                        self.touch();
+                        self.show_toast("Reset crop to full image");
                     }
                 }
                 if self.editor.tool() == Tool::Cutout {
@@ -3034,7 +3284,7 @@ impl eframe::App for EditorApp {
                     }
                 }
 
-                // 5c. Committed selection region outline (when not cropping)
+                // 5c. Committed selection region outline + floating action bar
                 if self.editor.tool() != Tool::Crop
                     && self.editor.tool() != Tool::SelectRegion
                     && self.editor.region().is_some()
@@ -3042,6 +3292,77 @@ impl eframe::App for EditorApp {
                     let region = self.editor.region().unwrap();
                     let region_screen = self.view.doc_rect_to_screen(region, screen_rect);
                     canvas::paint_region(&mut painter, region_screen);
+
+                    // Floating quick-action pill directly under the selection region
+                    let bar_pos = Pos2::new(
+                        region_screen.center().x,
+                        (region_screen.bottom() + 8.0).min(screen_rect.bottom() - 44.0),
+                    );
+                    let mut act_copy_txt = false;
+                    let mut act_redact = false;
+                    let mut act_crop = false;
+                    let mut act_clear = false;
+                    egui::Area::new(egui::Id::unique("region_action_bar"))
+                        .order(egui::Order::Foreground)
+                        .pivot(egui::Align2::CENTER_TOP)
+                        .fixed_pos(bar_pos)
+                        .show(&ctx, |ui| {
+                            theme::popover_frame().show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.spacing_mut().item_spacing.x = 4.0;
+                                    if crate::components::pill_button(
+                                        ui,
+                                        "Copy Text",
+                                        "Copy OCR text inside this selection",
+                                    ) {
+                                        act_copy_txt = true;
+                                    }
+                                    if crate::components::pill_button_colored(
+                                        ui,
+                                        "Redact",
+                                        "Cover this region with a blackout bar",
+                                        theme::danger_red(),
+                                    ) {
+                                        act_redact = true;
+                                    }
+                                    if crate::components::pill_button(
+                                        ui,
+                                        "Crop",
+                                        "Crop the image to this region",
+                                    ) {
+                                        act_crop = true;
+                                    }
+                                    if crate::components::pill_button(
+                                        ui,
+                                        "Clear",
+                                        "Clear selection region",
+                                    ) {
+                                        act_clear = true;
+                                    }
+                                });
+                            });
+                        });
+                    if act_copy_txt {
+                        self.copy_text_in_region();
+                    }
+                    if act_redact {
+                        let n = self.editor.add_redactions(&[region], qs_doc::BlurMode::Solid);
+                        self.editor.set_region(None);
+                        if n > 0 {
+                            self.touch();
+                            self.show_toast("Redacted selection");
+                        }
+                    }
+                    if act_crop {
+                        self.editor.set_view(region.normalized());
+                        self.editor.set_region(None);
+                        self.touch();
+                        self.show_toast("Cropped to selection");
+                    }
+                    if act_clear {
+                        self.editor.set_region(None);
+                        self.touch();
+                    }
                 }
 
                 // 5d. Marquee preview while dragging on empty canvas

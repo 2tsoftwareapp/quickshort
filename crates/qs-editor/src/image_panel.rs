@@ -31,7 +31,7 @@ fn section(ui: &mut egui::Ui, title: &str) {
 }
 
 /// Draw the panel contents; returns true when the document changed.
-pub fn render(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
+pub fn render(ui: &mut egui::Ui, editor: &mut Editor, prefs: &mut crate::prefs::AppPrefs) -> bool {
     let mut changed = false;
     // Paint bucket tolerance only makes sense while that tool (or one of its
     // fills) is in play, and it is a style knob, not a document change.
@@ -77,6 +77,39 @@ pub fn render(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
         });
         ui.add_space(space::MD as f32);
     }
+    if let Some(qs_doc::ObjectKind::Step { center, radius, rgb, .. }) =
+        editor.selected_object().map(|o| o.kind.clone())
+    {
+        components::card(ui, |ui| {
+            section(ui, "Step badge");
+            if components::button(
+                ui,
+                "Add step caption",
+                components::ButtonVariant::Tonal,
+                "Place an editable pill label right beside this step badge",
+            )
+            .clicked()
+            {
+                let pos = qs_doc::PointF::new(center.x + radius + 10.0, center.y - 10.0);
+                let mut st = editor.style.text.clone();
+                st.px = 14.0;
+                st.bold = true;
+                st.rgb = qs_edit::contrast(rgb);
+                editor.add_step_caption(
+                    pos,
+                    "Step note",
+                    st,
+                    qs_doc::Fill::Solid { rgb, alpha: 0.94 },
+                );
+                changed = true;
+            }
+        });
+        ui.add_space(space::MD as f32);
+    }
+    components::card(ui, |ui| {
+        changed |= beautify_ui(ui, editor);
+    });
+    ui.add_space(space::MD as f32);
     components::card(ui, |ui| {
         section(ui, "Transform");
         let cmds = [
@@ -100,8 +133,120 @@ pub fn render(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
     });
     ui.add_space(space::MD as f32);
     components::card(ui, |ui| {
-        changed |= effects_ui(ui, editor);
+        changed |= effects_ui(ui, editor, prefs);
     });
+    changed
+}
+
+const BG_PRESETS: &[(&str, u32, u32)] = &[
+    ("Ocean", 0x2563EB, 0x06B6D4),
+    ("Sunset", 0xF97316, 0xEC4899),
+    ("Lavender", 0x6366F1, 0xA855F7),
+    ("Emerald", 0x059669, 0x14B8A6),
+    ("Slate", 0x334155, 0x0F172A),
+    ("Peach", 0xFB7185, 0xFBBF24),
+];
+
+/// 1-click Beautify card: gradient backdrop presets + auto rounded corners &
+/// soft drop shadow + padding slider.
+fn beautify_ui(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
+    section(ui, "Beautify");
+    let mut effects = editor.doc().effects.clone();
+    let active_bg = effects.background;
+
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = egui::Vec2::new(6.0, 6.0);
+        // "Off" chip
+        let off_sel = active_bg.is_none();
+        let (off_r, off_resp) =
+            ui.allocate_exact_size(egui::Vec2::splat(24.0), egui::Sense::click());
+        ui.painter().rect_filled(
+            off_r,
+            egui::CornerRadius::same(6),
+            theme::bg_inspector_top(),
+        );
+        ui.painter().line_segment(
+            [off_r.left_bottom() + egui::Vec2::new(4.0, -4.0), off_r.right_top() + egui::Vec2::new(-4.0, 4.0)],
+            egui::Stroke::new(1.4, theme::danger_red()),
+        );
+        ui.painter().rect_stroke(
+            off_r,
+            egui::CornerRadius::same(6),
+            egui::Stroke::new(
+                if off_sel { 1.75 } else { 1.0 },
+                if off_sel { theme::accent_blue() } else { theme::border_subtle() },
+            ),
+            egui::StrokeKind::Inside,
+        );
+        if off_resp.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        if off_resp.on_hover_text("No background").clicked() {
+            effects.background = None;
+        }
+
+        for &(name, ca, cb) in BG_PRESETS {
+            let sel = active_bg.is_some_and(|b| b.color_a == ca && b.color_b == cb);
+            let (r, resp) =
+                ui.allocate_exact_size(egui::Vec2::splat(24.0), egui::Sense::click());
+            let c1 = egui::Color32::from_rgb((ca >> 16) as u8, (ca >> 8) as u8, ca as u8);
+            let c2 = egui::Color32::from_rgb((cb >> 16) as u8, (cb >> 8) as u8, cb as u8);
+            theme::paint_rounded_v_gradient(
+                ui.painter(),
+                r,
+                egui::CornerRadius::same(6),
+                c1,
+                c2,
+            );
+            ui.painter().rect_stroke(
+                r,
+                egui::CornerRadius::same(6),
+                egui::Stroke::new(
+                    if sel { 2.0 } else { 1.0 },
+                    if sel { theme::accent_blue() } else { egui::Color32::from_black_alpha(36) },
+                ),
+                egui::StrokeKind::Inside,
+            );
+            if resp.hovered() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            if resp.on_hover_text(format!("{name} gradient")).clicked() {
+                let pad = effects.background.map_or(48.0, |b| b.padding);
+                effects.background = Some(qs_doc::BackgroundEffect {
+                    padding: pad,
+                    color_a: ca,
+                    color_b: cb,
+                });
+                // Auto-apply clean rounded corners & soft shadow if not set yet.
+                if effects.border.is_none() {
+                    effects.border = Some(qs_doc::BorderEffect {
+                        width: 0.0,
+                        color: 0,
+                        radius: 12.0,
+                        inset: true,
+                    });
+                }
+                if effects.shadow.is_none() {
+                    effects.shadow = Some(qs_doc::ShadowEffect {
+                        blur_radius: 18.0,
+                        offset: qs_doc::PointF::new(0.0, 10.0),
+                        opacity: 0.35,
+                        color: 0xFF00_0000,
+                    });
+                }
+            }
+        }
+    });
+
+    if let Some(bg) = &mut effects.background {
+        ui.add_space(space::XS as f32);
+        components::slider_row(ui, "Padding", &mut bg.padding, 16.0..=160.0, " px", 0);
+    }
+
+    let changed = editor.preview_effects(effects);
+    if !ui.input(|i| i.pointer.any_down()) && !ui.ctx().egui_wants_keyboard_input() {
+        editor.finish_effects();
+    }
     changed
 }
 
@@ -250,7 +395,7 @@ fn anchor_label(a: qs_doc::Anchor) -> &'static str {
     }
 }
 
-fn effects_ui(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
+fn effects_ui(ui: &mut egui::Ui, editor: &mut Editor, prefs: &mut crate::prefs::AppPrefs) -> bool {
     section(ui, "Effects");
     let mut effects = editor.doc().effects.clone();
     toggle(ui, "Border", &mut effects.border);
@@ -275,38 +420,6 @@ fn effects_ui(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
             color(ui, "Color", &mut s.color);
         });
     }
-    toggle(ui, "Color adjustments", &mut effects.color_adjust);
-    if let Some(c) = &mut effects.color_adjust {
-        components::effect_group(ui, |ui| {
-            let mut br = (c.brightness * 100.0).round();
-            if components::slider_row(ui, "Brightness", &mut br, -100.0..=100.0, "%", 0) {
-                c.brightness = (br / 100.0).clamp(-1.0, 1.0);
-            }
-            let mut ct = (c.contrast * 100.0).round();
-            if components::slider_row(ui, "Contrast", &mut ct, -100.0..=100.0, "%", 0) {
-                c.contrast = (ct / 100.0).clamp(-1.0, 1.0);
-            }
-            let mut sat = (c.saturation * 100.0).round();
-            if components::slider_row(ui, "Saturation", &mut sat, 0.0..=200.0, "%", 0) {
-                c.saturation = (sat / 100.0).clamp(0.0, 2.0);
-            }
-        });
-    }
-    toggle(ui, "Colorize", &mut effects.colorize);
-    if let Some(cz) = &mut effects.colorize {
-        components::effect_group(ui, |ui| {
-            rgb_color(ui, "Replace", &mut cz.target);
-            rgb_color(ui, "With", &mut cz.replacement);
-            let mut tol = cz.tolerance as f32;
-            if components::slider_row(ui, "Tolerance", &mut tol, 0.0..=128.0, "", 0) {
-                cz.tolerance = tol.round().clamp(0.0, 128.0) as u8;
-            }
-            let mut st_pct = (cz.strength * 100.0).round();
-            if components::slider_row(ui, "Strength", &mut st_pct, 0.0..=100.0, "%", 0) {
-                cz.strength = (st_pct / 100.0).clamp(0.0, 1.0);
-            }
-        });
-    }
     let mut filter = effects.color_filter.unwrap_or(qs_doc::ColorFilter::None);
     components::prop_row(ui, "Filter", filter != qs_doc::ColorFilter::None, |ui| {
         egui::ComboBox::from_id_salt("effect_color_filter")
@@ -320,87 +433,146 @@ fn effects_ui(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
             });
     });
     effects.color_filter = (filter != qs_doc::ColorFilter::None).then_some(filter);
-    toggle(ui, "Page curl", &mut effects.page_curl);
-    if let Some(pc) = &mut effects.page_curl {
-        components::effect_group(ui, |ui| {
-            components::prop_row(ui, "Corner", true, |ui| {
-                egui::ComboBox::from_id_salt("effect_page_curl_corner")
-                    .width(108.0)
-                    .selected_text(anchor_label(pc.corner))
-                    .show_ui(ui, |ui| {
-                        use qs_doc::Anchor::*;
-                        for a in [TopLeft, TopRight, BottomLeft, BottomRight] {
-                            ui.selectable_value(&mut pc.corner, a, anchor_label(a));
-                        }
-                    });
-            });
-            components::slider_row(ui, "Size", &mut pc.size, 8.0..=160.0, " px", 0);
-            let mut sh_pct = (pc.shadow * 100.0).round();
-            if components::slider_row(ui, "Shadow", &mut sh_pct, 0.0..=100.0, "%", 0) {
-                pc.shadow = (sh_pct / 100.0).clamp(0.0, 1.0);
-            }
-        });
-    }
-    toggle(ui, "Reflection", &mut effects.reflection);
-    if let Some(rf) = &mut effects.reflection {
-        components::effect_group(ui, |ui| {
-            components::slider_row(ui, "Height", &mut rf.height, 8.0..=256.0, " px", 0);
-            let mut op_pct = (rf.opacity * 100.0).round();
-            if components::slider_row(ui, "Opacity", &mut op_pct, 0.0..=100.0, "%", 0) {
-                rf.opacity = (op_pct / 100.0).clamp(0.0, 1.0);
-            }
-            components::slider_row(ui, "Gap", &mut rf.gap, 0.0..=32.0, " px", 0);
-        });
-    }
-    toggle(ui, "Watermark", &mut effects.watermark);
-    if let Some(w) = &mut effects.watermark {
-        components::effect_group(ui, |ui| {
-            ui.add(
-                egui::TextEdit::singleline(&mut w.text)
-                    .hint_text("Watermark text…")
-                    .desired_width(f32::INFINITY),
-            );
-            components::prop_row(ui, "Position", true, |ui| {
-                egui::ComboBox::from_id_salt("effect_watermark_pos")
-                    .width(108.0)
-                    .selected_text(anchor_label(w.anchor))
-                    .show_ui(ui, |ui| {
-                        use qs_doc::Anchor::*;
-                        for a in [
-                            TopLeft, Top, TopRight, Left, Center, Right, BottomLeft, Bottom,
-                            BottomRight,
-                        ] {
-                            ui.selectable_value(&mut w.anchor, a, anchor_label(a));
-                        }
-                    });
-            });
-            components::slider_row(ui, "Size", &mut w.font_scale, 0.25..=6.0, "×", 2);
-            let mut op_pct = (w.opacity * 100.0).round();
-            if components::slider_row(ui, "Opacity", &mut op_pct, 0.0..=100.0, "%", 0) {
-                w.opacity = (op_pct / 100.0).clamp(0.0, 1.0);
-            }
-            color(ui, "Color", &mut w.color);
-        });
-    }
-    toggle(ui, "Torn edge", &mut effects.edge);
-    if let Some(e) = &mut effects.edge {
-        components::effect_group(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing.x = space::XS as f32;
-                components::toggle_chip(ui, &mut e.top, "Top");
-                components::toggle_chip(ui, &mut e.bottom, "Bottom");
-                components::toggle_chip(ui, &mut e.left, "Left");
-                components::toggle_chip(ui, &mut e.right, "Right");
-            });
-            components::slider_row(ui, "Depth", &mut e.amplitude, 0.0..=128.0, " px", 0);
-            let mut seed = e.seed;
-            components::prop_row(ui, "Seed", true, |ui| {
-                if ui.add(egui::DragValue::new(&mut seed)).changed() {
-                    e.seed = seed;
+
+    let has_more_active = effects.color_adjust.is_some()
+        || effects.colorize.is_some()
+        || effects.page_curl.is_some()
+        || effects.reflection.is_some()
+        || effects.watermark.is_some()
+        || effects.edge.is_some();
+    ui.add_space(space::XS as f32);
+    egui::CollapsingHeader::new(
+        RichText::new("More effects")
+            .size(qs_theme::font::SMALL as f32)
+            .color(theme::text_secondary()),
+    )
+    .id_salt("inspector_more_effects")
+    .default_open(has_more_active)
+    .show(ui, |ui| {
+        toggle(ui, "Color adjustments", &mut effects.color_adjust);
+        if let Some(c) = &mut effects.color_adjust {
+            components::effect_group(ui, |ui| {
+                let mut br = (c.brightness * 100.0).round();
+                if components::slider_row(ui, "Brightness", &mut br, -100.0..=100.0, "%", 0) {
+                    c.brightness = (br / 100.0).clamp(-1.0, 1.0);
+                }
+                let mut ct = (c.contrast * 100.0).round();
+                if components::slider_row(ui, "Contrast", &mut ct, -100.0..=100.0, "%", 0) {
+                    c.contrast = (ct / 100.0).clamp(-1.0, 1.0);
+                }
+                let mut sat = (c.saturation * 100.0).round();
+                if components::slider_row(ui, "Saturation", &mut sat, 0.0..=200.0, "%", 0) {
+                    c.saturation = (sat / 100.0).clamp(0.0, 2.0);
                 }
             });
-        });
-    }
+        }
+        toggle(ui, "Colorize", &mut effects.colorize);
+        if let Some(cz) = &mut effects.colorize {
+            components::effect_group(ui, |ui| {
+                rgb_color(ui, "Replace", &mut cz.target);
+                rgb_color(ui, "With", &mut cz.replacement);
+                let mut tol = cz.tolerance as f32;
+                if components::slider_row(ui, "Tolerance", &mut tol, 0.0..=128.0, "", 0) {
+                    cz.tolerance = tol.round().clamp(0.0, 128.0) as u8;
+                }
+                let mut st_pct = (cz.strength * 100.0).round();
+                if components::slider_row(ui, "Strength", &mut st_pct, 0.0..=100.0, "%", 0) {
+                    cz.strength = (st_pct / 100.0).clamp(0.0, 1.0);
+                }
+            });
+        }
+        toggle(ui, "Page curl", &mut effects.page_curl);
+        if let Some(pc) = &mut effects.page_curl {
+            components::effect_group(ui, |ui| {
+                components::prop_row(ui, "Corner", true, |ui| {
+                    egui::ComboBox::from_id_salt("effect_page_curl_corner")
+                        .width(108.0)
+                        .selected_text(anchor_label(pc.corner))
+                        .show_ui(ui, |ui| {
+                            use qs_doc::Anchor::*;
+                            for a in [TopLeft, TopRight, BottomLeft, BottomRight] {
+                                ui.selectable_value(&mut pc.corner, a, anchor_label(a));
+                            }
+                        });
+                });
+                components::slider_row(ui, "Size", &mut pc.size, 8.0..=160.0, " px", 0);
+                let mut sh_pct = (pc.shadow * 100.0).round();
+                if components::slider_row(ui, "Shadow", &mut sh_pct, 0.0..=100.0, "%", 0) {
+                    pc.shadow = (sh_pct / 100.0).clamp(0.0, 1.0);
+                }
+            });
+        }
+        toggle(ui, "Reflection", &mut effects.reflection);
+        if let Some(rf) = &mut effects.reflection {
+            components::effect_group(ui, |ui| {
+                components::slider_row(ui, "Height", &mut rf.height, 8.0..=256.0, " px", 0);
+                let mut op_pct = (rf.opacity * 100.0).round();
+                if components::slider_row(ui, "Opacity", &mut op_pct, 0.0..=100.0, "%", 0) {
+                    rf.opacity = (op_pct / 100.0).clamp(0.0, 1.0);
+                }
+                components::slider_row(ui, "Gap", &mut rf.gap, 0.0..=32.0, " px", 0);
+            });
+        }
+        let mut wm_on = effects.watermark.is_some();
+        if components::switch_row(ui, &mut wm_on, "Watermark") {
+            effects.watermark = wm_on.then(|| qs_doc::WatermarkEffect {
+                text: prefs.watermark_text.clone(),
+                ..Default::default()
+            });
+        }
+        if let Some(w) = &mut effects.watermark {
+            components::effect_group(ui, |ui| {
+                let txt_resp = ui.add(
+                    egui::TextEdit::singleline(&mut w.text)
+                        .hint_text("Watermark text…")
+                        .desired_width(f32::INFINITY),
+                );
+                if txt_resp.lost_focus() && w.text != prefs.watermark_text {
+                    prefs.watermark_text = w.text.clone();
+                    prefs.save();
+                }
+                components::prop_row(ui, "Position", true, |ui| {
+                    egui::ComboBox::from_id_salt("effect_watermark_pos")
+                        .width(108.0)
+                        .selected_text(anchor_label(w.anchor))
+                        .show_ui(ui, |ui| {
+                            use qs_doc::Anchor::*;
+                            for a in [
+                                TopLeft, Top, TopRight, Left, Center, Right, BottomLeft, Bottom,
+                                BottomRight,
+                            ] {
+                                ui.selectable_value(&mut w.anchor, a, anchor_label(a));
+                            }
+                        });
+                });
+                components::slider_row(ui, "Size", &mut w.font_scale, 0.25..=6.0, "×", 2);
+                let mut op_pct = (w.opacity * 100.0).round();
+                if components::slider_row(ui, "Opacity", &mut op_pct, 0.0..=100.0, "%", 0) {
+                    w.opacity = (op_pct / 100.0).clamp(0.0, 1.0);
+                }
+                color(ui, "Color", &mut w.color);
+            });
+        }
+        toggle(ui, "Torn edge", &mut effects.edge);
+        if let Some(e) = &mut effects.edge {
+            components::effect_group(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing.x = space::XS as f32;
+                    components::toggle_chip(ui, &mut e.top, "Top");
+                    components::toggle_chip(ui, &mut e.bottom, "Bottom");
+                    components::toggle_chip(ui, &mut e.left, "Left");
+                    components::toggle_chip(ui, &mut e.right, "Right");
+                });
+                components::slider_row(ui, "Depth", &mut e.amplitude, 0.0..=128.0, " px", 0);
+                let mut seed = e.seed;
+                components::prop_row(ui, "Seed", true, |ui| {
+                    if ui.add(egui::DragValue::new(&mut seed)).changed() {
+                        e.seed = seed;
+                    }
+                });
+            });
+        }
+    });
     let changed = editor.preview_effects(effects);
     if !ui.input(|i| i.pointer.any_down()) && !ui.ctx().egui_wants_keyboard_input() { editor.finish_effects(); }
     changed

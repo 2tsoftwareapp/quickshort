@@ -2007,6 +2007,91 @@ impl Editor {
         count
     }
 
+    /// OCR-guided Simplify UI: turns recognized text line rects (optionally
+    /// clipped to a selection region) into clean proportional wireframe bars.
+    pub fn simplify_from_rects(&mut self, rects: &[RectF], clip: Option<RectF>) -> usize {
+        let filtered: Vec<RectF> = rects
+            .iter()
+            .copied()
+            .filter(|r| {
+                let rn = r.normalized();
+                if rn.w < 4.0 || rn.h < 4.0 {
+                    return false;
+                }
+                match clip {
+                    Some(c) => c.normalized().contains(PointF::new(rn.x + rn.w * 0.5, rn.y + rn.h * 0.5)),
+                    None => true,
+                }
+            })
+            .collect();
+        if filtered.is_empty() {
+            return 0;
+        }
+        let count = filtered.len();
+        self.record(|ed| {
+            let mut ids = Vec::with_capacity(count);
+            for r in filtered {
+                let rn = r.normalized();
+                ids.push(ed.doc.push(ObjectKind::Rect {
+                    r: rn,
+                    stroke: Stroke::new(0xD4D4D8, 1.0),
+                    fill: Fill::Solid {
+                        rgb: 0xE4E4E7,
+                        alpha: 0.92,
+                    },
+                    radius: (rn.h * 0.35).clamp(2.0, 6.0),
+                }));
+            }
+            ed.selection = ids;
+        });
+        count
+    }
+
+    /// Place a pill-styled caption right beside a Step badge and select it for editing.
+    pub fn add_step_caption(
+        &mut self,
+        pos: PointF,
+        text: &str,
+        style: TextStyle,
+        fill: Fill,
+    ) -> ObjectId {
+        let mut out_id = ObjectId(0);
+        self.record(|ed| {
+            let id = ed.doc.push(ObjectKind::Text {
+                pos,
+                text: text.to_owned(),
+                style,
+                wrap_w: None,
+                fill,
+            });
+            ed.selection = vec![id];
+            out_id = id;
+        });
+        out_id
+    }
+
+    /// Add one redaction (`Blur`) object per rectangle in a single undo step.
+    pub fn add_redactions(&mut self, rects: &[RectF], mode: qs_doc::BlurMode) -> usize {
+        let valid: Vec<RectF> = rects
+            .iter()
+            .map(|r| r.normalized().inflate(2.0))
+            .filter(|rn| rn.w >= 2.0 && rn.h >= 2.0)
+            .collect();
+        if valid.is_empty() {
+            return 0;
+        }
+        let strength = self.style.blur_strength.max(12.0);
+        let count = valid.len();
+        self.record(|ed| {
+            let mut ids = Vec::with_capacity(count);
+            for r in valid {
+                ids.push(ed.doc.push(ObjectKind::Blur { r, mode, strength }));
+            }
+            ed.selection = ids;
+        });
+        count
+    }
+
     /// Paint bucket: fill the region reachable from `seed` with the current
     /// colour, as one undo step.
     pub fn fill_at(&mut self, seed: PointF) -> bool {
