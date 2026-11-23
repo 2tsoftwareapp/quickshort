@@ -342,29 +342,19 @@ impl Stack {
 
     /// Queue the fly-in; `from` is the selection rect in window-local
     /// logical coords. `rm` (reduce motion) lands instantly.
-    pub fn land(
-        &mut self,
-        img: RgbaImage,
-        kind: ShotKind,
-        path: Option<PathBuf>,
-        from: FRect,
-        rm: bool,
-        scale: f64,
-        dur_s: Option<u64>,
-        shared: Option<crate::share::ShareEntry>,
-    ) {
+    pub fn land(&mut self, l: Land, from: FRect, rm: bool, scale: f64) {
         self.touch(); // a landing shot is activity — reveal the stack
-        let img = Rc::new(img);
-        let (thumb, tw, th) = make_thumb(&img, kind, scale);
+        let img = Rc::new(l.img);
+        let (thumb, tw, th) = make_thumb(&img, l.kind, scale);
         let shot = Shot {
             img: img.clone(),
             thumb,
             tw,
             th,
-            path,
-            kind,
-            dur_s,
-            shared,
+            path: l.path,
+            kind: l.kind,
+            dur_s: l.dur_s,
+            shared: l.shared,
         };
         if rm {
             self.shots.push(shot);
@@ -1094,10 +1084,7 @@ impl Stack {
                 idx: i,
                 id: MENU_COPY,
             }),
-            (Key::Back, _) => match self.key_target(n) {
-                Some(i) => Some(ChromeCmd::Remove(i)),
-                None => None,
-            },
+            (Key::Back, _) => self.key_target(n).map(ChromeCmd::Remove),
             _ => None,
         }
     }
@@ -1792,7 +1779,7 @@ impl Stack {
         }
 
         // context menu floats above everything in the layer
-        if self.menu.is_some() {
+        if let Some(m) = self.menu.as_ref() {
             if let Some(p) = self.menu_rect(lw, lh) {
                 // dim everything behind the menu slightly so it pops
                 // (backdrop clicks close it — hit() handles routing)
@@ -1804,7 +1791,6 @@ impl Stack {
                     0.96,
                     Some(qs_theme::pal().border),
                 );
-                let m = self.menu.as_ref().unwrap();
                 for (i, &(id, enabled)) in m.rows.iter().enumerate() {
                     let Some(rr) = self.menu_row_rect(i, lw, lh) else {
                         continue;
@@ -1892,8 +1878,11 @@ pub struct Chrome {
     pos: String,
     /// builds an event sink for a window id — the host wires its
     /// EventLoopProxy through this so view callbacks become HostEvents
-    pub sink: Box<dyn Fn(winit::window::WindowId) -> Rc<dyn Fn(ChromeEv)>>,
+    pub sink: Sink,
 }
+
+/// builds an event sink for a window id — see `Chrome::sink`
+pub type Sink = Box<dyn Fn(winit::window::WindowId) -> Rc<dyn Fn(ChromeEv)>>;
 
 /// Per-call inputs for `land` — keeps the signature readable.
 pub struct Land {
@@ -1913,11 +1902,7 @@ pub struct Land {
 }
 
 impl Chrome {
-    pub fn new(
-        accent: u32,
-        pos: &str,
-        sink: Box<dyn Fn(winit::window::WindowId) -> Rc<dyn Fn(ChromeEv)>>,
-    ) -> Self {
+    pub fn new(accent: u32, pos: &str, sink: Sink) -> Self {
         Self {
             wins: Vec::new(),
             accent,
@@ -1928,7 +1913,11 @@ impl Chrome {
 
     /// Fly the shot into the stack. On failure the `Land` is handed back
     /// so the host can fall back to the quick-access card.
-    pub fn land(&mut self, el: &winit::event_loop::ActiveEventLoop, l: Land) -> Result<(), Land> {
+    pub fn land(
+        &mut self,
+        el: &winit::event_loop::ActiveEventLoop,
+        l: Land,
+    ) -> Result<(), Box<Land>> {
         land(self, el, l)
     }
 
@@ -2073,10 +2062,10 @@ fn mon_key(m: &MonitorHandle) -> String {
 
 /// `Chrome::land` — the shared entry. Err hands the `Land` back intact
 /// so the host can fall back to the quick-access card.
-fn land(chrome: &mut Chrome, el: &ActiveEventLoop, l: Land) -> Result<(), Land> {
+fn land(chrome: &mut Chrome, el: &ActiveEventLoop, l: Land) -> Result<(), Box<Land>> {
     let Some(mon) = monitor_for(el, l.sel) else {
         eprintln!("chrome land: no monitor for selection {:?}", l.sel);
-        return Err(l);
+        return Err(Box::new(l));
     };
     let key = mon_key(&mon);
     if chrome.wins.iter().all(|w| w.mon_key() != key) {
@@ -2084,7 +2073,7 @@ fn land(chrome: &mut Chrome, el: &ActiveEventLoop, l: Land) -> Result<(), Land> 
             Ok(f) => f,
             Err(e) => {
                 eprintln!("chrome land: system font: {e:#}");
-                return Err(l);
+                return Err(Box::new(l));
             }
         });
         let corner = Corner::from_popup_pos(chrome.pos());
@@ -2092,7 +2081,7 @@ fn land(chrome: &mut Chrome, el: &ActiveEventLoop, l: Land) -> Result<(), Land> 
             Ok(w) => w,
             Err(e) => {
                 eprintln!("chrome win: {e:#}");
-                return Err(l);
+                return Err(Box::new(l));
             }
         };
         // the sink binds the window id, which only exists after creation
@@ -2240,6 +2229,25 @@ mod tests {
         })
     }
 
+    /// Land a shot directly (no native flight) at scale 2 — the shape
+    /// every stack test shares.
+    fn tland(st: &mut Stack, img: RgbaImage, kind: ShotKind, path: Option<PathBuf>, from: FRect) {
+        st.land(
+            Land {
+                img,
+                kind,
+                path,
+                sel: None,
+                instant: false,
+                dur_s: None,
+                shared: None,
+            },
+            from,
+            true,
+            2.0,
+        );
+    }
+
     /// Renders a 3-shot stack + count chip to /tmp/qs-chrome.png — run
     /// `cargo test -p qs-app chrome` then eyeball the PNG.
     #[test]
@@ -2250,7 +2258,8 @@ mod tests {
             (ShotKind::Shared, [90, 40, 60]),
             (ShotKind::Record, [50, 80, 50]),
         ] {
-            st.land(
+            tland(
+                &mut st,
                 shot_img(1200, 800, rgb),
                 kind,
                 None,
@@ -2260,10 +2269,6 @@ mod tests {
                     w: 400.0,
                     h: 300.0,
                 },
-                true,
-                2.0,
-                None,
-                None,
             );
         }
         let (lw, lh) = (1440.0, 900.0);
@@ -2283,11 +2288,7 @@ mod tests {
             let p = buf[(y as usize) * 2880 + x as usize];
             let a = ((p >> 24) & 0xFF) as u32;
             let unprem = |c: u32| -> u8 {
-                if a == 0 {
-                    0
-                } else {
-                    ((c * 255 / a).min(255)) as u8
-                }
+                (c * 255).checked_div(a).map_or(0, |v| v.min(255)) as u8
             };
             Rgba([
                 unprem(p & 0xFF),
@@ -2322,11 +2323,7 @@ mod tests {
             let p = buf[(y as usize) * 2880 + x as usize];
             let a = ((p >> 24) & 0xFF) as u32;
             let unprem = |c: u32| -> u8 {
-                if a == 0 {
-                    0
-                } else {
-                    ((c * 255 / a).min(255)) as u8
-                }
+                (c * 255).checked_div(a).map_or(0, |v| v.min(255)) as u8
             };
             Rgba([
                 unprem(p & 0xFF),
@@ -2344,7 +2341,8 @@ mod tests {
     fn idle_hides_to_single_sliver() {
         let mut st = Stack::new(Corner::BR);
         for i in 0..3u8 {
-            st.land(
+            tland(
+                &mut st,
                 shot_img(1200, 800, [40 + i * 40, 60, 90]),
                 ShotKind::Saved,
                 None,
@@ -2354,10 +2352,6 @@ mod tests {
                     w: 400.0,
                     h: 300.0,
                 },
-                true,
-                2.0,
-                None,
-                None,
             );
         }
         // wind the idle clock back past the threshold
@@ -2403,11 +2397,7 @@ mod tests {
             let p = buf[(y as usize) * 2880 + x as usize];
             let a = ((p >> 24) & 0xFF) as u32;
             let unprem = |c: u32| -> u8 {
-                if a == 0 {
-                    0
-                } else {
-                    ((c * 255 / a).min(255)) as u8
-                }
+                (c * 255).checked_div(a).map_or(0, |v| v.min(255)) as u8
             };
             Rgba([
                 unprem(p & 0xFF),
@@ -2425,7 +2415,8 @@ mod tests {
     #[test]
     fn hidden_thumbs_dont_wrap_to_left_edge() {
         let mut st = Stack::new(Corner::BR);
-        st.land(
+        tland(
+            &mut st,
             shot_img(1200, 800, [90, 60, 40]),
             ShotKind::Saved,
             None,
@@ -2435,10 +2426,6 @@ mod tests {
                 w: 400.0,
                 h: 300.0,
             },
-            true,
-            2.0,
-            None,
-            None,
         );
         st.hide_t = 1.0; // fully slid off the right edge
         let (bw, bh) = (2880usize, 1800usize);
@@ -2474,7 +2461,8 @@ mod tests {
     fn hover_survives_fan_sweep() {
         let mut st = Stack::new(Corner::TR);
         for i in 0..3u8 {
-            st.land(
+            tland(
+                &mut st,
                 shot_img(1200, 800, [40 + i * 40, 60, 90]),
                 ShotKind::Saved,
                 None,
@@ -2484,10 +2472,6 @@ mod tests {
                     w: 400.0,
                     h: 300.0,
                 },
-                true,
-                2.0,
-                None,
-                None,
             );
         }
         // cursor parked inside the collapsed cascade's low edge — a spot
@@ -2512,7 +2496,8 @@ mod tests {
     #[test]
     fn thumb_click_opens_editor() {
         let mut st = Stack::new(Corner::TR);
-        st.land(
+        tland(
+            &mut st,
             shot_img(1200, 800, [40, 60, 90]),
             ShotKind::Saved,
             None,
@@ -2522,10 +2507,6 @@ mod tests {
                 w: 400.0,
                 h: 300.0,
             },
-            true,
-            2.0,
-            None,
-            None,
         );
         let r = st.thumb_rect(0, 1440.0, 900.0);
         // a click resolves on release — press alone must not open the
@@ -2568,7 +2549,8 @@ mod tests {
     #[test]
     fn lightbox_keys_open_and_share() {
         let mut st = Stack::new(Corner::TR);
-        st.land(
+        tland(
+            &mut st,
             shot_img(1200, 800, [40, 60, 90]),
             ShotKind::Saved,
             None,
@@ -2578,10 +2560,6 @@ mod tests {
                 w: 400.0,
                 h: 300.0,
             },
-            true,
-            2.0,
-            None,
-            None,
         );
         // thumb clicks open the editor now; the preview comes from Space
         st.open_lightbox(0);
@@ -2611,7 +2589,8 @@ mod tests {
     #[test]
     fn thumb_drag_emits_drag_begin_not_lightbox() {
         let mut st = Stack::new(Corner::TR);
-        st.land(
+        tland(
+            &mut st,
             shot_img(1200, 800, [40, 60, 90]),
             ShotKind::Saved,
             None,
@@ -2621,10 +2600,6 @@ mod tests {
                 w: 400.0,
                 h: 300.0,
             },
-            true,
-            2.0,
-            None,
-            None,
         );
         let r = st.thumb_rect(0, 1440.0, 900.0);
         let (cx, cy) = (r.x + r.w / 2.0, r.y + r.h / 2.0);
@@ -2670,7 +2645,8 @@ mod tests {
         let (lw, lh) = (1440.0, 900.0);
         let mut st = Stack::new(Corner::TR);
         for i in 0..3u8 {
-            st.land(
+            tland(
+                &mut st,
                 shot_img(1200, 800, [40 + i * 40, 60, 90]),
                 ShotKind::Saved,
                 None,
@@ -2680,10 +2656,6 @@ mod tests {
                     w: 400.0,
                     h: 300.0,
                 },
-                true,
-                2.0,
-                None,
-                None,
             );
         }
         // no pill while the stack sits collapsed
@@ -2726,7 +2698,8 @@ mod tests {
         // also clears a lightbox/pinned state mid-flight
         let mut st = Stack::new(Corner::TR);
         for _ in 0..2 {
-            st.land(
+            tland(
+                &mut st,
                 shot_img(1200, 800, [40, 60, 90]),
                 ShotKind::Saved,
                 None,
@@ -2736,10 +2709,6 @@ mod tests {
                     w: 1.0,
                     h: 1.0,
                 },
-                true,
-                2.0,
-                None,
-                None,
             );
         }
         st.pinned = true;
@@ -2757,7 +2726,8 @@ mod tests {
         let (lw, lh) = (1440.0, 900.0);
         let mut st = Stack::new(Corner::TR);
         for i in 0..2u8 {
-            st.land(
+            tland(
+                &mut st,
                 shot_img(1200, 800, [40 + i * 40, 60, 90]),
                 ShotKind::Saved,
                 Some(PathBuf::from(format!("/tmp/shot{i}.png"))),
@@ -2767,10 +2737,6 @@ mod tests {
                     w: 400.0,
                     h: 300.0,
                 },
-                true,
-                2.0,
-                None,
-                None,
             );
         }
         let r = st.thumb_rect(0, lw, lh);
@@ -2821,7 +2787,8 @@ mod tests {
 
         // a disabled row never emits — Reveal needs a saved path
         let mut st = Stack::new(Corner::TR);
-        st.land(
+        tland(
+            &mut st,
             shot_img(1200, 800, [40, 60, 90]),
             ShotKind::Copied,
             None,
@@ -2831,10 +2798,6 @@ mod tests {
                 w: 400.0,
                 h: 300.0,
             },
-            true,
-            2.0,
-            None,
-            None,
         );
         let r = st.thumb_rect(0, lw, lh);
         st.pointer(

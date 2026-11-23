@@ -20,7 +20,7 @@ pub struct ScreenCaptureKit;
 fn grab(display: &SCDisplay, shows_cursor: bool) -> Result<CapturedFrame> {
     let frame = display.frame();
     let filter = SCContentFilter::create()
-        .with_display(&display)
+        .with_display(display)
         .with_excluding_windows(&[])
         .build()
         .context("content filter")?;

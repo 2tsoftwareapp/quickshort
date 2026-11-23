@@ -81,17 +81,10 @@ impl Painter<'_> {
         }
     }
 
-    /// Stroke a segment (logical coords) with SDF coverage.
-    pub(crate) fn seg(
-        &self,
-        cv: &mut Canvas,
-        x0: f64,
-        y0: f64,
-        x1: f64,
-        y1: f64,
-        w: f64,
-        rgb: u32,
-    ) {
+    /// Stroke a segment `a → b` (logical coords) with SDF coverage.
+    pub(crate) fn seg(&self, cv: &mut Canvas, a: (f64, f64), b: (f64, f64), w: f64, rgb: u32) {
+        let (x0, y0) = a;
+        let (x1, y1) = b;
         let s = self.scale;
         let (bx0, by0) = (x0.min(x1) - w - 1.0, y0.min(y1) - w - 1.0);
         let (bx1, by1) = (x0.max(x1) + w + 1.0, y0.max(y1) + w + 1.0);
@@ -294,7 +287,7 @@ impl Painter<'_> {
                     (x1 - len, y1, x1, y1),
                     (x1, y1 - len, x1, y1),
                 ] {
-                    self.seg(cv, ax, ay, bx, by, w, rgb);
+                    self.seg(cv, (ax, ay), (bx, by), w, rgb);
                 }
             }
             Glyph::Gear => {
@@ -302,15 +295,7 @@ impl Painter<'_> {
                 for i in 0..8 {
                     let a = i as f64 * std::f64::consts::FRAC_PI_4;
                     let (dx, dy) = (a.cos(), a.sin());
-                    self.seg(
-                        cv,
-                        cx + dx * s * 0.36,
-                        cy + dy * s * 0.36,
-                        cx + dx * s * 0.48,
-                        cy + dy * s * 0.48,
-                        w * 1.3,
-                        rgb,
-                    );
+                    self.seg(cv, (cx + dx * s * 0.36, cy + dy * s * 0.36), (cx + dx * s * 0.48, cy + dy * s * 0.48), w * 1.3, rgb);
                 }
                 self.circle(cv, cx, cy, s * 0.28, w, rgb);
             }
@@ -382,51 +367,19 @@ impl Painter<'_> {
                     rgb,
                     1.0,
                 );
-                self.seg(cv, cx, cy - s * 0.06, cx, cy + s * 0.24, w * 1.4, rgb);
+                self.seg(cv, (cx, cy - s * 0.06), (cx, cy + s * 0.24), w * 1.4, rgb);
             }
             Glyph::Text => {
                 // three staggered text lines — reads as a document
                 for (i, frac) in [0.62_f64, 0.84, 0.5].iter().enumerate() {
                     let ly = y + s * (0.28 + i as f64 * 0.22);
-                    self.seg(
-                        cv,
-                        x + s * 0.16,
-                        ly,
-                        x + s * (0.16 + frac),
-                        ly,
-                        w * 1.4,
-                        rgb,
-                    );
+                    self.seg(cv, (x + s * 0.16, ly), (x + s * (0.16 + frac), ly), w * 1.4, rgb);
                 }
             }
             Glyph::Bolt => {
-                self.seg(
-                    cv,
-                    x + s * 0.58,
-                    y + s * 0.06,
-                    x + s * 0.3,
-                    y + s * 0.55,
-                    w * 1.4,
-                    rgb,
-                );
-                self.seg(
-                    cv,
-                    x + s * 0.3,
-                    y + s * 0.55,
-                    x + s * 0.55,
-                    y + s * 0.55,
-                    w * 1.4,
-                    rgb,
-                );
-                self.seg(
-                    cv,
-                    x + s * 0.55,
-                    y + s * 0.55,
-                    x + s * 0.4,
-                    y + s * 0.94,
-                    w * 1.4,
-                    rgb,
-                );
+                self.seg(cv, (x + s * 0.58, y + s * 0.06), (x + s * 0.3, y + s * 0.55), w * 1.4, rgb);
+                self.seg(cv, (x + s * 0.3, y + s * 0.55), (x + s * 0.55, y + s * 0.55), w * 1.4, rgb);
+                self.seg(cv, (x + s * 0.55, y + s * 0.55), (x + s * 0.4, y + s * 0.94), w * 1.4, rgb);
             }
             Glyph::Display => {
                 let ins = s * 0.12;
@@ -438,24 +391,8 @@ impl Painter<'_> {
                     1.0,
                     w,
                 );
-                self.seg(
-                    cv,
-                    x + s * 0.5,
-                    y + s * 0.68,
-                    x + s * 0.5,
-                    y + s * 0.86,
-                    w,
-                    rgb,
-                );
-                self.seg(
-                    cv,
-                    x + s * 0.32,
-                    y + s * 0.86,
-                    x + s * 0.68,
-                    y + s * 0.86,
-                    w,
-                    rgb,
-                );
+                self.seg(cv, (x + s * 0.5, y + s * 0.68), (x + s * 0.5, y + s * 0.86), w, rgb);
+                self.seg(cv, (x + s * 0.32, y + s * 0.86), (x + s * 0.68, y + s * 0.86), w, rgb);
             }
         }
     }
@@ -603,8 +540,8 @@ pub(crate) fn dropdown_btn(
     p.text(cv, r.0 + 10.0, r.1 + 20.0, 12.0, label, pal().fg);
     // chevron ⌄
     let (mx, my) = (r.0 + r.2 - 16.0, r.1 + r.3 / 2.0 - 2.0);
-    p.seg(cv, mx, my, mx + 4.0, my + 5.0, 1.6, pal().fg_dim);
-    p.seg(cv, mx + 8.0, my, mx + 4.0, my + 5.0, 1.6, pal().fg_dim);
+    p.seg(cv, (mx, my), (mx + 4.0, my + 5.0), 1.6, pal().fg_dim);
+    p.seg(cv, (mx + 8.0, my), (mx + 4.0, my + 5.0), 1.6, pal().fg_dim);
 }
 
 pub(crate) fn ghost(
@@ -636,24 +573,8 @@ pub(crate) fn ghost(
 pub(crate) fn check_box(p: &Painter, cv: &mut Canvas, x: f64, y: f64, on: bool, hover: bool) {
     if on {
         p.fill(cv, (x, y, 20.0, 20.0), 5.0, p.accent_deep, 1.0);
-        p.seg(
-            cv,
-            x + 5.5,
-            y + 10.5,
-            x + 9.0,
-            y + 14.0,
-            2.0,
-            pal().on_accent,
-        );
-        p.seg(
-            cv,
-            x + 9.0,
-            y + 14.0,
-            x + 15.0,
-            y + 6.5,
-            2.0,
-            pal().on_accent,
-        );
+        p.seg(cv, (x + 5.5, y + 10.5), (x + 9.0, y + 14.0), 2.0, pal().on_accent);
+        p.seg(cv, (x + 9.0, y + 14.0), (x + 15.0, y + 6.5), 2.0, pal().on_accent);
     } else {
         p.fill(cv, (x, y, 20.0, 20.0), 5.0, pal().on_accent, 1.0);
         p.stroke(
@@ -735,6 +656,7 @@ pub(crate) fn disc(cv: &mut Canvas, cx: f64, cy: f64, r: f64, rgb: u32, a: f64) 
 }
 
 /// Circle outline of stroke width `w`.
+#[cfg(test)]
 pub(crate) fn ring(cv: &mut Canvas, cx: f64, cy: f64, r: f64, w: f64, rgb: u32, a: f64) {
     let s = cv.scale;
     let pad = r + w + 2.0;

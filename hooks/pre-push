@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Gate: nothing leaves this machine with a broken or dirty test suite.
+# Runs `cargo test --workspace`; the push is rejected when any test fails.
+#
+# Note: tests compile for the host platform only — Linux/Windows-only code
+# paths are not covered on macOS. Cross-platform verification is CI's job
+# (see .github/workflows/verify.yml).
+set -euo pipefail
+
+echo "pre-push: cargo test --workspace"
+if ! cargo test --workspace --quiet; then
+    echo >&2 "pre-push: tests failed — push rejected. Fix the tests, then push again."
+    exit 1
+fi

@@ -38,6 +38,7 @@ pub fn with_font<T>(
     static MONO_REG: Slot = OnceLock::new();
     static MONO_BOLD: Slot = OnceLock::new();
 
+    /// A bundled font that fails to parse is a build-time bug — panic.
     fn load(slot: &'static OnceLock<FontVec>, bytes: &'static [u8], name: &str) -> &'static FontVec {
         slot.get_or_init(|| {
             FontVec::try_from_vec(bytes.to_vec())

@@ -66,13 +66,19 @@ pub fn try_delegate(req: Request) -> bool {
 }
 
 /// Listen for `--capture` / `--capture-full` relays from hotkey spawns.
+/// The socket dir gets mode 0700 and the socket 0600: when the path falls
+/// back to `/tmp/quickshort`, other local users can't connect or squat the
+/// name — otherwise anyone on a shared box could trigger capture overlays.
 pub fn spawn_listener(proxy: EventLoopProxy<HostEvent>) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
     let path = socket_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
+        let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
     }
     let _ = std::fs::remove_file(&path);
     let listener = UnixListener::bind(&path)?;
+    let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
     std::thread::Builder::new()
         .name("qs-ipc".into())
         .spawn(move || {
@@ -85,8 +91,9 @@ pub fn spawn_listener(proxy: EventLoopProxy<HostEvent>) -> std::io::Result<()> {
                     continue;
                 }
                 let ev = match byte[0] {
+                    REQ_REGION => HostEvent::Trigger,
                     REQ_FULL => HostEvent::TriggerFull,
-                    _ => HostEvent::Trigger,
+                    _ => continue,
                 };
                 if proxy.send_event(ev).is_ok() {
                     let _ = s.write_all(&[ACK]);

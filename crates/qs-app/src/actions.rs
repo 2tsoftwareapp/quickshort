@@ -43,24 +43,39 @@ pub struct Dispatch {
     pub sel: qs_core::Rect,
 }
 
-/// Stitch the selection, bake annotations, run the action. `wait_clipboard`:
-/// on Linux/Wayland the clipboard dies with its owner — the one-shot binary
-/// must block (`true`); the resident app stays alive so it passes `false`.
-pub fn dispatch(
-    frames: Vec<qs_core::CapturedFrame>,
-    sel: qs_core::Rect,
-    action: Action,
-    annots: &[Annotation],
-    target: &SaveTarget,
-    wait_clipboard: bool,
-    share: Option<std::sync::Arc<crate::share::ShareManager>>,
-    copy_after_save: bool,
-    ocr_lang: &str,
-    // What produced this image, recorded in the library index. Only assets that
-    // land in a capture folder are indexed — shared copies and editor cache
-    // PNGs are not.
-    provenance: qs_library::Provenance,
-) -> Result<Dispatch> {
+/// Per-call inputs for [`dispatch`] — named because there are ten of them.
+pub struct DispatchArgs<'a> {
+    pub frames: Vec<qs_core::CapturedFrame>,
+    pub sel: qs_core::Rect,
+    pub action: Action,
+    pub annots: &'a [Annotation],
+    pub target: &'a SaveTarget,
+    /// on Linux/Wayland the clipboard dies with its owner — the one-shot
+    /// binary must block (`true`); the resident app stays alive (`false`)
+    pub wait_clipboard: bool,
+    pub share: Option<std::sync::Arc<crate::share::ShareManager>>,
+    pub copy_after_save: bool,
+    pub ocr_lang: &'a str,
+    /// What produced this image, recorded in the library index. Only assets
+    /// that land in a capture folder are indexed — shared copies and editor
+    /// cache PNGs are not.
+    pub provenance: qs_library::Provenance,
+}
+
+/// Stitch the selection, bake annotations, run the action.
+pub fn dispatch(args: DispatchArgs) -> Result<Dispatch> {
+    let DispatchArgs {
+        frames,
+        sel,
+        action,
+        annots,
+        target,
+        wait_clipboard,
+        share,
+        copy_after_save,
+        ocr_lang,
+        provenance,
+    } = args;
     eprintln!("dispatch {action:?}");
     let img = std::thread::spawn(move || qs_core::stitch(&frames, sel))
         .join()
@@ -658,7 +673,7 @@ pub fn open_editor(p: &Path) {
         cmd.arg(p)
             .env("QS_THEME", &cfg.theme)
             .env("QS_ACCENT", &accent_hex);
-        if let Err(_) = cmd.spawn() {
+        if cmd.spawn().is_err() {
             open_path(p);
         }
     }

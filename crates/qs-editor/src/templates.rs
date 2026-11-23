@@ -100,16 +100,16 @@ pub fn build_combined_document(
                 row_h[i / cols] = row_h[i / cols].max(im.height());
             }
             let mut y = pad;
-            for r in 0..rows {
+            for (r, &rh) in row_h.iter().enumerate() {
                 let mut x = pad;
-                for c in 0..cols {
+                for (c, &cw) in col_w.iter().enumerate().take(cols) {
                     let idx = r * cols + c;
                     if idx < imgs.len() {
                         placements.push((x, y));
                     }
-                    x += col_w[c] + gap;
+                    x += cw + gap;
                 }
-                y += row_h[r] + gap;
+                y += rh + gap;
             }
             (col_w[0] + col_w[1] + gap + pad * 2, y - gap + pad)
         }
@@ -133,8 +133,8 @@ pub fn build_combined_document(
     if layout == CombineLayout::BeforeAfter {
         for (i, &(px, py)) in placements.iter().enumerate() {
             let (tag, fill_rgb) = match i {
-                0 => ("BEFORE", 0x52525B),
-                1 => ("AFTER", 0x16A34A),
+                0 => ("BEFORE", 0x52525B), // allow-hex: document data, baked into the export
+                1 => ("AFTER", 0x16A34A),  // allow-hex: document data, baked into the export
                 _ => ("STEP", step_rgb),
             };
             doc.push(ObjectKind::Text {

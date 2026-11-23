@@ -14,7 +14,9 @@ use qs_edit::{Editor, Tool, ZOrder};
 use std::path::Path;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Default)]
 pub enum ZoomCmd {
+    #[default]
     None,
     Out,
     In,
@@ -41,11 +43,6 @@ pub struct TopBarResult {
     pub zoom: ZoomCmd,
 }
 
-impl Default for ZoomCmd {
-    fn default() -> Self {
-        Self::None
-    }
-}
 
 pub fn rgb_to_color32(rgb: u32) -> Color32 {
     Color32::from_rgb(
@@ -826,7 +823,7 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
                 editor.style.arrow_head,
                 editor.style.blur_mode,
                 editor.style.blur_strength,
-                editor.style.text.clone(),
+                editor.style.text,
             )
         }
         Some(ObjectKind::Line { stroke, .. }) => (
@@ -838,7 +835,7 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
             editor.style.arrow_head,
             editor.style.blur_mode,
             editor.style.blur_strength,
-            editor.style.text.clone(),
+            editor.style.text,
         ),
         Some(ObjectKind::Arrow { stroke, head, .. }) => (
             ContextKind::Arrow,
@@ -849,7 +846,7 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
             *head,
             editor.style.blur_mode,
             editor.style.blur_strength,
-            editor.style.text.clone(),
+            editor.style.text,
         ),
         Some(ObjectKind::Rect { stroke, fill, .. })
         | Some(ObjectKind::Ellipse { stroke, fill, .. }) => (
@@ -861,7 +858,7 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
             editor.style.arrow_head,
             editor.style.blur_mode,
             editor.style.blur_strength,
-            editor.style.text.clone(),
+            editor.style.text,
         ),
         Some(ObjectKind::Text { style, fill, .. }) => (
             ContextKind::Text,
@@ -872,7 +869,7 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
             editor.style.arrow_head,
             editor.style.blur_mode,
             editor.style.blur_strength,
-            style.clone(),
+            *style,
         ),
         Some(ObjectKind::Callout {
             shape,
@@ -889,7 +886,7 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
             editor.style.arrow_head,
             editor.style.blur_mode,
             editor.style.blur_strength,
-            style.clone(),
+            *style,
         ),
         Some(ObjectKind::Step { rgb, .. }) => (
             ContextKind::Step,
@@ -900,7 +897,7 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
             editor.style.arrow_head,
             editor.style.blur_mode,
             editor.style.blur_strength,
-            editor.style.text.clone(),
+            editor.style.text,
         ),
         Some(ObjectKind::Blur { mode, strength, .. }) => (
             ContextKind::Blur,
@@ -911,7 +908,7 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
             editor.style.arrow_head,
             *mode,
             *strength,
-            editor.style.text.clone(),
+            editor.style.text,
         ),
         Some(ObjectKind::Magnify { stroke, .. }) => (
             ContextKind::Magnify,
@@ -922,7 +919,7 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
             editor.style.arrow_head,
             editor.style.blur_mode,
             editor.style.blur_strength,
-            editor.style.text.clone(),
+            editor.style.text,
         ),
         Some(ObjectKind::Spotlight { .. }) => (
             ContextKind::Spotlight,
@@ -933,26 +930,26 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
             editor.style.arrow_head,
             editor.style.blur_mode,
             editor.style.blur_strength,
-            editor.style.text.clone(),
+            editor.style.text,
         ),
         Some(ObjectKind::Stamp { .. }) => {
             (ContextKind::Stamp, editor.style.rgb, editor.style.width, editor.style.fill, editor.style.callout_shape,
-             editor.style.arrow_head, editor.style.blur_mode, editor.style.blur_strength, editor.style.text.clone())
+             editor.style.arrow_head, editor.style.blur_mode, editor.style.blur_strength, editor.style.text)
         }
         Some(ObjectKind::Eraser { .. }) => (
             ContextKind::Eraser,
             editor.style.rgb, editor.style.width, editor.style.fill, editor.style.callout_shape,
-            editor.style.arrow_head, editor.style.blur_mode, editor.style.blur_strength, editor.style.text.clone(),
+            editor.style.arrow_head, editor.style.blur_mode, editor.style.blur_strength, editor.style.text,
         ),
         Some(ObjectKind::Fill { rgb, .. }) => (
             ContextKind::Shape,
             *rgb, editor.style.width, editor.style.fill, editor.style.callout_shape,
-            editor.style.arrow_head, editor.style.blur_mode, editor.style.blur_strength, editor.style.text.clone(),
+            editor.style.arrow_head, editor.style.blur_mode, editor.style.blur_strength, editor.style.text,
         ),
         Some(ObjectKind::SmartMove { .. }) => (
             ContextKind::Generic,
             editor.style.rgb, editor.style.width, editor.style.fill, editor.style.callout_shape,
-            editor.style.arrow_head, editor.style.blur_mode, editor.style.blur_strength, editor.style.text.clone(),
+            editor.style.arrow_head, editor.style.blur_mode, editor.style.blur_strength, editor.style.text,
         ),
         None => {
             let kind = match editor.tool() {
@@ -983,7 +980,7 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
                 editor.style.arrow_head,
                 editor.style.blur_mode,
                 editor.style.blur_strength,
-                editor.style.text.clone(),
+                editor.style.text,
             )
         }
     };
@@ -1023,11 +1020,10 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
             false,
             true,
             "Bring to Front",
-        ) {
-            if editor.reorder(ZOrder::Front) {
+        )
+            && editor.reorder(ZOrder::Front) {
                 mutated = true;
             }
-        }
         if icon_segment(
             ui,
             "ins_back",
@@ -1036,11 +1032,10 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
             false,
             true,
             "Send to Back",
-        ) {
-            if editor.reorder(ZOrder::Back) {
+        )
+            && editor.reorder(ZOrder::Back) {
                 mutated = true;
             }
-        }
 
         // Duplicate
         let dup_id = ui.auto_id_with("ins_dup");
@@ -1586,7 +1581,7 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
                 ui.painter().text(
                     tr.center(),
                     egui::Align2::CENTER_CENTER,
-                    &cur_start.to_string(),
+                    cur_start.to_string(),
                     FontId::proportional(12.0),
                     text_primary(),
                 );
@@ -1683,7 +1678,7 @@ fn draw_text_controls(
         ("ins_strike", "S", eff_text.strike, "Strikethrough"),
         ("ins_outline", "O", outline_on, "Text outline"),
     ] {
-        if text_toggle(ui, key, label, tip, active, &mut x, cy, max_x) {
+        if text_toggle(ui, (key, label, tip), active, &mut x, cy, max_x) {
             match key {
                 "ins_bold" => editor.set_text_bold(!eff_text.bold),
                 "ins_italic" => editor.set_text_italic(!eff_text.italic),
@@ -1789,11 +1784,10 @@ fn draw_text_controls(
 }
 
 /// One small square text-format toggle (B / I / U / S / O). Advances `x`.
+/// `spec` is (id key, button label, hover tooltip).
 fn text_toggle(
     ui: &mut Ui,
-    key: &str,
-    label: &str,
-    tip: &str,
+    (key, label, tip): (&str, &str, &str),
     active: bool,
     x: &mut f32,
     cy: f32,

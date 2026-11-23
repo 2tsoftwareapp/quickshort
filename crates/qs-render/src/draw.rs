@@ -123,8 +123,10 @@ impl Xf {
 }
 
 fn paint(rgb: u32, alpha: f32) -> Paint<'static> {
-    let mut p = Paint::default();
-    p.anti_alias = true;
+    let mut p = Paint {
+        anti_alias: true,
+        ..Default::default()
+    };
     p.set_color_rgba8(
         (rgb >> 16) as u8,
         (rgb >> 8) as u8,
@@ -243,7 +245,7 @@ fn draw_text(pm: &mut Pixmap, xf: &Xf, pos: PointF, text: &str, style: &TextStyl
                         let mut samples: Vec<(i32, i32, f32)> = Vec::new();
                         og.draw(|gx, gy, cov| {
                             let y = bb.min.y as i32 + gy as i32;
-                            let mut x = bb.min.x as f32 + gx as f32;
+                            let mut x = bb.min.x + gx as f32;
                             if shear > 0.0 {
                                 x += shear * (base_px - y as f32);
                             }
@@ -307,6 +309,11 @@ fn arrow_geometry(a: PointF, b: PointF, w: f32) -> Option<(f32, [PointF; 2])> {
     Some((hl, [wing(1.0), wing(-1.0)]))
 }
 
+/// Final-quality rasterizer for document objects — the sibling of
+/// `qs_overlay::annotate_image`, which bakes the quick-capture path onto a
+/// raw u32 canvas. They are deliberately separate renderers, but shape
+/// geometry, blur and text styling should stay visually in sync: when you
+/// change one, check the other.
 fn draw_object(pm: &mut Pixmap, xf: &Xf, kind: &ObjectKind, step_no: u32, snap: &[u8]) {
     match kind {
         ObjectKind::Pen { pts, stroke } | ObjectKind::Highlighter { pts, stroke } => {
@@ -500,7 +507,7 @@ fn draw_object(pm: &mut Pixmap, xf: &Xf, kind: &ObjectKind, step_no: u32, snap: 
             let feather = (blur * xf.s).max(0.0);
             let dim = dim_opacity.clamp(0.0, 1.0);
             let w = pm.width() as usize;
-            for (i, px) in pm.data_mut().chunks_exact_mut(4).enumerate() {
+            for (i, px) in pm.data_mut().as_chunks_mut::<4>().0.iter_mut().enumerate() {
                 let (x, y) = ((i % w) as f32 + 0.5, (i / w) as f32 + 0.5);
                 let dx = (x0 - x).max(x - x1).max(0.0);
                 let dy = (y0 - y).max(y - y1).max(0.0);
@@ -816,7 +823,7 @@ fn box_pass(buf: &mut [u8], w: usize, h: usize, r: usize, horizontal: bool) {
 fn to_pixmap_with_opaque(img: &RgbaImage) -> Option<(Pixmap, bool)> {
     let mut data = img.as_raw().clone();
     let mut opaque = true;
-    for p in data.chunks_exact_mut(4) {
+    for p in data.as_chunks_mut::<4>().0 {
         let a = p[3] as u32;
         if a != 255 {
             opaque = false;
@@ -838,7 +845,7 @@ fn to_pixmap_with_opaque(img: &RgbaImage) -> Option<(Pixmap, bool)> {
 fn to_image(pm: &Pixmap) -> RgbaImage {
     let src = pm.data();
     let mut raw = vec![0u8; src.len()];
-    for (dst, px) in raw.chunks_exact_mut(4).zip(src.chunks_exact(4)) {
+    for (dst, px) in raw.as_chunks_mut::<4>().0.iter_mut().zip(src.as_chunks::<4>().0) {
         let a = px[3];
         if a == 255 {
             dst.copy_from_slice(px);
@@ -1017,8 +1024,8 @@ fn render_into_pixmap(
         && xf.ox == 0.0
         && xf.oy == 0.0
         && base_pm.is_some_and(|bp| bp.width() == pm.width() && bp.height() == pm.height());
-    if fast_blit {
-        pm.data_mut().copy_from_slice(base_pm.unwrap().data());
+    if let Some(bp) = base_pm.filter(|_| fast_blit) {
+        pm.data_mut().copy_from_slice(bp.data());
     } else {
         let bg = doc.background;
         pm.fill(Color::from_rgba8(

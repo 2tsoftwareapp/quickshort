@@ -181,10 +181,7 @@ fn run_one_shot(args: Args) -> Result<()> {
 
     // one capture at a time — a second --capture while an overlay is up
     // exits quietly instead of stacking another fullscreen layer
-    let lock = match capture_lock() {
-        Ok(l) => l,
-        Err(e) => return Err(e),
-    };
+    let lock = capture_lock()?;
     if args.delay_secs > 0.0 {
         std::thread::sleep(std::time::Duration::from_secs_f64(args.delay_secs));
     }
@@ -214,18 +211,18 @@ fn run_one_shot(args: Args) -> Result<()> {
         // no overlay: stitch the whole virtual screen and save — what
         // the compositor bindings spawn for the fullscreen hotkey. No
         // event loop needed; wait_clipboard covers copy_after_save.
-        let d = actions::dispatch(
+        let d = actions::dispatch(actions::DispatchArgs {
             frames,
-            bounds,
-            qs_overlay::Action::Save,
-            &[],
-            &target,
-            true,
-            None,
-            cfg.copy_after_save,
-            &cfg.ocr_lang,
-            actions::provenance_now(qs_library::CaptureMode::Fullscreen),
-        )?;
+            sel: bounds,
+            action: qs_overlay::Action::Save,
+            annots: &[],
+            target: &target,
+            wait_clipboard: true,
+            share: None,
+            copy_after_save: cfg.copy_after_save,
+            ocr_lang: &cfg.ocr_lang,
+            provenance: actions::provenance_now(qs_library::CaptureMode::Fullscreen),
+        })?;
         eprintln!("fullscreen saved, {:?} outcome", d.outcome);
         while actions::clipboard_held() {
             std::thread::sleep(std::time::Duration::from_millis(100));

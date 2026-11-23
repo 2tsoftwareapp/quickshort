@@ -33,7 +33,7 @@ pub fn place_popup(
     let at = popup_monitor(el)
         .map(|m| dock_pos(pos, &m, w, h))
         .unwrap_or(PhysicalPosition::new(40.0, 40.0));
-    let _ = win.set_outer_position(at);
+    win.set_outer_position(at);
 }
 
 pub fn dock_pos(pos: &str, m: &MonitorHandle, w: f64, h: f64) -> PhysicalPosition<f64> {

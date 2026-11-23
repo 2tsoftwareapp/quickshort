@@ -67,24 +67,25 @@ struct SavedDocSession {
     saved_rev: u64,
 }
 
-pub struct EditorApp {
-    editor: Editor,
-    base: RgbaImage,
-    doc_path: Option<PathBuf>,
-    view: CanvasView,
+/// Texture + CPU cache for the canvas repaint; `needs_render` is the dirty
+/// flag that forces the next frame to rebuild `texture`.
+#[derive(Default)]
+struct RenderState {
     texture: Option<TextureHandle>,
     /// Reusable CPU render cache (premultiplied base pixmap + scratch pixmap).
     render_cache: qs_render::RenderCache,
     /// Cached 2x2 repeating checkerboard texture keyed by `pal().dark`.
     checker_tex: Option<(bool, TextureHandle)>,
-    /// Prevents overlapping background autosave threads.
-    autosave_busy: Arc<AtomicBool>,
     /// The rendered texture is stale and must be rebuilt this frame.
     needs_render: bool,
-    /// The document holds edits that are not on disk yet.
-    unsaved: bool,
-    /// Editor revision at the last save/load; `unsaved` is derived from it.
-    saved_rev: u64,
+}
+
+/// Open modals, dropdowns and the canvas context menu — at most one is open
+/// at a time in practice; grouping makes that invariant visible.
+/// `close_confirmed` isn't a dialog but lives here as part of the close
+/// handshake.
+#[derive(Default)]
+struct Dialogs {
     /// Closing was already confirmed, so the next close request goes through.
     close_confirmed: bool,
     /// The unsaved-changes dialog is on screen.
@@ -92,6 +93,32 @@ pub struct EditorApp {
     /// Edits left behind by a crashed session, waiting for the user to accept
     /// or reject them.
     pending_recovery: Option<(Document, RgbaImage)>,
+    canvas_dialog_open: bool,
+    export_menu_open: bool,
+    export_anchor: Option<Rect>,
+    app_menu_open: bool,
+    app_menu_anchor: Option<Rect>,
+    combine_dialog_open: bool,
+    /// Right-click context menu on canvas: `(screen_pos, clicked_object_id)`.
+    context_menu: Option<(Pos2, Option<ObjectId>)>,
+    /// Keyboard shortcuts cheat sheet modal (`?` or Status Bar button).
+    shortcuts_open: bool,
+    alignment_open: bool,
+}
+
+pub struct EditorApp {
+    editor: Editor,
+    base: RgbaImage,
+    doc_path: Option<PathBuf>,
+    view: CanvasView,
+    render_state: RenderState,
+    /// Prevents overlapping background autosave threads.
+    autosave_busy: Arc<AtomicBool>,
+    /// The document holds edits that are not on disk yet.
+    unsaved: bool,
+    /// Editor revision at the last save/load; `unsaved` is derived from it.
+    saved_rev: u64,
+    dialogs: Dialogs,
     /// When the recovery copy was last written.
     autosave_at: Option<std::time::Instant>,
     /// Title currently pushed to the viewport, to avoid re-sending it.
@@ -101,7 +128,6 @@ pub struct EditorApp {
     fit_memo: Option<crate::canvas::FitMemo>,
     saw_drag_press: bool,
     toast: Option<(String, std::time::Instant)>,
-    canvas_dialog_open: bool,
     /// Document and base image before "Flatten all", so undo can bring
     /// the layers back.
     pre_flatten: Option<(Document, RgbaImage)>,
@@ -110,13 +136,8 @@ pub struct EditorApp {
     resize_w: u32,
     resize_h: u32,
     resize_lock: bool,
-    export_menu_open: bool,
-    export_anchor: Option<Rect>,
-    app_menu_open: bool,
-    app_menu_anchor: Option<Rect>,
     export_format: ExportFormat,
     export_quality: u8,
-    combine_dialog_open: bool,
     combine_layout: CombineLayout,
     tray_selected: Vec<PathBuf>,
     show_layers: bool,
@@ -129,7 +150,6 @@ pub struct EditorApp {
     session_cache: std::collections::HashMap<PathBuf, SavedDocSession>,
     canvas_anchor: (usize, usize),
     layer_drag_id: Option<ObjectId>,
-    alignment_open: bool,
     prefs: crate::prefs::AppPrefs,
     /// Quick Styles: built-in presets + the user's saved ones.
     styles: styles::Library,
@@ -143,10 +163,6 @@ pub struct EditorApp {
     last_find_focus: Option<(String, usize)>,
     /// Capture library browser (search, tags, favourites, pruning).
     library: crate::library::Library,
-    /// Right-click context menu on canvas: `(screen_pos, clicked_object_id)`.
-    context_menu: Option<(Pos2, Option<ObjectId>)>,
-    /// Keyboard shortcuts cheat sheet modal (`?` or Status Bar button).
-    shortcuts_open: bool,
 }
 
 fn anchored_insets(vertical: f32, horizontal: f32, anchor: (usize, usize)) -> [f32; 4] {
@@ -192,16 +208,17 @@ impl EditorApp {
             base,
             doc_path,
             view,
-            texture: None,
-            render_cache: qs_render::RenderCache::new(),
-            checker_tex: None,
+            render_state: RenderState {
+                needs_render: true,
+                ..Default::default()
+            },
             autosave_busy: Arc::new(AtomicBool::new(false)),
-            needs_render: true,
             unsaved: false,
             saved_rev: 0,
-            close_confirmed: false,
-            confirm_close: false,
-            pending_recovery: pending,
+            dialogs: Dialogs {
+                pending_recovery: pending,
+                ..Default::default()
+            },
             autosave_at: None,
             window_title: None,
             needs_initial_fit: true,
@@ -209,20 +226,14 @@ impl EditorApp {
             fit_memo: None,
             saw_drag_press: false,
             toast: None,
-            canvas_dialog_open: false,
             pre_flatten: None,
             canvas_insets: [0.0; 4],
             canvas_background,
             resize_w: init_w,
             resize_h: init_h,
             resize_lock: true,
-            export_menu_open: false,
-            export_anchor: None,
-            app_menu_open: false,
-            app_menu_anchor: None,
             export_format: ExportFormat::Png,
             export_quality: 90,
-            combine_dialog_open: false,
             combine_layout: CombineLayout::SideBySide,
             tray_selected: Vec::new(),
             canvas_anchor: (1, 1),
@@ -234,7 +245,6 @@ impl EditorApp {
             filmstrip,
             session_cache: std::collections::HashMap::new(),
             layer_drag_id: None,
-            alignment_open: false,
             prefs: crate::prefs::AppPrefs::load(),
             styles: styles::Library::load(),
             library: crate::library::Library::default(),
@@ -242,8 +252,6 @@ impl EditorApp {
             ocr_hints: crate::ocr_hint::OcrHints::default(),
             find: crate::find::FindState::default(),
             last_find_focus: None,
-            context_menu: None,
-            shortcuts_open: false,
         };
         app.update_texture(&cc.egui_ctx);
         app
@@ -279,7 +287,7 @@ impl EditorApp {
             .min(500.0 / doc.base_size.h.max(1.0))
             .clamp(0.2, 1.0);
         self.base = base;
-        self.render_cache.invalidate_base();
+        self.render_state.render_cache.invalidate_base();
         self.editor = Editor::new(doc);
         self.pre_flatten = None;
         // A different document can share the previous one's size, scale and
@@ -289,14 +297,14 @@ impl EditorApp {
         self.canvas_background = canvas_background;
         self.canvas_insets = [0.0; 4];
         self.canvas_anchor = (1, 1);
-        self.texture = None;
-        self.needs_render = true;
+        self.render_state.texture = None;
+        self.render_state.needs_render = true;
         self.needs_initial_fit = true;
     }
 
     /// Asks what to do with edits recovered from a crashed session.
     fn recovery_guard(&mut self, ctx: &egui::Context) {
-        let Some((doc, base)) = self.pending_recovery.take() else {
+        let Some((doc, base)) = self.dialogs.pending_recovery.take() else {
             return;
         };
         let mut choice = None;
@@ -344,7 +352,7 @@ impl EditorApp {
             }
             Some(false) => {}
             // still open: keep the copy in hand for the next frame
-            None => self.pending_recovery = Some((doc, base)),
+            None => self.dialogs.pending_recovery = Some((doc, base)),
         }
         if choice.is_some() {
             self.clear_autosave();
@@ -377,7 +385,7 @@ impl EditorApp {
         // for the next frame's sync.
         self.sync_unsaved();
         self.tray_selected.clear();
-        self.combine_dialog_open = false;
+        self.dialogs.combine_dialog_open = false;
         Ok(())
     }
 
@@ -410,16 +418,14 @@ impl EditorApp {
             base,
             doc_path: None,
             view: CanvasView::default(),
-            texture: None,
-            render_cache: qs_render::RenderCache::new(),
-            checker_tex: None,
+            render_state: RenderState {
+                needs_render: true,
+                ..Default::default()
+            },
             autosave_busy: Arc::new(AtomicBool::new(false)),
-            needs_render: true,
             unsaved: false,
             saved_rev: 0,
-            close_confirmed: false,
-            confirm_close: false,
-            pending_recovery: None,
+            dialogs: Dialogs::default(),
             autosave_at: None,
             window_title: None,
             needs_initial_fit: true,
@@ -434,25 +440,18 @@ impl EditorApp {
             filmstrip: Filmstrip::new(None),
             session_cache: std::collections::HashMap::new(),
             toast: None,
-            canvas_dialog_open: false,
             pre_flatten: None,
             canvas_insets: [0.0; 4],
             canvas_background: 0,
             resize_w: w,
             resize_h: h,
             resize_lock: true,
-            export_menu_open: false,
-            export_anchor: None,
-            app_menu_open: false,
-            app_menu_anchor: None,
             export_format: ExportFormat::Png,
             export_quality: 90,
-            combine_dialog_open: false,
             combine_layout: CombineLayout::SideBySide,
             tray_selected: Vec::new(),
             canvas_anchor: (1, 1),
             layer_drag_id: None,
-            alignment_open: false,
             prefs: crate::prefs::AppPrefs::default(),
             styles: styles::Library::default(),
             library: crate::library::Library::default(),
@@ -460,8 +459,6 @@ impl EditorApp {
             ocr_hints: crate::ocr_hint::OcrHints::default(),
             find: crate::find::FindState::default(),
             last_find_focus: None,
-            context_menu: None,
-            shortcuts_open: false,
         }
     }
 
@@ -470,7 +467,7 @@ impl EditorApp {
         self.apply_document(doc, base);
         self.doc_path = Some(doc_path);
         self.mark_saved();
-        self.pending_recovery = Self::pending_recovery(self.doc_path.as_deref());
+        self.dialogs.pending_recovery = Self::pending_recovery(self.doc_path.as_deref());
         let name = self.display_name().to_string();
         self.show_toast(format!("Opened {name}"));
         Ok(())
@@ -506,14 +503,14 @@ impl EditorApp {
         if let Some(cached) = self.session_cache.remove(path) {
             self.editor = cached.editor;
             self.base = cached.base;
-            self.render_cache.invalidate_base();
+            self.render_state.render_cache.invalidate_base();
             self.doc_path = cached.doc_path;
             self.view = cached.view;
             self.unsaved = cached.unsaved;
             self.saved_rev = cached.saved_rev;
-            self.needs_render = true;
+            self.render_state.needs_render = true;
             self.needs_initial_fit = false;
-            self.pending_recovery = None;
+            self.dialogs.pending_recovery = None;
             let name = self.display_name().to_string();
             self.show_toast(format!("Switched to {name}"));
             return Ok(());
@@ -537,7 +534,7 @@ impl EditorApp {
 
     fn checker_texture_id(&mut self, ctx: &egui::Context) -> egui::TextureId {
         let dark = qs_theme::pal().dark;
-        if let Some((cached_dark, tex)) = &self.checker_tex {
+        if let Some((cached_dark, tex)) = &self.render_state.checker_tex {
             if *cached_dark == dark {
                 return tex.id();
             }
@@ -551,21 +548,21 @@ impl EditorApp {
         };
         let tex = ctx.load_texture("editor_checkerboard", img, TextureOptions::NEAREST_REPEAT);
         let id = tex.id();
-        self.checker_tex = Some((dark, tex));
+        self.render_state.checker_tex = Some((dark, tex));
         id
     }
 
     fn update_texture(&mut self, ctx: &egui::Context) {
-        let flat = self.render_cache.render(self.editor.doc(), &self.base);
+        let flat = self.render_state.render_cache.render(self.editor.doc(), &self.base);
         let size = [flat.width() as usize, flat.height() as usize];
         let color_img = ColorImage::from_rgba_unmultiplied(size, flat.as_raw());
-        if let Some(tex) = &mut self.texture {
+        if let Some(tex) = &mut self.render_state.texture {
             tex.set(color_img, TextureOptions::LINEAR);
         } else {
-            self.texture =
+            self.render_state.texture =
                 Some(ctx.load_texture("rendered_doc", color_img, TextureOptions::LINEAR));
         }
-        self.needs_render = false;
+        self.render_state.needs_render = false;
     }
 
     /// Saves to the current path, asking for one when the document has never
@@ -807,13 +804,13 @@ impl EditorApp {
                 self.touch();
                 self.show_toast(format!("Resized image to {nw}×{nh}"));
             }
-            self.canvas_dialog_open = false;
+            self.dialogs.canvas_dialog_open = false;
         } else if trim {
             if let Some(rect) = qs_edit::trim::calculate_trim_rect(self.editor.doc(), &self.base, 6)
             {
                 self.editor.set_view(rect);
                 self.touch();
-                self.canvas_dialog_open = false;
+                self.dialogs.canvas_dialog_open = false;
             } else {
                 self.show_toast("No safe uniform border to trim");
             }
@@ -831,7 +828,7 @@ impl EditorApp {
                 self.touch();
             }
             self.canvas_insets = [0.0; 4];
-            self.canvas_dialog_open = false;
+            self.dialogs.canvas_dialog_open = false;
         } else if fit_to_objects {
             if self
                 .editor
@@ -840,7 +837,7 @@ impl EditorApp {
                 self.touch();
             }
             self.canvas_insets = [0.0; 4];
-            self.canvas_dialog_open = false;
+            self.dialogs.canvas_dialog_open = false;
         } else if apply {
             // the dialog's edges are the displayed ones
             let insets = self
@@ -856,14 +853,14 @@ impl EditorApp {
                 self.touch();
             }
             self.canvas_insets = [0.0; 4];
-            self.canvas_dialog_open = false;
+            self.dialogs.canvas_dialog_open = false;
         }
     }
 
     /// The rendered texture is stale after an interaction; whether the
     /// document is actually dirty is decided by [`EditorApp::sync_unsaved`].
     fn touch(&mut self) {
-        self.needs_render = true;
+        self.render_state.needs_render = true;
     }
 
     /// Derives the unsaved flag from the editor's revision counter, so a click
@@ -932,11 +929,11 @@ impl EditorApp {
     /// Intercepts a close request while edits are pending and runs the
     /// Save / Discard / Cancel dialog.
     fn close_guard(&mut self, ctx: &egui::Context) {
-        if ctx.input(|i| i.viewport().close_requested()) && self.unsaved && !self.close_confirmed {
+        if ctx.input(|i| i.viewport().close_requested()) && self.unsaved && !self.dialogs.close_confirmed {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            self.confirm_close = true;
+            self.dialogs.confirm_close = true;
         }
-        if !self.confirm_close {
+        if !self.dialogs.confirm_close {
             return;
         }
 
@@ -995,14 +992,14 @@ impl EditorApp {
                 self.mark_saved();
                 self.finish_close(ctx);
             }
-            Some(CloseDecision::Cancel) => self.confirm_close = false,
+            Some(CloseDecision::Cancel) => self.dialogs.confirm_close = false,
             None => {}
         }
     }
 
     fn finish_close(&mut self, ctx: &egui::Context) {
-        self.confirm_close = false;
-        self.close_confirmed = true;
+        self.dialogs.confirm_close = false;
+        self.dialogs.close_confirmed = true;
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     }
 
@@ -1093,11 +1090,10 @@ impl EditorApp {
                             ("Center X", Alignment::HCenter),
                             ("Right", Alignment::Right),
                         ] {
-                            if crate::components::pill_button(ui, label, "") {
-                                if self.editor.align_selected(a) {
+                            if crate::components::pill_button(ui, label, "")
+                                && self.editor.align_selected(a) {
                                     self.touch();
                                 }
-                            }
                         }
                     });
                     ui.horizontal_wrapped(|ui| {
@@ -1106,11 +1102,10 @@ impl EditorApp {
                             ("Center Y", Alignment::VCenter),
                             ("Bottom", Alignment::Bottom),
                         ] {
-                            if crate::components::pill_button(ui, label, "") {
-                                if self.editor.align_selected(a) {
+                            if crate::components::pill_button(ui, label, "")
+                                && self.editor.align_selected(a) {
                                     self.touch();
                                 }
-                            }
                         }
                     });
                     ui.separator();
@@ -1134,10 +1129,10 @@ impl EditorApp {
     /// App menu at the left of the top bar: the actions that used to crowd
     /// the status bar, which now only reports.
     fn app_menu(&mut self, ctx: &egui::Context) {
-        if !self.app_menu_open {
+        if !self.dialogs.app_menu_open {
             return;
         }
-        let anchor = self.app_menu_anchor.unwrap_or_else(|| {
+        let anchor = self.dialogs.app_menu_anchor.unwrap_or_else(|| {
             let r = ctx.content_rect();
             Rect::from_min_size(r.min, Vec2::new(1.0, 36.0))
         });
@@ -1218,7 +1213,7 @@ impl EditorApp {
                     .is_some_and(|p| !menu_rect.contains(p) && !anchor.contains(p))
         });
         if capture || library || copy_text || settings || flip_theme || close || clicked_outside {
-            self.app_menu_open = false;
+            self.dialogs.app_menu_open = false;
         }
         if close {
             self.request_close(ctx);
@@ -1246,10 +1241,10 @@ impl EditorApp {
     /// Export is a dropdown under the Export button: one click picks the
     /// format and the OS save dialog is the only window that follows.
     fn export_menu(&mut self, ctx: &egui::Context) {
-        if !self.export_menu_open {
+        if !self.dialogs.export_menu_open {
             return;
         }
-        let anchor = self.export_anchor.unwrap_or_else(|| {
+        let anchor = self.dialogs.export_anchor.unwrap_or_else(|| {
             let r = ctx.content_rect();
             Rect::from_min_size(egui::pos2(r.right() - 220.0, r.top()), Vec2::new(1.0, 36.0))
         });
@@ -1321,7 +1316,7 @@ impl EditorApp {
                     .is_some_and(|p| !menu_rect.contains(p) && !anchor.contains(p))
         });
         if quick_png || pick.is_some() || copy || print || clicked_outside {
-            self.export_menu_open = false;
+            self.dialogs.export_menu_open = false;
         }
         if quick_png {
             if let Err(e) = self.export_png(None) {
@@ -1460,7 +1455,7 @@ impl EditorApp {
 
     /// Right-click context menu on the canvas (object actions or viewport actions).
     fn canvas_context_menu(&mut self, ctx: &egui::Context) {
-        let Some((pos, hit_id)) = self.context_menu else {
+        let Some((pos, hit_id)) = self.dialogs.context_menu else {
             return;
         };
         let mut close = false;
@@ -1500,12 +1495,11 @@ impl EditorApp {
                                 close = true;
                             }
                         }
-                        if grouped {
-                            if crate::components::menu_item(ui, "Ungroup", Some("Ctrl+Shift+G"), false, true, false) {
+                        if grouped
+                            && crate::components::menu_item(ui, "Ungroup", Some("Ctrl+Shift+G"), false, true, false) {
                                 self.editor.ungroup_selected();
                                 close = true;
                             }
-                        }
                         ui.separator();
                         if crate::components::menu_item(ui, "Delete", Some("Del"), false, true, true) {
                             if self.editor.delete_selected() {
@@ -1528,7 +1522,7 @@ impl EditorApp {
                         }
                         ui.separator();
                         if crate::components::menu_item(ui, "Canvas & Resize…", Some("Ctrl+Shift+C"), false, true, false) {
-                            self.canvas_dialog_open = true;
+                            self.dialogs.canvas_dialog_open = true;
                             self.show_inspector = true;
                             self.canvas_background = self.editor.doc().background;
                             self.resize_w = self.base.width().max(1);
@@ -1549,13 +1543,13 @@ impl EditorApp {
                 && i.pointer.interact_pos().is_some_and(|p| !r.contains(p))
         });
         if close || outside {
-            self.context_menu = None;
+            self.dialogs.context_menu = None;
         }
     }
 
     /// Keyboard shortcuts cheat sheet modal (`?` or Status Bar `?` button).
     fn shortcuts_dialog(&mut self, ctx: &egui::Context) {
-        if !self.shortcuts_open {
+        if !self.dialogs.shortcuts_open {
             return;
         }
         let mut close = false;
@@ -1625,15 +1619,15 @@ impl EditorApp {
             },
         );
         if close {
-            self.shortcuts_open = false;
+            self.dialogs.shortcuts_open = false;
         }
     }
 
     fn combine_dialog(&mut self, ctx: &egui::Context) {
-        if !self.combine_dialog_open {
+        if !self.dialogs.combine_dialog_open {
             return;
         }
-        let mut open = self.combine_dialog_open;
+        let mut open = self.dialogs.combine_dialog_open;
         let mut create = false;
         let count = self.tray_selected.len();
         crate::components::modal_window(
@@ -1697,7 +1691,7 @@ impl EditorApp {
         {
             create = true;
         }
-        self.combine_dialog_open = open;
+        self.dialogs.combine_dialog_open = open;
 
         if create {
             match self.create_combined_sheet() {
@@ -1763,8 +1757,8 @@ impl EditorApp {
     /// The red button and cmd+W both land here, so there is one rule for
     /// throwing edits away.
     pub fn request_close(&mut self, ctx: &egui::Context) {
-        if self.unsaved && !self.close_confirmed {
-            self.confirm_close = true;
+        if self.unsaved && !self.dialogs.close_confirmed {
+            self.dialogs.confirm_close = true;
         } else {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
@@ -1773,7 +1767,7 @@ impl EditorApp {
     /// True while the "unsaved changes" dialog is up, for tests.
     #[doc(hidden)]
     pub fn is_confirming_close(&self) -> bool {
-        self.confirm_close
+        self.dialogs.confirm_close
     }
 
     /// Dialog chords and Escape. Split out of `handle_shortcuts` so tests can
@@ -1789,22 +1783,22 @@ impl EditorApp {
             }
             // Escape closes whichever dialog or popup is on top.
             if i.consume_key(Modifiers::NONE, Key::Escape) {
-                if self.context_menu.is_some() {
-                    self.context_menu = None;
-                } else if self.shortcuts_open {
-                    self.shortcuts_open = false;
-                } else if self.confirm_close {
-                    self.confirm_close = false;
-                } else if self.app_menu_open {
-                    self.app_menu_open = false;
-                } else if self.export_menu_open {
-                    self.export_menu_open = false;
-                } else if self.canvas_dialog_open {
-                    self.canvas_dialog_open = false;
-                } else if self.combine_dialog_open {
-                    self.combine_dialog_open = false;
-                } else if self.alignment_open {
-                    self.alignment_open = false;
+                if self.dialogs.context_menu.is_some() {
+                    self.dialogs.context_menu = None;
+                } else if self.dialogs.shortcuts_open {
+                    self.dialogs.shortcuts_open = false;
+                } else if self.dialogs.confirm_close {
+                    self.dialogs.confirm_close = false;
+                } else if self.dialogs.app_menu_open {
+                    self.dialogs.app_menu_open = false;
+                } else if self.dialogs.export_menu_open {
+                    self.dialogs.export_menu_open = false;
+                } else if self.dialogs.canvas_dialog_open {
+                    self.dialogs.canvas_dialog_open = false;
+                } else if self.dialogs.combine_dialog_open {
+                    self.dialogs.combine_dialog_open = false;
+                } else if self.dialogs.alignment_open {
+                    self.dialogs.alignment_open = false;
                 } else if self.library.open {
                     self.library.open = false;
                 } else if self.find.open {
@@ -1820,40 +1814,40 @@ impl EditorApp {
                 self.show_filmstrip = !self.show_filmstrip;
             }
             if i.consume_key(Modifiers::COMMAND, Key::Comma) {
-                self.canvas_dialog_open = false;
-                self.export_menu_open = false;
-                self.alignment_open = false;
+                self.dialogs.canvas_dialog_open = false;
+                self.dialogs.export_menu_open = false;
+                self.dialogs.alignment_open = false;
                 spawn_app("--settings");
             }
             if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::A)
                 || i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::A)
             {
-                self.canvas_dialog_open = false;
-                self.export_menu_open = false;
-                self.alignment_open = true;
+                self.dialogs.canvas_dialog_open = false;
+                self.dialogs.export_menu_open = false;
+                self.dialogs.alignment_open = true;
                 self.show_inspector = true;
             }
             // Dialog shortcuts: these panels were only reachable by mouse.
             if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::C)
                 || i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::C)
             {
-                self.export_menu_open = false;
-                self.canvas_dialog_open = true;
+                self.dialogs.export_menu_open = false;
+                self.dialogs.canvas_dialog_open = true;
                 self.show_inspector = true;
             }
             if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::E)
                 || i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::E)
             {
-                self.canvas_dialog_open = false;
-                self.export_menu_open = true;
+                self.dialogs.canvas_dialog_open = false;
+                self.dialogs.export_menu_open = true;
             }
             // cmd+shift+F never reached us (macOS swallows it), so the
             // destructive flatten confirmation uses option+cmd+F.
             if i.consume_key(Modifiers::COMMAND | Modifiers::ALT, Key::F)
                 || i.consume_key(Modifiers::CTRL | Modifiers::ALT, Key::F)
             {
-                self.canvas_dialog_open = false;
-                self.export_menu_open = false;
+                self.dialogs.canvas_dialog_open = false;
+                self.dialogs.export_menu_open = false;
                 flatten_now = true;
             }
         });
@@ -1871,9 +1865,9 @@ impl EditorApp {
     #[doc(hidden)]
     pub fn open_dialogs(&self) -> (bool, bool, bool) {
         (
-            self.canvas_dialog_open,
-            self.export_menu_open,
-            self.alignment_open,
+            self.dialogs.canvas_dialog_open,
+            self.dialogs.export_menu_open,
+            self.dialogs.alignment_open,
         )
     }
 
@@ -1906,7 +1900,7 @@ impl EditorApp {
         // An open overlay owns the navigation keys: otherwise the canvas nudge
         // and the Escape-to-deselect path swallow them before the dialog sees
         // them, which made the Library keyboard route dead on arrival.
-        let overlay_keys = self.library.open || self.find.open || self.shortcuts_open;
+        let overlay_keys = self.library.open || self.find.open || self.dialogs.shortcuts_open;
         // A focused text field owns plain keystrokes AND standard text-editing
         // chords (Backspace, Delete, Ctrl+C, Ctrl+Z, Ctrl+A) so typing in Find,
         // Watermark, Zoom %, or Sliders never mutates the canvas underneath.
@@ -2070,7 +2064,7 @@ impl EditorApp {
                     || i.consume_key(Modifiers::NONE, Key::Questionmark)
                     || i.consume_key(Modifiers::NONE, Key::F1)
                 {
-                    self.shortcuts_open = !self.shortcuts_open;
+                    self.dialogs.shortcuts_open = !self.dialogs.shortcuts_open;
                 }
             }
 
@@ -2157,12 +2151,11 @@ impl EditorApp {
                 self.show_toast("Flatten undone");
             }
         }
-        if redo {
-            if self.editor.redo() {
+        if redo
+            && self.editor.redo() {
                 self.touch();
                 self.show_toast("Redo");
             }
-        }
         if copy {
             let _ = self.copy_to_clipboard();
         }
@@ -2399,25 +2392,25 @@ impl eframe::App for EditorApp {
             let _ = self.open_dialog();
         }
         if top_res.export_rect.is_some() {
-            self.export_anchor = top_res.export_rect;
+            self.dialogs.export_anchor = top_res.export_rect;
         }
         if top_res.export {
-            self.export_menu_open = !self.export_menu_open;
-            self.app_menu_open = false;
+            self.dialogs.export_menu_open = !self.dialogs.export_menu_open;
+            self.dialogs.app_menu_open = false;
         }
         if top_res.menu_rect.is_some() {
-            self.app_menu_anchor = top_res.menu_rect;
+            self.dialogs.app_menu_anchor = top_res.menu_rect;
         }
         if top_res.menu {
-            self.app_menu_open = !self.app_menu_open;
-            self.export_menu_open = false;
+            self.dialogs.app_menu_open = !self.dialogs.app_menu_open;
+            self.dialogs.export_menu_open = false;
         }
         if top_res.close {
             self.request_close(&ctx);
         }
         if top_res.canvas {
-            self.canvas_dialog_open = !self.canvas_dialog_open;
-            if self.canvas_dialog_open {
+            self.dialogs.canvas_dialog_open = !self.dialogs.canvas_dialog_open;
+            if self.dialogs.canvas_dialog_open {
                 self.show_inspector = true;
             }
             self.canvas_background = self.editor.doc().background;
@@ -2494,8 +2487,8 @@ impl eframe::App for EditorApp {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                     }
                     if dim_resp.clicked() {
-                        self.canvas_dialog_open = !self.canvas_dialog_open;
-                        if self.canvas_dialog_open {
+                        self.dialogs.canvas_dialog_open = !self.dialogs.canvas_dialog_open;
+                        if self.dialogs.canvas_dialog_open {
                             self.show_inspector = true;
                         }
                         self.canvas_background = self.editor.doc().background;
@@ -2539,10 +2532,10 @@ impl eframe::App for EditorApp {
                         if crate::components::status_pill(
                             ui,
                             "?",
-                            self.shortcuts_open,
+                            self.dialogs.shortcuts_open,
                             "Keyboard shortcuts (?)",
                         ) {
-                            self.shortcuts_open = !self.shortcuts_open;
+                            self.dialogs.shortcuts_open = !self.dialogs.shortcuts_open;
                         }
                         for (label, target_zoom) in [("200%", 2.0f32), ("100%", 1.0), ("50%", 0.5)]
                         {
@@ -2630,7 +2623,7 @@ impl eframe::App for EditorApp {
                                 }
                             }
                             crate::filmstrip_keys::TrayAction::OpenCombine => {
-                                self.combine_dialog_open = true;
+                                self.dialogs.combine_dialog_open = true;
                             }
                         }
                     }
@@ -2665,7 +2658,7 @@ impl eframe::App for EditorApp {
                                     .on_hover_text("Combine selected captures into a template")
                                     .clicked()
                             {
-                                self.combine_dialog_open = true;
+                                self.dialogs.combine_dialog_open = true;
                             }
                         });
                         status_divider(ui);
@@ -2764,7 +2757,7 @@ impl eframe::App for EditorApp {
                                             let mut name = item.label.clone();
                                             if name.len() > 14 {
                                                 name.truncate(11);
-                                                name.push_str("…");
+                                                name.push('…');
                                             }
                                             ui.painter().text(
                                                 Pos2::new(rect.center().x, rect.bottom() - 9.0),
@@ -2889,16 +2882,15 @@ impl eframe::App for EditorApp {
                             );
                         });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if self.editor.selection().len() >= 2 {
-                            if crate::components::pill_button(
+                        if self.editor.selection().len() >= 2
+                            && crate::components::pill_button(
                                 ui,
                                 "Align",
                                 "Align & distribute in the Inspector",
                             ) {
-                                self.alignment_open = true;
+                                self.dialogs.alignment_open = true;
                                 self.show_inspector = true;
                             }
-                        }
                         if self.editor.selection_grouped()
                             && crate::components::pill_button(
                                 ui,
@@ -3156,20 +3148,20 @@ impl eframe::App for EditorApp {
                 theme::glass_panel(ui, |ui| {
                     egui::ScrollArea::vertical()
                         .show(ui, |ui| {
-                            if self.canvas_dialog_open {
+                            if self.dialogs.canvas_dialog_open {
                                 crate::components::card(ui, |ui| {
                                     if inspector_card_header(ui, "CANVAS", true) {
-                                        self.canvas_dialog_open = false;
+                                        self.dialogs.canvas_dialog_open = false;
                                     }
                                     self.canvas_section(ui);
                                 });
                                 ui.add_space(qs_theme::space::MD as f32);
                             }
                             let selected = self.editor.selection().len();
-                            if selected >= 2 || self.alignment_open {
+                            if selected >= 2 || self.dialogs.alignment_open {
                                 crate::components::card(ui, |ui| {
-                                    if inspector_card_header(ui, "ALIGN", self.alignment_open) {
-                                        self.alignment_open = false;
+                                    if inspector_card_header(ui, "ALIGN", self.dialogs.alignment_open) {
+                                        self.dialogs.alignment_open = false;
                                     }
                                     if selected >= 2 {
                                         self.align_section(ui);
@@ -3392,7 +3384,7 @@ impl eframe::App for EditorApp {
                                 self.editor.select(Some(id));
                             }
                         }
-                        self.context_menu = Some((pos, picked));
+                        self.dialogs.context_menu = Some((pos, picked));
                     }
                 }
 
@@ -3490,7 +3482,7 @@ impl eframe::App for EditorApp {
 
                 self.update_canvas_cursor(&ctx, screen_rect, response.dragged());
 
-                if self.needs_render {
+                if self.render_state.needs_render {
                     self.update_texture(&ctx);
                 }
 
@@ -3510,7 +3502,7 @@ impl eframe::App for EditorApp {
                 canvas::paint_checkerboard(&painter, img_screen_rect, checker_id);
 
                 // 4. Rendered flattened document
-                if let Some(tex) = &self.texture {
+                if let Some(tex) = &self.render_state.texture {
                     painter.image(
                         tex.id(),
                         img_screen_rect,
@@ -3651,7 +3643,7 @@ impl eframe::App for EditorApp {
                 {
                     let region = self.editor.region().unwrap();
                     let region_screen = self.view.doc_rect_to_screen(region, screen_rect);
-                    canvas::paint_region(&mut painter, region_screen);
+                    canvas::paint_region(&painter, region_screen);
 
                     // Floating quick-action pill directly under the selection region
                     let bar_pos = Pos2::new(
@@ -3731,7 +3723,7 @@ impl eframe::App for EditorApp {
                         if m.w >= 1.0 || m.h >= 1.0 {
                             let m_screen =
                                 self.view.doc_rect_to_screen(m.normalized(), screen_rect);
-                            canvas::paint_region(&mut painter, m_screen);
+                            canvas::paint_region(&painter, m_screen);
                         }
                     }
                 }
@@ -3781,7 +3773,7 @@ impl eframe::App for EditorApp {
                                 StrokeKind::Outside,
                             );
                             let t = ctx.input(|i| i.time);
-                            let show_caret = ((t * 2.0) as u64) % 2 == 0;
+                            let show_caret = ((t * 2.0) as u64).is_multiple_of(2);
                             if show_caret {
                                 let (cx, cy) = lay.caret(te.caret);
                                 let p1 = self.view.doc_to_screen(
@@ -3918,110 +3910,6 @@ impl eframe::App for EditorApp {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn saving_live_effects_finalizes_undo_before_recording_saved_revision() {
-        let base = RgbaImage::from_pixel(20, 10, image::Rgba([30, 60, 90, 255]));
-        let mut app = EditorApp {
-            editor: Editor::new(Document::new(20, 10, 1.0)),
-            base,
-            doc_path: None,
-            view: CanvasView::default(),
-            texture: None,
-            render_cache: qs_render::RenderCache::new(),
-            checker_tex: None,
-            autosave_busy: Arc::new(AtomicBool::new(false)),
-            needs_render: true,
-            unsaved: false,
-            saved_rev: 0,
-            close_confirmed: false,
-            confirm_close: false,
-            pending_recovery: None,
-            autosave_at: None,
-            window_title: None,
-            needs_initial_fit: true,
-            last_canvas_rect: None,
-            fit_memo: None,
-            saw_drag_press: false,
-            show_layers: true,
-            show_inspector: true,
-            show_filmstrip: false,
-            filmstrip_focus: None,
-            last_cursor_doc: None,
-            filmstrip: Filmstrip::new(None),
-            session_cache: std::collections::HashMap::new(),
-            toast: None,
-            canvas_dialog_open: false,
-            pre_flatten: None,
-            canvas_insets: [0.0; 4],
-            canvas_background: 0,
-            resize_w: 20,
-            resize_h: 10,
-            resize_lock: true,
-            export_menu_open: false,
-            export_anchor: None,
-            app_menu_open: false,
-            app_menu_anchor: None,
-            export_format: ExportFormat::Png,
-            export_quality: 90,
-            combine_dialog_open: false,
-            combine_layout: CombineLayout::SideBySide,
-            tray_selected: Vec::new(),
-            canvas_anchor: (1, 1),
-            layer_drag_id: None,
-            alignment_open: false,
-            prefs: crate::prefs::AppPrefs::default(),
-            styles: styles::Library::default(),
-            library: crate::library::Library::default(),
-            style_filter: String::new(),
-            ocr_hints: crate::ocr_hint::OcrHints::default(),
-            find: crate::find::FindState::default(),
-            last_find_focus: None,
-            context_menu: None,
-            shortcuts_open: false,
-        };
-        app.editor.preview_effects(qs_doc::Effects {
-            border: Some(qs_doc::BorderEffect::default()),
-            ..Default::default()
-        });
-        let path =
-            std::env::temp_dir().join(format!("qs_effect_save_{}.qsdoc", std::process::id()));
-        app.save_to(&path).unwrap();
-        let loaded = qsdoc::read(&path).unwrap();
-        assert_eq!(loaded.doc.effects, app.editor.doc().effects);
-        assert_eq!(
-            qs_render::render(&loaded.doc, &loaded.base),
-            qs_render::render(app.editor.doc(), &app.base)
-        );
-        app.editor.finish_effects();
-        app.sync_unsaved();
-        assert!(
-            !app.unsaved,
-            "finishing already-saved effects must not dirty the document"
-        );
-        assert!(app.editor.undo());
-        assert_eq!(app.editor.doc().effects, qs_doc::Effects::default());
-        assert!(!app.editor.undo());
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn canvas_anchor_rebalances_added_space_without_changing_canvas_size() {
-        assert_eq!(anchored_insets(24.0, 36.0, (0, 2)), [24.0, 36.0, 0.0, 0.0]);
-        assert_eq!(
-            anchored_insets(24.0, 36.0, (1, 1)),
-            [12.0, 18.0, 12.0, 18.0]
-        );
-        assert_eq!(
-            anchored_insets(-20.0, -30.0, (2, 0)),
-            [0.0, 0.0, -20.0, -30.0]
-        );
-    }
-}
-
 /// Reads `.qsdoc`, an image beside its `.qsdoc`, or a bare image.
 /// Hairline group divider for the status bar.
 ///
@@ -4119,5 +4007,52 @@ fn spawn_app(arg: &str) {
         .unwrap_or_else(|| name.into());
     if let Err(e) = std::process::Command::new(&exe).arg(arg).spawn() {
         eprintln!("{arg}: failed to launch {}: {e}", exe.display());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn saving_live_effects_finalizes_undo_before_recording_saved_revision() {
+        let base = RgbaImage::from_pixel(20, 10, image::Rgba([30, 60, 90, 255]));
+        let mut app = EditorApp::for_tests(Document::new(20, 10, 1.0), base);
+        app.editor.preview_effects(qs_doc::Effects {
+            border: Some(qs_doc::BorderEffect::default()),
+            ..Default::default()
+        });
+        let path =
+            std::env::temp_dir().join(format!("qs_effect_save_{}.qsdoc", std::process::id()));
+        app.save_to(&path).unwrap();
+        let loaded = qsdoc::read(&path).unwrap();
+        assert_eq!(loaded.doc.effects, app.editor.doc().effects);
+        assert_eq!(
+            qs_render::render(&loaded.doc, &loaded.base),
+            qs_render::render(app.editor.doc(), &app.base)
+        );
+        app.editor.finish_effects();
+        app.sync_unsaved();
+        assert!(
+            !app.unsaved,
+            "finishing already-saved effects must not dirty the document"
+        );
+        assert!(app.editor.undo());
+        assert_eq!(app.editor.doc().effects, qs_doc::Effects::default());
+        assert!(!app.editor.undo());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn canvas_anchor_rebalances_added_space_without_changing_canvas_size() {
+        assert_eq!(anchored_insets(24.0, 36.0, (0, 2)), [24.0, 36.0, 0.0, 0.0]);
+        assert_eq!(
+            anchored_insets(24.0, 36.0, (1, 1)),
+            [12.0, 18.0, 12.0, 18.0]
+        );
+        assert_eq!(
+            anchored_insets(-20.0, -30.0, (2, 0)),
+            [0.0, 0.0, -20.0, -30.0]
+        );
     }
 }

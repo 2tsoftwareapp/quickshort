@@ -91,7 +91,7 @@ pub fn render(ui: &mut egui::Ui, editor: &mut Editor, prefs: &mut crate::prefs::
             .clicked()
             {
                 let pos = qs_doc::PointF::new(center.x + radius + 10.0, center.y - 10.0);
-                let mut st = editor.style.text.clone();
+                let mut st = editor.style.text;
                 st.px = 14.0;
                 st.bold = true;
                 st.rgb = qs_edit::contrast(rgb);
@@ -138,13 +138,14 @@ pub fn render(ui: &mut egui::Ui, editor: &mut Editor, prefs: &mut crate::prefs::
     changed
 }
 
+/// gradient-stop presets baked into the export backdrop
 const BG_PRESETS: &[(&str, u32, u32)] = &[
-    ("Ocean", 0x2563EB, 0x06B6D4),
-    ("Sunset", 0xF97316, 0xEC4899),
-    ("Lavender", 0x6366F1, 0xA855F7),
-    ("Emerald", 0x059669, 0x14B8A6),
-    ("Slate", 0x334155, 0x0F172A),
-    ("Peach", 0xFB7185, 0xFBBF24),
+    ("Ocean", 0x2563EB, 0x06B6D4),  // allow-hex: document data
+    ("Sunset", 0xF97316, 0xEC4899), // allow-hex: document data
+    ("Lavender", 0x6366F1, 0xA855F7), // allow-hex: document data
+    ("Emerald", 0x059669, 0x14B8A6), // allow-hex: document data
+    ("Slate", 0x334155, 0x0F172A),  // allow-hex: document data
+    ("Peach", 0xFB7185, 0xFBBF24),  // allow-hex: document data
 ];
 
 /// 1-click Beautify card: gradient backdrop presets + auto rounded corners &

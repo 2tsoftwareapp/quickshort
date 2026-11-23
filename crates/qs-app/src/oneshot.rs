@@ -286,9 +286,18 @@ impl Run {
                 let prov = actions::provenance_now(qs_library::CaptureMode::Region);
                 self.workers += 1;
                 std::thread::spawn(move || {
-                    let res = actions::dispatch(
-                        frames, sel, action, &annots, &target, true, share, copy, &lang, prov,
-                    )
+                    let res = actions::dispatch(actions::DispatchArgs {
+                        frames,
+                        sel,
+                        action,
+                        annots: &annots,
+                        target: &target,
+                        wait_clipboard: true,
+                        share,
+                        copy_after_save: copy,
+                        ocr_lang: &lang,
+                        provenance: prov,
+                    })
                     .map_err(|e| e.to_string());
                     let _ = px.send_event(Ev::Done(res));
                 });

@@ -366,18 +366,18 @@ impl Host {
         let lang = self.cfg.ocr_lang.clone();
         let prov = actions::provenance_now(qs_library::CaptureMode::Fullscreen);
         std::thread::spawn(move || {
-            let res = actions::dispatch(
+            let res = actions::dispatch(actions::DispatchArgs {
                 frames,
                 sel,
-                qs_overlay::Action::Save,
-                &[],
-                &target,
-                false,
-                None,
-                copy,
-                &lang,
-                prov,
-            )
+                action: qs_overlay::Action::Save,
+                annots: &[],
+                target: &target,
+                wait_clipboard: false,
+                share: None,
+                copy_after_save: copy,
+                ocr_lang: &lang,
+                provenance: prov,
+            })
             .map_err(|e| e.to_string());
             let _ = px.send_event(HostEvent::Done(res));
         });
@@ -583,25 +583,15 @@ impl Host {
 
     /// Fly the shot into the corner album (macOS/Windows). Linux uses the
     /// status toast only — GNOME/Wayland album chrome is too brittle here.
-    fn land_shot(
-        &mut self,
-        el: &ActiveEventLoop,
-        sel: Option<qs_core::Rect>,
-        img: image::RgbaImage,
-        kind: ShotKind,
-        saved: Option<PathBuf>,
-        dur_s: Option<u64>,
-        shared: Option<crate::share::ShareEntry>,
-        msg: &str,
-    ) {
+    fn land_shot(&mut self, el: &ActiveEventLoop, l: Land, msg: &str) {
         self.toast = None;
         #[cfg(target_os = "linux")]
         {
-            let _ = (sel, img, dur_s, shared);
+            let _ = (l.sel, &l.img, l.dur_s, &l.shared);
             // an image on disk gets the thumbnail + Edit notification (the
             // Linux stand-in for the corner shelf); recordings and
             // unsaved results keep the plain confirmation
-            if let Some(p) = saved.filter(|_| kind != ShotKind::Record) {
+            if let Some(p) = l.path.clone().filter(|_| l.kind != ShotKind::Record) {
                 eprintln!("linux: post-capture card ({msg})");
                 self.toast = None;
                 crate::linux_notify::send_shot(msg, p);
@@ -614,39 +604,29 @@ impl Host {
         }
         #[cfg(not(target_os = "linux"))]
         {
-            if sel.is_some() {
-                let l = Land {
-                    img,
-                    kind,
-                    path: saved.clone(),
-                    sel,
-                    instant: false,
-                    dur_s,
-                    shared,
-                };
-                match self.chrome.land(el, l) {
-                    Ok(()) => {
-                        eprintln!("chrome: shot queued in corner album");
-                        let _ = self.chrome.pump();
-                        return;
-                    }
-                    Err(mut l) => {
-                        eprintln!("chrome: fly-in missed — settling stack at corner");
-                        l.instant = true;
-                        match self.chrome.land(el, l) {
-                            Ok(()) => {
-                                let _ = self.chrome.pump();
-                            }
-                            Err(l) => {
-                                eprintln!("chrome: album unavailable ({msg})");
-                                self.open_card(el, l.img, msg, l.path);
-                            }
+            if l.sel.is_none() {
+                self.open_card(el, l.img, msg, l.path);
+                return;
+            }
+            match self.chrome.land(el, l) {
+                Ok(()) => {
+                    eprintln!("chrome: shot queued in corner album");
+                    let _ = self.chrome.pump();
+                }
+                Err(mut l) => {
+                    eprintln!("chrome: fly-in missed — settling stack at corner");
+                    l.instant = true;
+                    match self.chrome.land(el, *l) {
+                        Ok(()) => {
+                            let _ = self.chrome.pump();
                         }
-                        return;
+                        Err(l) => {
+                            eprintln!("chrome: album unavailable ({msg})");
+                            self.open_card(el, l.img, msg, l.path);
+                        }
                     }
                 }
             }
-            self.open_card(el, img, msg, saved);
         }
     }
 
@@ -682,12 +662,15 @@ impl Host {
         };
         self.land_shot(
             el,
-            Some(sel),
-            img,
-            ShotKind::Saved,
-            Some(p),
-            None,
-            None,
+            Land {
+                img,
+                kind: ShotKind::Saved,
+                path: Some(p),
+                sel: Some(sel),
+                instant: false,
+                dur_s: None,
+                shared: None,
+            },
             &msg,
         );
     }
@@ -1223,12 +1206,15 @@ impl ApplicationHandler<HostEvent> for Host {
                                     .unwrap_or_default();
                                 self.land_shot(
                                     el,
-                                    Some(d.sel),
-                                    d.img,
-                                    ShotKind::Saved,
-                                    Some(p),
-                                    None,
-                                    None,
+                                    Land {
+                                        img: d.img,
+                                        kind: ShotKind::Saved,
+                                        path: Some(p),
+                                        sel: Some(d.sel),
+                                        instant: false,
+                                        dur_s: None,
+                                        shared: None,
+                                    },
                                     &format!("Saved {name}"),
                                 );
                             }
@@ -1245,12 +1231,15 @@ impl ApplicationHandler<HostEvent> for Host {
                             self.shares.save();
                             self.land_shot(
                                 el,
-                                Some(d.sel),
-                                d.img,
-                                ShotKind::Shared,
-                                Some(path),
-                                None,
-                                Some(e),
+                                Land {
+                                    img: d.img,
+                                    kind: ShotKind::Shared,
+                                    path: Some(path),
+                                    sel: Some(d.sel),
+                                    instant: false,
+                                    dur_s: None,
+                                    shared: Some(e),
+                                },
                                 "Shared",
                             );
                             self.toast_done(
@@ -1262,12 +1251,15 @@ impl ApplicationHandler<HostEvent> for Host {
                         Outcome::TextCopied(n) => {
                             self.land_shot(
                                 el,
-                                Some(d.sel),
-                                d.img,
-                                ShotKind::Ocr,
-                                None,
-                                None,
-                                None,
+                                Land {
+                                    img: d.img,
+                                    kind: ShotKind::Ocr,
+                                    path: None,
+                                    sel: Some(d.sel),
+                                    instant: false,
+                                    dur_s: None,
+                                    shared: None,
+                                },
                                 &format!("Copied {n} chars"),
                             );
                             self.toast_done(el, format!("Copied {n} chars"), true);
@@ -1275,12 +1267,15 @@ impl ApplicationHandler<HostEvent> for Host {
                         Outcome::NoText => {
                             self.land_shot(
                                 el,
-                                Some(d.sel),
-                                d.img,
-                                ShotKind::Ocr,
-                                None,
-                                None,
-                                None,
+                                Land {
+                                    img: d.img,
+                                    kind: ShotKind::Ocr,
+                                    path: None,
+                                    sel: Some(d.sel),
+                                    instant: false,
+                                    dur_s: None,
+                                    shared: None,
+                                },
                                 "No text found",
                             );
                             self.toast_done(el, "No text found".to_string(), false);
@@ -1309,12 +1304,15 @@ impl ApplicationHandler<HostEvent> for Host {
                     };
                     self.land_shot(
                         el,
-                        Some(sel),
-                        img,
-                        ShotKind::Scroll,
-                        saved,
-                        None,
-                        None,
+                        Land {
+                            img,
+                            kind: ShotKind::Scroll,
+                            path: saved,
+                            sel: Some(sel),
+                            instant: false,
+                            dur_s: None,
+                            shared: None,
+                        },
                         &msg,
                     )
                 }
@@ -1325,12 +1323,15 @@ impl ApplicationHandler<HostEvent> for Host {
                 match res {
                     Ok((img, path, dur_s)) => self.land_shot(
                         el,
-                        Some(sel),
-                        img,
-                        ShotKind::Record,
-                        Some(path),
-                        Some(dur_s),
-                        None,
+                        Land {
+                            img,
+                            kind: ShotKind::Record,
+                            path: Some(path),
+                            sel: Some(sel),
+                            instant: false,
+                            dur_s: Some(dur_s),
+                            shared: None,
+                        },
                         "Recording saved",
                     ),
                     Err(e) => self.toast_done(el, format!("Recording failed: {e}"), false),
@@ -1577,9 +1578,18 @@ impl ApplicationHandler<HostEvent> for Host {
             let lang = self.cfg.ocr_lang.clone();
             let prov = actions::provenance_now(qs_library::CaptureMode::Region);
             std::thread::spawn(move || {
-                let res = actions::dispatch(
-                    frames, sel, action, &annots, &target, false, share, copy, &lang, prov,
-                )
+                let res = actions::dispatch(actions::DispatchArgs {
+                    frames,
+                    sel,
+                    action,
+                    annots: &annots,
+                    target: &target,
+                    wait_clipboard: false,
+                    share,
+                    copy_after_save: copy,
+                    ocr_lang: &lang,
+                    provenance: prov,
+                })
                 .map_err(|e| e.to_string());
                 let _ = px.send_event(HostEvent::Done(res));
             });

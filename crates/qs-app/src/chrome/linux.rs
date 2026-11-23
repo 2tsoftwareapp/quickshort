@@ -422,8 +422,7 @@ impl ChromeWin {
             });
         let rm = l.instant || !self.full_monitor;
         let scale = self.scale;
-        self.stack
-            .land(l.img, l.kind, l.path, from, rm, scale, l.dur_s, l.shared);
+        self.stack.land(l, from, rm, scale);
         if self.winit_maps {
             if !self.shown {
                 self.win.set_visible(true);

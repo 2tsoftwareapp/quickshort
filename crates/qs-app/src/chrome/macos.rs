@@ -50,13 +50,16 @@ use super::{ChromeCmd, ChromeEv, Corner, FRect, Key, Land, Stack};
 
 /* ==================== NSView subclass ==================== */
 
+/// event sink — the host's EventLoopProxy, boxed once per window
+type EvSink = Rc<dyn Fn(ChromeEv)>;
+
 #[derive(Default)]
 struct Ivars {
     /// live input rects in view-local logical coords (top-left origin —
     /// the view is flipped)
     rects: RefCell<Vec<FRect>>,
     /// event sink wired to the host's EventLoopProxy
-    handler: RefCell<Option<Rc<dyn Fn(ChromeEv)>>>,
+    handler: RefCell<Option<EvSink>>,
     /// the press event that became a drag — `beginDraggingSession` needs
     /// the original NSEvent, which is gone by the time the host-side
     /// DragBegin command arrives
@@ -512,7 +515,7 @@ impl ChromeWin {
     }
     /// Rebind the event sink once the real WindowId exists — the generic
     /// `land` calls this right after `new`.
-    pub(super) fn set_sink(&self, sink: Rc<dyn Fn(ChromeEv)>) {
+    pub(super) fn set_sink(&self, sink: EvSink) {
         *self.view.ivars().handler.borrow_mut() = Some(sink);
     }
     pub fn stack(&self) -> &Stack {
@@ -635,9 +638,7 @@ impl ChromeWin {
         // the stack always lands settled on macOS — Core Animation
         // carries the pixels; the software fly would re-blit the
         // full-res capture on the main thread every frame
-        self.stack.land(
-            l.img, l.kind, l.path, from, true, self.scale, l.dur_s, l.shared,
-        );
+        self.stack.land(l, from, true, self.scale);
         if rm {
             self.present();
             return;
@@ -860,11 +861,11 @@ impl ChromeWin {
             let dst = rep.bitmapData();
             for (i, px) in pixels.iter().enumerate() {
                 let (a, b, g, r) = (px >> 24, (px >> 16) & 0xff, (px >> 8) & 0xff, px & 0xff);
-                let (r, g, b) = if a > 0 {
-                    (r * 255 / a, g * 255 / a, b * 255 / a)
-                } else {
-                    (0, 0, 0)
-                };
+                let (r, g, b) = (
+                    (r * 255).checked_div(a).unwrap_or(0),
+                    (g * 255).checked_div(a).unwrap_or(0),
+                    (b * 255).checked_div(a).unwrap_or(0),
+                );
                 *dst.add(i * 4) = r as u8;
                 *dst.add(i * 4 + 1) = g as u8;
                 *dst.add(i * 4 + 2) = b as u8;
@@ -902,7 +903,6 @@ impl ChromeWin {
                     .map(|w| w.convertPointToScreen(NSPoint::new(0.0, 0.0)))
                     .unwrap_or(NSPoint::new(0.0, 0.0));
                 let wnum = self.view.window().map(|w| w.windowNumber()).unwrap_or(0);
-                let wnum = wnum as isize;
                 let ev: Option<Retained<NSEvent>> = unsafe {
                     msg_send![
                         objc2::class!(NSEvent),
@@ -1127,9 +1127,7 @@ fn unix_ts() -> u64 {
 /// `None` when macOS reports nothing (the desktop has focus) or when the caller
 /// is not on the main thread and cannot ask AppKit — never a guessed name.
 pub fn frontmost_app_name() -> Option<String> {
-    if MainThreadMarker::new().is_none() {
-        return None;
-    }
+    MainThreadMarker::new()?;
     let app: Option<Retained<NSRunningApplication>> =
         NSWorkspace::sharedWorkspace().frontmostApplication();
     app.and_then(|a| a.localizedName().map(|n| n.to_string()))

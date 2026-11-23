@@ -134,7 +134,7 @@ fn scan_dirs(dirs: &[PathBuf]) -> Vec<LoadedThumb> {
         }
     }
 
-    files.sort_by(|a, b| b.0.cmp(&a.0));
+    files.sort_by_key(|f| std::cmp::Reverse(f.0));
     files.truncate(MAX_ITEMS);
 
     files
@@ -210,7 +210,7 @@ mod tests {
         img.save(&p1).unwrap();
         img.save(&p2).unwrap();
 
-        let loaded = scan_dirs(&[dir.clone()]);
+        let loaded = scan_dirs(std::slice::from_ref(&dir));
         assert_eq!(loaded.len(), 2);
         assert!(loaded.iter().all(|l| l.image.is_some()));
 

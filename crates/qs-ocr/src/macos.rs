@@ -59,7 +59,7 @@ pub fn extract_lines(img: &RgbaImage, lang: &str) -> Result<Vec<crate::OcrLine>>
     // Vision ignores recognitionLanguages while detection is enabled,
     // so an explicit pick must turn detection off.
     let explicit: Vec<_> = lang
-        .split(|c| c == '+' || c == ',' || c == ' ')
+        .split(['+', ',', ' '])
         .filter_map(bcp47)
         .collect();
     if explicit.is_empty() {

@@ -236,7 +236,7 @@ fn is_sensitive_text(text: &str) -> bool {
     }
     // Phone number pattern: >= 9 digits in a short line
     let digits = t.chars().filter(|c| c.is_ascii_digit()).count();
-    if digits >= 9 && digits <= 15 && t.len() <= 24 {
+    if (9..=15).contains(&digits) && t.len() <= 24 {
         let non_phone = t
             .chars()
             .filter(|c| !c.is_ascii_digit() && !" +-().".contains(*c))

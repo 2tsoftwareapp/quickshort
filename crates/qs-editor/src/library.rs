@@ -266,13 +266,8 @@ impl Library {
     }
 
     fn poll_thumbs(&mut self, ctx: &egui::Context) {
-        loop {
-            let received = match self.thumbs.done.try_recv() {
-                Ok(v) => v,
-                Err(_) => break,
-            };
+        while let Ok((path, image)) = self.thumbs.done.try_recv() {
             self.thumbs.inflight = self.thumbs.inflight.saturating_sub(1);
-            let (path, image) = received;
             match image {
                 Some(image) => {
                     let name = format!("lib_thumb:{}", path.display());

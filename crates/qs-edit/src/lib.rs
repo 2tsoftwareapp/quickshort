@@ -383,7 +383,7 @@ fn apply_style_to_kind(k: &mut ObjectKind, st: &Style) {
         *f = st.fill;
     }
     if let Some(t) = text_style_mut(k) {
-        *t = st.text.clone();
+        *t = st.text;
         t.rgb = st.rgb;
     }
     match k {
@@ -763,10 +763,7 @@ impl Editor {
             self.end_text_edit();
         } else if !self.selection.is_empty() {
             self.selection.clear();
-        } else if self.tool == Tool::SelectRegion {
-            self.set_region(None);
-            self.tool = Tool::Select;
-        } else if self.region_rect.is_none() {
+        } else if self.tool == Tool::SelectRegion || self.region_rect.is_none() {
             self.set_region(None);
             self.tool = Tool::Select;
         }
@@ -2258,7 +2255,7 @@ impl Editor {
                     fill, style: t, ..
                 } => {
                     st.fill = *fill;
-                    st.text = t.clone();
+                    st.text = *t;
                 }
                 ObjectKind::Callout {
                     fill,
@@ -2267,7 +2264,7 @@ impl Editor {
                     ..
                 } => {
                     st.fill = *fill;
-                    st.text = t.clone();
+                    st.text = *t;
                     st.callout_shape = *shape;
                 }
                 ObjectKind::Arrow { head, .. } => st.arrow_head = *head,

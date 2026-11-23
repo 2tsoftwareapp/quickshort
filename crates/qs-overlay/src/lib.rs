@@ -1632,7 +1632,7 @@ impl Session {
                         // owed a second one
                         let c = floor_boundary(text, self.caret);
                         if !text[..c].ends_with(' ') {
-                            text.insert_str(c, " ");
+                            text.insert(c, ' ');
                             self.caret = c + 1;
                             self.dirty = true;
                         }

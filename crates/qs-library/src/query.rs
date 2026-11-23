@@ -107,7 +107,7 @@ impl FilterState {
         let mut out: Vec<&LibraryEntry> = entries
             .into_iter()
             .filter(|e| e.matches(needle))
-            .filter(|e| self.kind.map_or(true, |k| e.kind == k))
+            .filter(|e| self.kind.is_none_or(|k| e.kind == k))
             .filter(|e| !self.favorites_only || e.favorite)
             .filter(|e| match &self.tag {
                 Some(tag) => e.has_tag(tag),
@@ -131,7 +131,7 @@ impl FilterState {
                     .then_with(|| a.file_name.cmp(&b.file_name))
             }),
             Sort::Name => {
-                out.sort_by(|a, b| a.file_name.to_lowercase().cmp(&b.file_name.to_lowercase()))
+                out.sort_by_key(|a| a.file_name.to_lowercase())
             }
         }
         out

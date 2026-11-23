@@ -537,6 +537,12 @@ fn pixelate_rgba(img: &mut RgbaImage, r: Rect, block: i32) {
 /// coords; the image covers `sel` at `sel * scale` physical res, so strokes
 /// rasterize through `render_phys` at native density (no upsample blur).
 /// Pixel edits apply in list order, vector strokes composite on top.
+///
+/// NOTE: this is one of two annotation rasterizers — the editor path renders
+/// `ObjectKind`s through `qs_render::draw_object` (tiny-skia). The two are
+/// deliberately separate (cheap u32 blit for the overlay vs final-quality
+/// output), but shape geometry, blur and text styling should stay visually
+/// in sync: when you change one, check the other.
 pub fn annotate_image(img: &mut RgbaImage, sel: Rect, annots: &[Annotation], scale: f64) {
     if annots.is_empty() {
         return;

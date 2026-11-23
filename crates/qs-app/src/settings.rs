@@ -1168,9 +1168,7 @@ fn switch_row(
     v: &View,
     hits: &mut Vec<(LRect, Hit)>,
     r: LRect,
-    g: Glyph,
-    label: &str,
-    desc: &str,
+    (g, label, desc): (Glyph, &str, &str),
     sw: Sw,
 ) {
     if v.hover == Some(Hit::Sw(sw)) {
@@ -1332,9 +1330,7 @@ fn draw_capture(p: &Painter, cv: &mut Canvas, v: &View, hits: &mut Vec<(LRect, H
         v,
         hits,
         c,
-        Glyph::Bolt,
-        "Launch at login",
-        "Start Quickshort when you log in",
+        (Glyph::Bolt, "Launch at login", "Start Quickshort when you log in"),
         Sw::Login,
     );
 
@@ -1424,9 +1420,7 @@ fn draw_general(p: &Painter, cv: &mut Canvas, v: &View, hits: &mut Vec<(LRect, H
         v,
         hits,
         c,
-        Glyph::Info,
-        "Automatically check for updates",
-        "Once a day, in the background",
+        (Glyph::Info, "Automatically check for updates", "Once a day, in the background"),
         Sw::AutoUpd,
     );
     section_title(p, cv, 228.0, "Menu", "What shows in the menu bar icon.");
@@ -1634,9 +1628,7 @@ fn draw_appearance(p: &Painter, cv: &mut Canvas, v: &View, hits: &mut Vec<(LRect
         v,
         hits,
         (c.0, c.1 + ROW, c.2, ROW),
-        Glyph::Drop,
-        "Copy captures after saving",
-        "Saved screenshots also go to the clipboard",
+        (Glyph::Drop, "Copy captures after saving", "Saved screenshots also go to the clipboard"),
         Sw::CopySave,
     );
 
@@ -2069,7 +2061,7 @@ fn draw_about(p: &Painter, cv: &mut Canvas, v: &View, hits: &mut Vec<(LRect, Hit
             },
         );
         if v.hover == Some(Hit::Link(i)) {
-            p.seg(cv, lx, 298.0, lx + tw, 298.0, 1.0, pal().fg);
+            p.seg(cv, (lx, 298.0), (lx + tw, 298.0), 1.0, pal().fg);
         }
         hits.push(((lx, 282.0, tw, 20.0), Hit::Link(i)));
         lx += tw + 28.0;
@@ -2113,7 +2105,7 @@ fn set_key(cfg: &mut Config, slot: Rec, ch: char) {
         Rec::Record,
         Rec::Undo,
     ] {
-        if other != slot && key_str(cfg, other).chars().next() == Some(ch) {
+        if other != slot && key_str(cfg, other).starts_with(ch) {
             *key_mut(cfg, other) = old.to_string();
         }
     }

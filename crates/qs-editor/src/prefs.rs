@@ -87,11 +87,10 @@ impl AppPrefs {
                 "copy_after_save" => prefs.copy_after_save = val == "true",
                 "ocr_lang" => prefs.ocr_lang = val.to_owned(),
                 "watermark_text" => prefs.watermark_text = val.to_owned(),
-                "save_dir" => {
-                    if !val.is_empty() {
+                "save_dir"
+                    if !val.is_empty() => {
                         prefs.save_dir = Some(PathBuf::from(val));
                     }
-                }
                 _ => {}
             }
         }

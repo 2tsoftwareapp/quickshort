@@ -202,13 +202,19 @@ impl Config {
         if let Some(d) = p.parent() {
             let _ = std::fs::create_dir_all(d);
         }
-        match toml::to_string_pretty(self) {
-            Ok(s) => {
-                if let Err(e) = std::fs::write(&p, s) {
-                    eprintln!("config write {}: {e}", p.display());
-                }
+        let s = match toml::to_string_pretty(self) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("config serialize: {e}");
+                return;
             }
-            Err(e) => eprintln!("config serialize: {e}"),
+        };
+        // atomic write — a crash mid-write must not leave a truncated config
+        let tmp = p.with_extension("toml.tmp");
+        let res = std::fs::write(&tmp, &s).and_then(|()| std::fs::rename(&tmp, &p));
+        if let Err(e) = res {
+            let _ = std::fs::remove_file(&tmp);
+            eprintln!("config write {}: {e}", p.display());
         }
     }
 

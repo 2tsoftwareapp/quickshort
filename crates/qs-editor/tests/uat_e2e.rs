@@ -10,6 +10,7 @@ use qs_doc::{
 use qs_edit::{Editor, Tool};
 use qs_editor::{
     image_panel,
+    prefs::AppPrefs,
     templates::{self, CombineLayout},
     theme, toolbar,
 };
@@ -33,6 +34,7 @@ fn sample_ui_image(w: u32, h: u32) -> RgbaImage {
 fn uat_responsive_toolbar_and_inspector_across_viewports_and_themes() {
     let doc = Document::new(800, 500, 1.0);
     let mut editor = Editor::new(doc);
+    let mut prefs = AppPrefs::default();
     let path = std::path::PathBuf::from("/tmp/very_long_screenshot_filename_for_uat_test.qsdoc");
 
     for &theme_name in &["dark", "light"] {
@@ -57,7 +59,7 @@ fn uat_responsive_toolbar_and_inspector_across_viewports_and_themes() {
                 egui::Panel::right("uat_right")
                     .exact_size(244.0)
                     .show(ui, |ui| {
-                        let _ = image_panel::render(ui, &mut editor);
+                        let _ = image_panel::render(ui, &mut editor, &mut prefs);
                     });
             });
             out.textures_delta.clear();

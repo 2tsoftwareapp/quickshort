@@ -156,14 +156,14 @@ fn adjust(img: &mut RgbaImage, c: &qs_doc::ColorAdjustEffect) {
             let v = (i as f32 - 128.0) * k + 128.0 + bright;
             *slot = v.round().clamp(0.0, 255.0) as u8;
         }
-        for px in img.as_mut().chunks_exact_mut(4) {
+        for px in img.as_mut().as_chunks_mut::<4>().0 {
             px[0] = lut[px[0] as usize];
             px[1] = lut[px[1] as usize];
             px[2] = lut[px[2] as usize];
         }
         return;
     }
-    for px in img.as_mut().chunks_exact_mut(4) {
+    for px in img.as_mut().as_chunks_mut::<4>().0 {
         let (r, g, b) = (px[0] as f32, px[1] as f32, px[2] as f32);
         let luma = 0.299 * r + 0.587 * g + 0.114 * b;
         px[0] = ((luma + (r - luma) * c.saturation - 128.0) * k + 128.0 + bright)
@@ -279,7 +279,7 @@ fn apply_filter(img: &mut RgbaImage, filter: qs_doc::ColorFilter) {
     match filter {
         qs_doc::ColorFilter::None => {}
         qs_doc::ColorFilter::Grayscale => {
-            for px in img.as_mut().chunks_exact_mut(4) {
+            for px in img.as_mut().as_chunks_mut::<4>().0 {
                 let l = ((77 * px[0] as u32 + 150 * px[1] as u32 + 29 * px[2] as u32 + 128) >> 8)
                     as u8;
                 px[0] = l;
@@ -288,7 +288,7 @@ fn apply_filter(img: &mut RgbaImage, filter: qs_doc::ColorFilter) {
             }
         }
         qs_doc::ColorFilter::Sepia => {
-            for px in img.as_mut().chunks_exact_mut(4) {
+            for px in img.as_mut().as_chunks_mut::<4>().0 {
                 let (r, g, b) = (px[0] as u32, px[1] as u32, px[2] as u32);
                 px[0] = (((101 * r + 197 * g + 48 * b + 128) >> 8).min(255)) as u8;
                 px[1] = (((89 * r + 176 * g + 43 * b + 128) >> 8).min(255)) as u8;
@@ -296,7 +296,7 @@ fn apply_filter(img: &mut RgbaImage, filter: qs_doc::ColorFilter) {
             }
         }
         qs_doc::ColorFilter::Invert => {
-            for px in img.as_mut().chunks_exact_mut(4) {
+            for px in img.as_mut().as_chunks_mut::<4>().0 {
                 px[0] = 255 - px[0];
                 px[1] = 255 - px[1];
                 px[2] = 255 - px[2];
@@ -420,11 +420,11 @@ fn blur_alpha(alpha: &mut image::GrayImage, sigma: f32) {
             for x in 0..w {
                 pre[x + 1] = pre[x] + row[x] as u32;
             }
-            for x in 0..w {
+            for (x, v) in row.iter_mut().enumerate() {
                 let lo = x.saturating_sub(r);
                 let hi = (x + r).min(w - 1);
                 let cnt = (hi - lo + 1) as u32;
-                row[x] = ((pre[hi + 1] - pre[lo] + cnt / 2) / cnt) as u8;
+                *v = ((pre[hi + 1] - pre[lo] + cnt / 2) / cnt) as u8;
             }
         }
         // Vertical pass
@@ -686,7 +686,7 @@ pub fn apply(doc: &Document, mut content: RgbaImage) -> RgbaImage {
                 ((s.color >> 24) as f32) * s.opacity / 255.0,
             );
             let has_bg = doc.effects.background.is_some();
-            for (p, &a) in out.as_mut().chunks_exact_mut(4).zip(alpha.as_raw().iter()) {
+            for (p, &a) in out.as_mut().as_chunks_mut::<4>().0.iter_mut().zip(alpha.as_raw().iter()) {
                 if a != 0 {
                     let sa = (a as f32 * sa_base / 255.0).clamp(0.0, 1.0);
                     if has_bg {
