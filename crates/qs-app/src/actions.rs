@@ -577,9 +577,12 @@ fn copy_image_to_clipboard(img: &RgbaImage, wait: bool) {
 }
 
 fn copy_text_to_clipboard(text: &str, wait: bool) {
+    // Wayland: always prefer wl-copy (same as copy_image_to_clipboard) so text
+    // actually replaces any previous wl-copy image on the Wayland clipboard
+    // even from the resident daemon (`wait == false`).
     #[cfg(target_os = "linux")]
-    if wait && wl_copy("text/plain;charset=utf-8", text.as_bytes()) {
-        eprintln!("copied to clipboard via wl-copy");
+    if wl_copy("text/plain;charset=utf-8", text.as_bytes()) {
+        eprintln!("copied text to clipboard via wl-copy");
         return;
     }
     #[cfg(target_os = "linux")]

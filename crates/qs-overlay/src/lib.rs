@@ -1375,20 +1375,21 @@ impl Session {
                     if h != tb.hover {
                         tb.hover = h;
                         self.dirty = true;
-                        self.wins[i].win.set_cursor(if h.is_some() {
-                            winit::window::CursorIcon::Pointer
-                        } else if self.tool == Some(Tool::Select) {
-                            if self.hit_top(self.cursor).is_some() {
-                                winit::window::CursorIcon::Move
-                            } else {
-                                winit::window::CursorIcon::Default
-                            }
-                        } else if self.tool.is_some() {
-                            winit::window::CursorIcon::Crosshair
-                        } else {
-                            winit::window::CursorIcon::Default
-                        });
                     }
+                    let over_annot = (self.tool == Some(Tool::Select) || self.tool.is_none())
+                        && h.is_none()
+                        && self.hit_top(self.cursor).is_some();
+                    self.wins[i].win.set_cursor(if h.is_some() {
+                        winit::window::CursorIcon::Pointer
+                    } else if over_annot {
+                        winit::window::CursorIcon::Move
+                    } else if self.tool == Some(Tool::Select) {
+                        winit::window::CursorIcon::Default
+                    } else if self.tool.is_some() {
+                        winit::window::CursorIcon::Crosshair
+                    } else {
+                        winit::window::CursorIcon::Default
+                    });
                 }
             }
             WindowEvent::MouseInput {
@@ -1520,7 +1521,24 @@ impl Session {
                             self.begin_annot(t, self.cursor);
                             return;
                         }
-                        // clicked outside the toolbar: start a fresh selection
+                        // No tool armed: clicking an existing annotation grabs
+                        // and moves it instead of wiping the whole selection.
+                        if let Some(hit_i) = self.hit_top(self.cursor) {
+                            let an = self.annots.remove(hit_i);
+                            self.grabbed = Some(Grab {
+                                idx: hit_i,
+                                before: an.clone(),
+                                annot: an,
+                                start: self.cursor,
+                                last: self.cursor,
+                            });
+                            self.selected = None;
+                            self.rerender_layers();
+                            self.dirty = true;
+                            return;
+                        }
+                        // clicked outside the toolbar and outside any annotation:
+                        // start a fresh selection
                         self.toolbar = None;
                         self.sel = None;
                         self.clear_annots();

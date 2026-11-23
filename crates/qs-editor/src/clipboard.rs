@@ -22,7 +22,40 @@ fn with_clipboard<T>(f: impl FnOnce(&mut Clipboard) -> anyhow::Result<T>) -> any
     f(guard.as_mut().expect("clipboard initialised above"))
 }
 
+#[cfg(target_os = "linux")]
+fn wl_copy(mime: &str, data: &[u8]) -> bool {
+    use std::io::Write;
+    if std::env::var_os("WAYLAND_DISPLAY").is_none() {
+        return false;
+    }
+    let mut c = match std::process::Command::new("wl-copy")
+        .args(["-t", mime])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    let ok = c
+        .stdin
+        .take()
+        .map(|mut s| s.write_all(data).is_ok())
+        .unwrap_or(false);
+    ok && c.wait().map(|s| s.success()).unwrap_or(false)
+}
+
 pub fn copy_image(img: &RgbaImage) -> anyhow::Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        let mut png = std::io::Cursor::new(Vec::new());
+        if img.write_to(&mut png, image::ImageFormat::Png).is_ok()
+            && wl_copy("image/png", &png.into_inner())
+        {
+            return Ok(());
+        }
+    }
     with_clipboard(|cb| {
         let data = ImageData {
             width: img.width() as usize,
@@ -35,6 +68,10 @@ pub fn copy_image(img: &RgbaImage) -> anyhow::Result<()> {
 }
 
 pub fn copy_text(text: &str) -> anyhow::Result<()> {
+    #[cfg(target_os = "linux")]
+    if wl_copy("text/plain;charset=utf-8", text.as_bytes()) {
+        return Ok(());
+    }
     with_clipboard(|cb| {
         cb.set_text(text.to_owned())?;
         Ok(())

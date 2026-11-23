@@ -85,6 +85,7 @@ const MAIN: &[Item] = &[
     Item::Tool(Tool::Step),
     Item::Tool(Tool::Text),
     Item::Tool(Tool::Pixelate),
+    Item::Tool(Tool::Select),
     Item::Undo,
     Item::Redo,
     Item::More,
@@ -92,12 +93,11 @@ const MAIN: &[Item] = &[
     Item::Act(Action::Copy),
 ];
 /// MAIN indexes where the tools and the history groups end — dividers
-const TOOLS_END: usize = 5;
-const HISTORY_END: usize = 7;
+const TOOLS_END: usize = 6;
+const HISTORY_END: usize = 8;
 
 /// Second row behind More: the remaining tools, then the special captures.
 const MORE: &[Item] = &[
-    Item::Tool(Tool::Select),
     Item::Tool(Tool::Pen),
     Item::Tool(Tool::Ellipse),
     Item::Tool(Tool::Marker),
