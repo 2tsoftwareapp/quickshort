@@ -35,6 +35,7 @@ pub struct TopBarResult {
     /// The app menu (New capture, Library, Settings, theme) was clicked.
     pub menu: bool,
     pub menu_rect: Option<Rect>,
+    pub close: bool,
     pub zoom: ZoomCmd,
 }
 
@@ -248,9 +249,16 @@ pub fn render_top_bar(
     // text at +24.5, so "Copy" needs the extra room.
     let copy_w = if compact_actions { 64.0 } else { 68.0 };
     let btn_h = 30.0;
+    let close_w = 30.0;
     let right_gap = 6.0;
 
     let mut x_cursor = inner.right();
+
+    let close_rect = Rect::from_min_size(
+        Pos2::new(x_cursor - close_w, cy - btn_h * 0.5),
+        Vec2::new(close_w, btn_h),
+    );
+    x_cursor = close_rect.left() - right_gap;
 
     let copy_rect = Rect::from_min_size(
         Pos2::new(x_cursor - copy_w, cy - btn_h * 0.5),
@@ -403,6 +411,19 @@ pub fn render_top_bar(
         "Copy Flattened Image (Ctrl+C)",
     ) {
         res.copy = true;
+    }
+
+    paint_segmented_track(ui.painter(), close_rect, RADIUS_TRACK);
+    if icon_segment(
+        ui,
+        "tb_close",
+        close_rect.shrink(3.0),
+        ActionIcon::Close,
+        false,
+        true,
+        "Close (Ctrl+W)",
+    ) {
+        res.close = true;
     }
 
     // --- Center Zone: Responsive Tool Segmented Capsule ---

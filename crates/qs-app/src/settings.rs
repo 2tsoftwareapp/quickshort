@@ -20,7 +20,8 @@ use crate::actions;
 use crate::config::{accent_deep, Config, ACCENTS, AFTER_CAPTURE, POPUP_POS};
 use crate::tray;
 use crate::ui::{
-    check_box, dropdown_btn, ghost, keycaps_w, mix, row_label, Glyph, LRect, Painter, ROW,
+    check_box, dropdown_btn, ghost, keycaps_w, mark, mix, row_label, Glyph, LRect, Mark, Painter,
+    ROW,
 };
 use qs_theme::{pal, THEMES};
 
@@ -139,6 +140,7 @@ enum Hit {
     ResetAll,
     Clean,
     Link(usize),
+    Close,
 }
 
 const LINKS: &[(&str, &str)] = &[
@@ -716,6 +718,10 @@ impl Settings {
                     actions::open_url(url);
                 }
             }
+            Some(Hit::Close) => {
+                self.closed = true;
+                return Some(SettingsEvent::Closed);
+            }
             None => {
                 self.drop_open = None;
                 if self.recording.take().is_some() {
@@ -957,6 +963,29 @@ impl Settings {
             5 => draw_storage(&p, &mut cv, &v, &mut hits),
             _ => draw_about(&p, &mut cv, &v, &mut hits),
         }
+
+        // Top-right close button (essential on tiling WMs without titlebars).
+        let close_r = (W - 24.0 - 28.0, 24.0, 28.0, 28.0);
+        let close_hot = v.hover == Some(Hit::Close);
+        if close_hot {
+            p.fill(&mut cv, close_r, 7.0, pal().danger, 0.92);
+        } else {
+            p.fill(&mut cv, close_r, 7.0, pal().surface, 0.90);
+            p.stroke(&mut cv, close_r, 7.0, pal().border, 1.0, 1.0);
+        }
+        mark(
+            &mut cv,
+            Mark::Cross,
+            close_r.0 + close_r.2 * 0.5,
+            close_r.1 + close_r.3 * 0.5,
+            if close_hot { 1.5 } else { 1.4 },
+            if close_hot {
+                pal().on_accent
+            } else {
+                pal().fg_dim
+            },
+        );
+        hits.push((close_r, Hit::Close));
 
         // open dropdown popup floats above the page — drawn last so its
         // hit rects win the topmost scan. Anchored to the button rect the

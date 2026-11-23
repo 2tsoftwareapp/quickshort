@@ -1046,8 +1046,8 @@ impl EditorApp {
         });
         let is_dark = qs_theme::pal().dark;
         let has_region = self.editor.region().is_some();
-        let (mut capture, mut library, mut copy_text, mut settings, mut flip_theme) =
-            (false, false, false, false, false);
+        let (mut capture, mut library, mut copy_text, mut settings, mut flip_theme, mut close) =
+            (false, false, false, false, false, false);
         let area = egui::Area::new(egui::Id::unique("app_menu"))
             .order(egui::Order::Foreground)
             .fixed_pos(anchor.left_bottom() + Vec2::new(0.0, qs_theme::space::XS as f32))
@@ -1080,6 +1080,10 @@ impl EditorApp {
                         flip_theme = ui
                             .add(egui::Button::new(theme_label).frame(false))
                             .clicked();
+                        ui.separator();
+                        close = ui
+                            .add(egui::Button::new("Close").shortcut_text("Ctrl+W").frame(false))
+                            .clicked();
                     });
                 });
             });
@@ -1091,8 +1095,11 @@ impl EditorApp {
                     .interact_pos()
                     .is_some_and(|p| !menu_rect.contains(p) && !anchor.contains(p))
         });
-        if capture || library || copy_text || settings || flip_theme || clicked_outside {
+        if capture || library || copy_text || settings || flip_theme || close || clicked_outside {
             self.app_menu_open = false;
+        }
+        if close {
+            self.request_close(ctx);
         }
         if capture {
             spawn_app("--capture");
@@ -1958,6 +1965,9 @@ impl eframe::App for EditorApp {
         if top_res.menu {
             self.app_menu_open = !self.app_menu_open;
             self.export_menu_open = false;
+        }
+        if top_res.close {
+            self.request_close(&ctx);
         }
         if top_res.canvas {
             self.canvas_dialog_open = !self.canvas_dialog_open;

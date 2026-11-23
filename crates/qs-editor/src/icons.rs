@@ -39,6 +39,8 @@ pub enum ActionIcon {
     /// Layer lock: a padlock, open when unlocked.
     Lock,
     Unlock,
+    /// Window close: crisp ×.
+    Close,
 }
 
 #[inline]
@@ -567,6 +569,11 @@ pub fn draw_action_icon(painter: &Painter, c: Pos2, icon: ActionIcon, color: Col
             let chk = Stroke::new(1.7, crate::theme::on_success());
             painter.line_segment([p(c, -3.2, 0.2), p(c, -0.8, 2.6)], chk);
             painter.line_segment([p(c, -0.8, 2.6), p(c, 3.6, -2.4)], chk);
+        }
+        ActionIcon::Close => {
+            let xst = Stroke::new(1.6, color);
+            painter.line_segment([p(c, -4.0, -4.0), p(c, 4.0, 4.0)], xst);
+            painter.line_segment([p(c, -4.0, 4.0), p(c, 4.0, -4.0)], xst);
         }
     }
 }
