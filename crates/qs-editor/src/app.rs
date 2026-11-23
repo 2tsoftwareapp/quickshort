@@ -163,6 +163,8 @@ pub struct EditorApp {
     last_find_focus: Option<(String, usize)>,
     /// Capture library browser (search, tags, favourites, pruning).
     library: crate::library::Library,
+    /// In-flight IME composition (Telex/VNI preedit) drawn beside the caret.
+    ime_preedit: String,
 }
 
 fn anchored_insets(vertical: f32, horizontal: f32, anchor: (usize, usize)) -> [f32; 4] {
@@ -249,6 +251,7 @@ impl EditorApp {
             styles: styles::Library::load(),
             library: crate::library::Library::default(),
             style_filter: String::new(),
+            ime_preedit: String::new(),
             ocr_hints: crate::ocr_hint::OcrHints::default(),
             find: crate::find::FindState::default(),
             last_find_focus: None,
@@ -456,6 +459,7 @@ impl EditorApp {
             styles: styles::Library::default(),
             library: crate::library::Library::default(),
             style_filter: String::new(),
+            ime_preedit: String::new(),
             ocr_hints: crate::ocr_hint::OcrHints::default(),
             find: crate::find::FindState::default(),
             last_find_focus: None,
@@ -2219,6 +2223,7 @@ impl EditorApp {
 
     fn handle_text_events(&mut self, ctx: &egui::Context) {
         if self.editor.edit().is_none() {
+            self.ime_preedit.clear();
             return;
         }
         let events = ctx.input(|i| i.raw.events.clone());
@@ -2273,6 +2278,26 @@ impl EditorApp {
                     self.editor.text_insert(&s);
                     self.touch();
                 }
+                // IME-composed text (Vietnamese Telex/VNI, dead keys): Preedit is
+                // the in-flight composition shown beside the caret; Commit is
+                // the finished text. Without these only raw ASCII gets through.
+                egui::Event::Ime(ime) => match ime {
+                    egui::ImeEvent::Preedit { text, .. } => {
+                        self.ime_preedit = text;
+                    }
+                    egui::ImeEvent::Commit(text) => {
+                        self.ime_preedit.clear();
+                        self.editor.text_insert(&text);
+                        self.touch();
+                    }
+                    egui::ImeEvent::DeleteSurrounding { before_chars, .. } => {
+                        for _ in 0..before_chars {
+                            self.editor.text_backspace();
+                        }
+                        self.touch();
+                    }
+                    _ => {}
+                },
                 _ => {}
             }
         }
@@ -3813,19 +3838,44 @@ impl eframe::App for EditorApp {
                                 Stroke::new(1.25, theme::accent_alpha(180)),
                                 StrokeKind::Outside,
                             );
+                            let (cx, cy) = lay.caret(te.caret);
+                            let p1 = self.view.doc_to_screen(
+                                PointF::new(origin.x + cx, origin.y + cy),
+                                screen_rect,
+                            );
+                            let p2 = self.view.doc_to_screen(
+                                PointF::new(origin.x + cx, origin.y + cy + 18.0),
+                                screen_rect,
+                            );
+                            // Telling eframe a text field is active is what makes
+                            // winit call set_ime_allowed(true) — without it the OS
+                            // never engages Telex/VNI and only raw ASCII arrives.
+                            ctx.output_mut(|o| {
+                                o.ime = Some(egui::output::IMEOutput {
+                                    purpose: egui::IMEPurpose::Normal,
+                                    rect: edit_rect,
+                                    cursor_rect: Rect::from_min_max(
+                                        Pos2::new(p1.x, p1.y.min(p2.y)),
+                                        Pos2::new(p1.x + 2.0, p1.y.max(p2.y)),
+                                    ),
+                                    should_interrupt_composition: false,
+                                });
+                            });
                             let t = ctx.input(|i| i.time);
                             let show_caret = ((t * 2.0) as u64).is_multiple_of(2);
                             if show_caret {
-                                let (cx, cy) = lay.caret(te.caret);
-                                let p1 = self.view.doc_to_screen(
-                                    PointF::new(origin.x + cx, origin.y + cy),
-                                    screen_rect,
-                                );
-                                let p2 = self.view.doc_to_screen(
-                                    PointF::new(origin.x + cx, origin.y + cy + 18.0),
-                                    screen_rect,
-                                );
                                 painter.line_segment([p1, p2], Stroke::new(2.0, accent_blue()));
+                            }
+                            // In-flight IME composition (Telex "đan" before it
+                            // commits to "đan"/"dans") so the user sees typing.
+                            if !self.ime_preedit.is_empty() {
+                                painter.text(
+                                    p2 + egui::vec2(6.0, 0.0),
+                                    egui::Align2::LEFT_BOTTOM,
+                                    &self.ime_preedit,
+                                    FontId::proportional(14.0),
+                                    theme::text_primary(),
+                                );
                             }
                             ctx.request_repaint_after(std::time::Duration::from_millis(500));
                         }
