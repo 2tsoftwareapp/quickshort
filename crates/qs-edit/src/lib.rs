@@ -206,6 +206,21 @@ enum Drag {
     },
 }
 
+/// Cursor-feedback view of the in-progress drag gesture (`drag_hint`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DragHint {
+    None,
+    Move,
+    Marquee,
+    Handle(HandleId),
+    Create,
+    TextSelect,
+    Crop,
+    Cutout,
+    SmartMove,
+    Region,
+}
+
 pub struct Editor {
     doc: Document,
     tool: Tool,
@@ -527,6 +542,21 @@ impl Editor {
     }
     pub fn is_dragging(&self) -> bool {
         !matches!(self.drag, Drag::None)
+    }
+    /// The kind of gesture currently dragged, for pointer-cursor feedback.
+    pub fn drag_hint(&self) -> DragHint {
+        match &self.drag {
+            Drag::None => DragHint::None,
+            Drag::Move { .. } => DragHint::Move,
+            Drag::Marquee { .. } => DragHint::Marquee,
+            Drag::Handle { h, .. } => DragHint::Handle(*h),
+            Drag::Create { .. } => DragHint::Create,
+            Drag::TextSelect => DragHint::TextSelect,
+            Drag::Crop { .. } => DragHint::Crop,
+            Drag::Cutout { .. } => DragHint::Cutout,
+            Drag::SmartMoveSrc { .. } => DragHint::SmartMove,
+            Drag::Region { .. } => DragHint::Region,
+        }
     }
 
     /// Resize handles — only for a single unlocked selection.

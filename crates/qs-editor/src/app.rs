@@ -19,7 +19,7 @@ use eframe::egui::{
 };
 use image::RgbaImage;
 use qs_doc::{Document, ObjectId, PointF, RectF, qsdoc};
-use qs_edit::{Alignment, Axis, Editor, Motion, Tool};
+use qs_edit::{Alignment, Axis, DragHint, Editor, HandleId, Motion, Tool};
 use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -2278,36 +2278,77 @@ impl EditorApp {
         }
     }
 
-    fn update_canvas_cursor(&self, ctx: &egui::Context, screen_rect: Rect, dragging: bool) {
+    fn update_canvas_cursor(
+        &self,
+        ctx: &egui::Context,
+        screen_rect: Rect,
+        panning: bool,
+        space_held: bool,
+    ) {
         let Some(pos) = ctx.input(|i| i.pointer.hover_pos()) else {
             return;
         };
         if !screen_rect.contains(pos) {
             return;
         }
+        // Pan overrides tool cursors in every mode (middle-drag or Space+drag).
+        if panning {
+            ctx.set_cursor_icon(CursorIcon::Grabbing);
+            return;
+        }
+        if space_held {
+            ctx.set_cursor_icon(CursorIcon::Grab);
+            return;
+        }
         let icon = match self.editor.tool() {
             Tool::Text => CursorIcon::Text,
-            Tool::Select => {
-                if dragging {
-                    CursorIcon::Grabbing
-                } else {
+            Tool::Select => match self.editor.drag_hint() {
+                DragHint::Move => CursorIcon::Grabbing,
+                DragHint::Handle(h) => handle_cursor(h),
+                DragHint::Marquee => CursorIcon::Default,
+                DragHint::TextSelect => CursorIcon::Text,
+                DragHint::Create
+                | DragHint::Crop
+                | DragHint::Cutout
+                | DragHint::SmartMove
+                | DragHint::Region => CursorIcon::Crosshair,
+                DragHint::None => {
                     let doc_p = self.view.screen_to_doc(pos, screen_rect);
                     let slack = self.editor.hit_tol * 1.8;
-                    let on_handle = self
+                    let handle = self
                         .editor
                         .selection_handles()
                         .iter()
-                        .any(|h| h.pos.dist(doc_p) <= slack);
-                    if on_handle || self.editor.pick(doc_p).is_some() {
-                        CursorIcon::Grab
+                        .find(|h| h.pos.dist(doc_p) <= slack)
+                        .map(|h| h.id);
+                    if let Some(h) = handle {
+                        handle_cursor(h)
+                    } else if let Some(id) = self.editor.pick(doc_p) {
+                        if self.editor.edit().is_some_and(|e| e.id == id) {
+                            CursorIcon::Text
+                        } else {
+                            CursorIcon::Grab
+                        }
                     } else {
                         CursorIcon::Default
                     }
                 }
-            }
+            },
             _ => CursorIcon::Crosshair,
         };
         ctx.set_cursor_icon(icon);
+    }
+}
+
+/// Directional resize cursor for a box handle; point handles (line ends,
+/// callout tail, step radius) get the repositioning cursor.
+fn handle_cursor(h: HandleId) -> CursorIcon {
+    match h {
+        HandleId::N | HandleId::S => CursorIcon::ResizeVertical,
+        HandleId::E | HandleId::W => CursorIcon::ResizeHorizontal,
+        HandleId::NE | HandleId::SW => CursorIcon::ResizeNeSw,
+        HandleId::NW | HandleId::SE => CursorIcon::ResizeNwSe,
+        _ => CursorIcon::Grab,
     }
 }
 
@@ -3480,7 +3521,7 @@ impl eframe::App for EditorApp {
                     }
                 }
 
-                self.update_canvas_cursor(&ctx, screen_rect, response.dragged());
+                self.update_canvas_cursor(&ctx, screen_rect, panning, space_held);
 
                 if self.render_state.needs_render {
                     self.update_texture(&ctx);

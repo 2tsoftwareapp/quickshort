@@ -490,12 +490,29 @@ impl Session {
             tb.hover = None;
         }
         self.dirty = true;
-        self.wins[i].win.set_cursor(match self.tool {
-            Some(Tool::Text) => winit::window::CursorIcon::Text,
-            Some(Tool::Select) => winit::window::CursorIcon::Default,
-            Some(_) => winit::window::CursorIcon::Crosshair,
-            None => winit::window::CursorIcon::Pointer,
-        });
+        self.wins[i].win.set_cursor(self.cursor_icon());
+    }
+
+    /// Pointer shape for the current zone: toolbar button beats annotation
+    /// beats armed tool. Shared by tool-arm and hover paths so they agree.
+    fn cursor_icon(&self) -> winit::window::CursorIcon {
+        use winit::window::CursorIcon as C;
+        let over_btn = self
+            .toolbar
+            .as_ref()
+            .and_then(|tb| tb.hit(self.cursor))
+            .is_some();
+        if over_btn {
+            return C::Pointer;
+        }
+        let over_annot = self.hit_top(self.cursor).is_some();
+        match self.tool {
+            Some(Tool::Text) if over_annot => C::Text,
+            Some(Tool::Text) => C::Crosshair,
+            Some(Tool::Select) | None if over_annot => C::Move,
+            Some(Tool::Select) | None => C::Default,
+            Some(_) => C::Crosshair,
+        }
     }
 
     /// `Some` exactly once when the session has ended (see `OverlayEvent`).
@@ -1376,20 +1393,8 @@ impl Session {
                         tb.hover = h;
                         self.dirty = true;
                     }
-                    let over_annot = (self.tool == Some(Tool::Select) || self.tool.is_none())
-                        && h.is_none()
-                        && self.hit_top(self.cursor).is_some();
-                    self.wins[i].win.set_cursor(if h.is_some() {
-                        winit::window::CursorIcon::Pointer
-                    } else if over_annot {
-                        winit::window::CursorIcon::Move
-                    } else if self.tool == Some(Tool::Select) {
-                        winit::window::CursorIcon::Default
-                    } else if self.tool.is_some() {
-                        winit::window::CursorIcon::Crosshair
-                    } else {
-                        winit::window::CursorIcon::Default
-                    });
+                    let icon = self.cursor_icon();
+                    self.wins[i].win.set_cursor(icon);
                 }
             }
             WindowEvent::MouseInput {
