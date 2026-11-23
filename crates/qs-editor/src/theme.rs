@@ -119,6 +119,18 @@ pub fn sync_egui_visuals(ctx: &egui::Context) {
     ctx.set_theme(theme);
     ctx.style_mut_of(theme, |s| {
         s.visuals.dark_mode = dark;
+        // Crisp text rendering on 1x (non-HiDPI) displays:
+        // - Keep font hinting enabled and disable horizontal subpixel binning
+        //   (subpixel binning intentionally softens stems on low-DPI screens).
+        // - Use proper gamma transfer per polarity (sharper dark-mode glyphs,
+        //   slightly firmer light-mode strokes).
+        s.visuals.text_options.font_hinting = true;
+        s.visuals.text_options.subpixel_binning = false;
+        s.visuals.text_options.color_transfer_function = if dark {
+            eframe::epaint::FontColorTransferFunction::TwoCoverageMinusCoverageSq
+        } else {
+            eframe::epaint::FontColorTransferFunction::Gamma(0.85)
+        };
         s.visuals.panel_fill = bg_inspector_top();
         s.visuals.window_fill = bg_card();
         s.visuals.window_stroke = Stroke::new(1.0, border_subtle());

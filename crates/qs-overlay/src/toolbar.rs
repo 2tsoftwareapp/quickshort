@@ -527,6 +527,37 @@ fn paint_button(
     }
 }
 
+/// Exact box-filter area average of an `n×n` coverage mask over the pixel
+/// footprint `[u - half, u + half] × [v - half, v + half]`.
+fn sample_mask_box(m: &[f32], n: usize, u: f64, v: f64, half: f64) -> f64 {
+    let nf = n as f64;
+    let u0 = u - half;
+    let u1 = u + half;
+    let v0 = v - half;
+    let v1 = v + half;
+    let area = (u1 - u0) * (v1 - v0);
+    if area <= 0.0 || u1 <= 0.0 || v1 <= 0.0 || u0 >= nf || v0 >= nf {
+        return 0.0;
+    }
+    let ix0 = (u0.floor() as i32).max(0);
+    let ix1 = (u1.ceil() as i32).min(n as i32);
+    let iy0 = (v0.floor() as i32).max(0);
+    let iy1 = (v1.ceil() as i32).min(n as i32);
+    let mut sum = 0.0;
+    for iy in iy0..iy1 {
+        let wy = (v1.min((iy + 1) as f64) - v0.max(iy as f64)).max(0.0);
+        if wy <= 0.0 {
+            continue;
+        }
+        let row = iy as usize * n;
+        for ix in ix0..ix1 {
+            let wx = (u1.min((ix + 1) as f64) - u0.max(ix as f64)).max(0.0);
+            sum += m[row + ix as usize] as f64 * (wx * wy);
+        }
+    }
+    (sum / area).clamp(0.0, 1.0)
+}
+
 /// Icon stroke/fill for one toolbar item at logical point (lx, ly).
 #[allow(clippy::too_many_arguments)]
 fn draw_icon(
@@ -614,20 +645,18 @@ fn draw_icon(
             let ring = stroke_cov(d, STROKE, scale);
             let m = crate::annotate::label_mask("1", true);
             let n = crate::annotate::ICON_MASK_N;
-            let gx = ((lx * 1.7 + 8.0) / 16.0 * n as f64) as i32;
-            let gy = ((ly * 1.7 + 8.0) / 16.0 * n as f64) as i32;
-            let g = if (0..n as i32).contains(&gx) && (0..n as i32).contains(&gy) {
-                m[gy as usize * n + gx as usize] as f64
-            } else {
-                0.0
-            };
+            let u = (lx * 1.7 + 8.0) / 16.0 * n as f64;
+            let v = (ly * 1.7 + 8.0) / 16.0 * n as f64;
+            let half = (0.5 * 1.7 / scale) / 16.0 * n as f64;
+            let g = sample_mask_box(m, n, u, v, half);
             let a = ring.max(g) * fg_a;
             if a > 0.0 {
                 cv.blend(x, y, fg_col, a);
             }
         }
         Item::Tool(Tool::Text) | Item::Bold | Item::FontSize(_) => {
-            // real font glyphs — rasterized once into coverage grids
+            // real font glyphs — area-averaged from the 56×56 coverage mask
+            // so thin strokes never drop out on 1x (1080p) displays.
             let (lbl, b) = match item {
                 Item::Bold => ("B", true),
                 Item::FontSize(i) => (crate::annotate::TEXT_SIZES[i as usize].1, false),
@@ -635,13 +664,13 @@ fn draw_icon(
             };
             let m = crate::annotate::label_mask(lbl, b);
             let n = crate::annotate::ICON_MASK_N;
-            let gx = ((lx + 8.0) / 16.0 * n as f64) as i32;
-            let gy = ((ly + 8.0) / 16.0 * n as f64) as i32;
-            let a = if (0..n as i32).contains(&gx) && (0..n as i32).contains(&gy) {
-                m[gy as usize * n + gx as usize] as f64 * fg_a
-            } else {
-                0.0
-            };
+            let u = (lx + 8.0) / 16.0 * n as f64;
+            let v = (ly + 8.0) / 16.0 * n as f64;
+            let half = (0.5 / scale) / 16.0 * n as f64;
+            let cov = sample_mask_box(m, n, u, v, half);
+            // Gentle gamma lift keeps 1px strokes crisp against both light and
+            // accent-blue pills without blooming.
+            let a = if cov > 0.0 { cov.powf(0.85) * fg_a } else { 0.0 };
             if a > 0.0 {
                 cv.blend(x, y, fg_col, a);
             }
