@@ -293,23 +293,40 @@ impl EditorApp {
             return;
         };
         let mut choice = None;
-        egui::Window::new("Recover unsaved changes")
-            .frame(theme::modal_frame())
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
-            .show(ctx, |ui| {
-                ui.label("The last session ended with edits that were never saved.");
-                ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    if ui.button("Recover").clicked() {
+        crate::components::modal_window(
+            ctx,
+            "recovery_modal",
+            "Recover unsaved changes?",
+            340.0,
+            |ui| {
+                ui.label(
+                    egui::RichText::new(
+                        "The last session ended with edits that were never saved.",
+                    )
+                    .size(qs_theme::font::SMALL as f32 + 0.5)
+                    .color(theme::text_secondary()),
+                );
+                ui.add_space(qs_theme::space::LG as f32);
+                crate::components::dialog_actions(ui, |ui| {
+                    if crate::components::pill_button_primary(
+                        ui,
+                        "Recover",
+                        "Restore the recovered edits",
+                    ) {
                         choice = Some(true);
                     }
-                    if ui.button("Discard").clicked() {
+                    ui.add_space(qs_theme::space::XS as f32);
+                    if crate::components::pill_button_colored(
+                        ui,
+                        "Discard",
+                        "Delete the recovered copy",
+                        theme::danger_red(),
+                    ) {
                         choice = Some(false);
                     }
                 });
-            });
+            },
+        );
 
         match choice {
             Some(true) => {
@@ -915,29 +932,41 @@ impl EditorApp {
         }
 
         let mut decision = None;
-        egui::Window::new("Unsaved changes")
-            .frame(theme::modal_frame())
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
-            .show(ctx, |ui| {
-                ui.label(format!(
-                    "“{}” has edits that are not saved yet.",
-                    self.display_name()
-                ));
-                ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    if ui.button("Save").clicked() {
+        let doc_name = self.display_name().to_owned();
+        crate::components::modal_window(
+            ctx,
+            "unsaved_changes_modal",
+            "Save changes before closing?",
+            340.0,
+            |ui| {
+                ui.label(
+                    egui::RichText::new(format!(
+                        "“{doc_name}” has edits that haven’t been saved yet."
+                    ))
+                    .size(qs_theme::font::SMALL as f32 + 0.5)
+                    .color(theme::text_secondary()),
+                );
+                ui.add_space(qs_theme::space::LG as f32);
+                crate::components::dialog_actions(ui, |ui| {
+                    if crate::components::pill_button_primary(ui, "Save", "Save and close") {
                         decision = Some(CloseDecision::Save);
                     }
-                    if ui.button("Discard").clicked() {
+                    ui.add_space(qs_theme::space::XS as f32);
+                    if crate::components::pill_button_colored(
+                        ui,
+                        "Discard",
+                        "Close without saving",
+                        theme::danger_red(),
+                    ) {
                         decision = Some(CloseDecision::Discard);
                     }
-                    if ui.button("Cancel").clicked() {
+                    ui.add_space(qs_theme::space::XS as f32);
+                    if crate::components::pill_button(ui, "Cancel", "Keep editing") {
                         decision = Some(CloseDecision::Cancel);
                     }
                 });
-            });
+            },
+        );
 
         match decision {
             // a cancelled Save-As leaves the document unsaved: keep the window
@@ -1105,39 +1134,64 @@ impl EditorApp {
             .order(egui::Order::Foreground)
             .fixed_pos(anchor.left_bottom() + Vec2::new(0.0, qs_theme::space::XS as f32))
             .show(ctx, |ui| {
-                egui::Frame::menu(ui.style()).show(ui, |ui| {
-                    ui.set_min_width(220.0);
-                    ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
-                        capture = ui
-                            .add(egui::Button::new("New capture").shortcut_text("Ctrl+N").frame(false))
-                            .clicked();
-                        library = ui
-                            .add(egui::Button::new("Library").shortcut_text("Ctrl+L").frame(false))
-                            .clicked();
-                        copy_text = ui
-                            .add_enabled(
-                                has_region,
-                                egui::Button::new("Copy text in selection").frame(false),
-                            )
-                            .on_disabled_hover_text("Select a region first")
-                            .clicked();
-                        ui.separator();
-                        settings = ui
-                            .add(egui::Button::new("Settings\u{2026}").shortcut_text("Ctrl+,").frame(false))
-                            .clicked();
-                        let theme_label = if is_dark {
-                            "Switch to Light theme"
-                        } else {
-                            "Switch to Dark theme"
-                        };
-                        flip_theme = ui
-                            .add(egui::Button::new(theme_label).frame(false))
-                            .clicked();
-                        ui.separator();
-                        close = ui
-                            .add(egui::Button::new("Close").shortcut_text("Ctrl+W").frame(false))
-                            .clicked();
-                    });
+                theme::popover_frame().show(ui, |ui| {
+                    ui.set_width(224.0);
+                    ui.spacing_mut().item_spacing.y = 2.0;
+                    capture = crate::components::menu_item(
+                        ui,
+                        "New capture",
+                        Some("Ctrl+N"),
+                        false,
+                        true,
+                        false,
+                    );
+                    library = crate::components::menu_item(
+                        ui,
+                        "Library",
+                        Some("Ctrl+L"),
+                        false,
+                        true,
+                        false,
+                    );
+                    copy_text = crate::components::menu_item(
+                        ui,
+                        "Copy text in selection",
+                        None,
+                        false,
+                        has_region,
+                        false,
+                    );
+                    ui.separator();
+                    settings = crate::components::menu_item(
+                        ui,
+                        "Settings\u{2026}",
+                        Some("Ctrl+,"),
+                        false,
+                        true,
+                        false,
+                    );
+                    let theme_label = if is_dark {
+                        "Switch to Light theme"
+                    } else {
+                        "Switch to Dark theme"
+                    };
+                    flip_theme = crate::components::menu_item(
+                        ui,
+                        theme_label,
+                        None,
+                        false,
+                        true,
+                        false,
+                    );
+                    ui.separator();
+                    close = crate::components::menu_item(
+                        ui,
+                        "Close",
+                        Some("Ctrl+W"),
+                        false,
+                        true,
+                        true,
+                    );
                 });
             });
         let menu_rect = area.response.rect;
@@ -1193,34 +1247,43 @@ impl EditorApp {
             .pivot(egui::Align2::RIGHT_TOP)
             .fixed_pos(anchor.right_bottom() + Vec2::new(0.0, qs_theme::space::XS as f32))
             .show(ctx, |ui| {
-                egui::Frame::menu(ui.style()).show(ui, |ui| {
-                    ui.set_min_width(200.0);
-                    ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
-                        for fmt in [ExportFormat::Png, ExportFormat::Jpeg, ExportFormat::Webp] {
-                            let mut label = egui::RichText::new(format!(
-                                "Save as {}\u{2026}",
-                                fmt.label()
-                            ));
-                            // the bundled font has no check mark glyph, so the
-                            // last-used format is marked by weight and accent
-                            if fmt == self.export_format {
-                                label = label.strong().color(theme::accent_blue());
-                            }
-                            if ui.add(egui::Button::new(label).frame(false)).clicked() {
-                                pick = Some(fmt);
-                            }
+                theme::popover_frame().show(ui, |ui| {
+                    ui.set_width(216.0);
+                    ui.spacing_mut().item_spacing.y = 2.0;
+                    for fmt in [ExportFormat::Png, ExportFormat::Jpeg, ExportFormat::Webp] {
+                        let label = format!("Save as {}\u{2026}", fmt.label());
+                        if crate::components::menu_item(
+                            ui,
+                            &label,
+                            None,
+                            fmt == self.export_format,
+                            true,
+                            false,
+                        ) {
+                            pick = Some(fmt);
                         }
-                        ui.separator();
-                        if ui
-                            .add(egui::Button::new("Copy image").shortcut_text("Ctrl+C").frame(false))
-                            .clicked()
-                        {
-                            copy = true;
-                        }
-                        if ui.add(egui::Button::new("Print\u{2026}").frame(false)).clicked() {
-                            print = true;
-                        }
-                    });
+                    }
+                    ui.separator();
+                    if crate::components::menu_item(
+                        ui,
+                        "Copy image",
+                        Some("Ctrl+C"),
+                        false,
+                        true,
+                        false,
+                    ) {
+                        copy = true;
+                    }
+                    if crate::components::menu_item(
+                        ui,
+                        "Print\u{2026}",
+                        None,
+                        false,
+                        true,
+                        false,
+                    ) {
+                        print = true;
+                    }
                 });
             });
         let menu_rect = area.response.rect;
@@ -1360,29 +1423,36 @@ impl EditorApp {
         }
         let mut open = self.combine_dialog_open;
         let mut create = false;
-        egui::Window::new("Combine in Template")
-            .frame(theme::modal_frame())
-            .collapsible(false)
-            .resizable(false)
-            .open(&mut open)
-            .show(ctx, |ui| {
-                ui.set_min_width(260.0);
-                ui.label(format!(
-                    "Combining {} captures with numbered Step badges:",
-                    self.tray_selected.len()
-                ));
-                ui.add_space(qs_theme::space::SM as f32);
+        let count = self.tray_selected.len();
+        crate::components::modal_window(
+            ctx,
+            "combine_template_modal",
+            "Combine in Template",
+            320.0,
+            |ui| {
+                ui.label(
+                    egui::RichText::new(format!(
+                        "Combining {count} captures with numbered Step badges:"
+                    ))
+                    .size(qs_theme::font::SMALL as f32 + 0.5)
+                    .color(theme::text_secondary()),
+                );
+                ui.add_space(qs_theme::space::MD as f32);
                 for layout in [
                     CombineLayout::SideBySide,
                     CombineLayout::VerticalSteps,
                     CombineLayout::Grid2x2,
                 ] {
-                    ui.radio_value(&mut self.combine_layout, layout, layout.label());
+                    if crate::components::radio_card(
+                        ui,
+                        self.combine_layout == layout,
+                        layout.label(),
+                    ) {
+                        self.combine_layout = layout;
+                    }
+                    ui.add_space(qs_theme::space::XS as f32);
                 }
-                ui.add_space(qs_theme::space::MD as f32);
                 ui.add_space(qs_theme::space::SM as f32);
-                ui.separator();
-                ui.add_space(qs_theme::space::XS as f32);
                 crate::components::dialog_actions(ui, |ui| {
                     if crate::components::pill_button_primary(
                         ui,
@@ -1391,8 +1461,13 @@ impl EditorApp {
                     ) {
                         create = true;
                     }
+                    ui.add_space(qs_theme::space::XS as f32);
+                    if crate::components::pill_button(ui, "Cancel", "Close dialog") {
+                        open = false;
+                    }
                 });
-            });
+            },
+        );
         self.combine_dialog_open = open;
 
         if create {
@@ -2415,11 +2490,18 @@ impl eframe::App for EditorApp {
                             .strong()
                             .color(theme::text_tertiary()),
                     );
-                    ui.label(
-                        egui::RichText::new(format!("{}", self.editor.doc().objects.len()))
-                            .size(qs_theme::font::CAPTION as f32)
-                            .color(theme::text_tertiary()),
-                    );
+                    egui::Frame::NONE
+                        .fill(theme::bg_pill_track())
+                        .corner_radius(egui::CornerRadius::same(255))
+                        .inner_margin(egui::Margin::symmetric(6, 1))
+                        .show(ui, |ui| {
+                            ui.label(
+                                egui::RichText::new(format!("{}", self.editor.doc().objects.len()))
+                                    .size(qs_theme::font::CAPTION as f32)
+                                    .monospace()
+                                    .color(theme::text_secondary()),
+                            );
+                        });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if self.editor.selection().len() >= 2 {
                             if crate::components::pill_button(
@@ -3016,72 +3098,93 @@ impl eframe::App for EditorApp {
                     }
                 }
 
-                // 8. Floating macOS Toast HUD
+                // 8. Floating macOS Toast HUD (semantic success/error icon, crisp rim, ease-out entrance)
                 if let Some((msg, time)) = &self.toast {
                     let elapsed = time.elapsed().as_secs_f32();
                     if elapsed < 2.6 {
-                        let fade = if elapsed > 2.2 {
+                        let enter_t = (elapsed / 0.16).clamp(0.0, 1.0);
+                        let enter_ease = 1.0 - (1.0 - enter_t).powi(3);
+                        let fade_out = if elapsed > 2.2 {
                             ((2.6 - elapsed) / 0.4).clamp(0.0, 1.0)
                         } else {
                             1.0
                         };
+                        let fade = enter_ease * fade_out;
+                        let lift = (1.0 - enter_ease) * 6.0 + (1.0 - fade_out) * 4.0;
+                        let is_err = msg.contains("failed")
+                            || msg.contains("Failed")
+                            || msg.contains("No ");
                         let text_galley = painter.layout_no_wrap(
                             msg.clone(),
                             FontId::proportional(12.5),
                             text_primary(),
                         );
-                        let w = (text_galley.size().x + 52.0).clamp(160.0, 420.0);
+                        let w = (text_galley.size().x + 56.0).clamp(164.0, 440.0);
                         let hud_rect = Rect::from_center_size(
-                            Pos2::new(screen_rect.center().x, screen_rect.bottom() - 34.0),
-                            Vec2::new(w, 34.0),
+                            Pos2::new(screen_rect.center().x, screen_rect.bottom() - 34.0 + lift),
+                            Vec2::new(w, 36.0),
                         );
-                        let alpha_bg = (232.0 * fade) as u8;
+                        let bg_col = theme::bg_card();
+                        let rim_col = theme::border_hot();
+                        let alpha_bg = (244.0 * fade) as u8;
                         let alpha_fg = (255.0 * fade) as u8;
                         theme::paint_soft_shadow(
                             &painter,
                             hud_rect,
-                            17.0,
-                            5.0,
-                            14.0,
-                            (100.0 * fade) as u8,
+                            18.0,
+                            6.0,
+                            16.0,
+                            (if qs_theme::pal().dark { 130.0 } else { 52.0 } * fade) as u8,
                         );
                         painter.rect_filled(
                             hud_rect,
-                            17.0,
+                            18.0,
                             Color32::from_rgba_unmultiplied(
-                                qs_theme::pal().panel_top.to_be_bytes()[1],
-                                qs_theme::pal().panel_top.to_be_bytes()[2],
-                                qs_theme::pal().panel_top.to_be_bytes()[3],
+                                bg_col.r(),
+                                bg_col.g(),
+                                bg_col.b(),
                                 alpha_bg,
                             ),
                         );
                         painter.rect_stroke(
                             hud_rect,
-                            17.0,
+                            18.0,
                             Stroke::new(
                                 1.0,
                                 Color32::from_rgba_unmultiplied(
-                                    border_subtle().r(),
-                                    border_subtle().g(),
-                                    border_subtle().b(),
-                                    (32.0 * fade) as u8,
+                                    rim_col.r(),
+                                    rim_col.g(),
+                                    rim_col.b(),
+                                    (200.0 * fade) as u8,
                                 ),
                             ),
                             StrokeKind::Inside,
                         );
-                        icons::draw_action_icon(
-                            &painter,
-                            Pos2::new(hud_rect.left() + 18.0, hud_rect.center().y),
-                            ActionIcon::CheckCircle,
-                            Color32::from_rgba_unmultiplied(
-                                success_green().r(),
-                                success_green().g(),
-                                success_green().b(),
-                                alpha_fg,
-                            ),
-                        );
+                        let icon_c = Pos2::new(hud_rect.left() + 19.0, hud_rect.center().y);
+                        if is_err {
+                            let dc = theme::danger_red();
+                            painter.circle_filled(
+                                icon_c,
+                                8.0,
+                                Color32::from_rgba_unmultiplied(dc.r(), dc.g(), dc.b(), alpha_fg),
+                            );
+                            icons::draw_action_icon(
+                                &painter,
+                                icon_c,
+                                ActionIcon::Close,
+                                Color32::from_rgba_unmultiplied(255, 255, 255, alpha_fg),
+                            );
+                        } else {
+                            let sc = success_green();
+                            icons::draw_action_icon(
+                                &painter,
+                                icon_c,
+                                ActionIcon::CheckCircle,
+                                Color32::from_rgba_unmultiplied(sc.r(), sc.g(), sc.b(), alpha_fg),
+                            );
+                        }
                         painter.text(
-                            Pos2::new(hud_rect.left() + 34.0, hud_rect.center().y),
+                            Pos2::new(hud_rect.left() + 36.0, hud_rect.center().y),
                             egui::Align2::LEFT_CENTER,
                             msg,
                             FontId::proportional(12.5),
@@ -3092,12 +3195,12 @@ impl eframe::App for EditorApp {
                                 alpha_fg,
                             ),
                         );
-                        if elapsed < 2.2 {
+                        if elapsed < 0.16 || elapsed >= 2.2 {
+                            ctx.request_repaint();
+                        } else {
                             ctx.request_repaint_after(std::time::Duration::from_secs_f32(
                                 (2.2 - elapsed).max(0.016),
                             ));
-                        } else {
-                            ctx.request_repaint();
                         }
                     }
                 }

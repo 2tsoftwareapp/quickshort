@@ -560,6 +560,383 @@ pub fn pill_button_colored(
     }
 }
 
+/// Subtle inset container for an expanded effect's sub-controls so nested
+/// sliders/pickers visually belong to their parent switch rather than bleeding
+/// into the next toggle row.
+pub fn effect_group(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
+    ui.add_space(sp(space::HAIR));
+    egui::Frame::NONE
+        .fill(theme::bg_inspector_top())
+        .stroke(Stroke::new(1.0, theme::border_subtle()))
+        .corner_radius(rad(radius::MD))
+        .inner_margin(egui::Margin::symmetric(sp(space::SM) as i8, sp(space::SM) as i8))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing.y = sp(space::SM);
+            add_contents(ui);
+        });
+    ui.add_space(sp(space::XS));
+}
+
+/// Consistent inspector row: left-aligned label (matching `switch_row` inset)
+/// and right-aligned control.
+pub fn prop_row<R>(
+    ui: &mut egui::Ui,
+    label: &str,
+    active: bool,
+    add_right: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    ui.horizontal(|ui| {
+        ui.set_min_height(CONTROL_H);
+        ui.add_space(sp(space::XS));
+        ui.label(
+            egui::RichText::new(label)
+                .size(fs(font::SMALL) + 0.5)
+                .color(if active {
+                    theme::text_primary()
+                } else {
+                    theme::text_secondary()
+                }),
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.add_space(sp(space::XS));
+            add_right(ui)
+        })
+        .inner
+    })
+    .inner
+}
+
+/// Sleek Apple/Linear-style slider row: label on left, formatted numeric value
+/// on right, thin 4px rounded track with accent fill and clean circular knob.
+pub fn slider_row(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &mut f32,
+    range: std::ops::RangeInclusive<f32>,
+    suffix: &str,
+    decimals: usize,
+) -> bool {
+    let min = *range.start();
+    let max = *range.end();
+    let span = (max - min).max(f32::EPSILON);
+    let formatted = if decimals == 0 {
+        format!("{:.0}{suffix}", *value)
+    } else {
+        format!("{:.prec$}{suffix}", *value, prec = decimals)
+    };
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new(label)
+                .size(fs(font::SMALL))
+                .color(theme::text_secondary()),
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.label(
+                egui::RichText::new(formatted)
+                    .size(fs(font::SMALL))
+                    .monospace()
+                    .color(theme::text_primary()),
+            );
+        });
+    });
+
+    let width = ui.available_width().max(80.0);
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, 18.0), Sense::click_and_drag());
+    let knob_r: f32 = if resp.dragged() { 7.0 } else if resp.hovered() { 6.5 } else { 6.0 };
+    let pad = 7.0;
+    let track_left = rect.left() + pad;
+    let track_right = (rect.right() - pad).max(track_left + 1.0);
+    let track_w = track_right - track_left;
+
+    let mut changed = false;
+    if (resp.dragged() || resp.clicked()) && resp.interact_pointer_pos().is_some() {
+        let px = resp.interact_pointer_pos().unwrap().x;
+        let t = ((px - track_left) / track_w).clamp(0.0, 1.0);
+        let next = min + t * span;
+        let next = if decimals == 0 { next.round() } else { next };
+        if (next - *value).abs() > f32::EPSILON {
+            *value = next;
+            changed = true;
+        }
+    }
+
+    let t = ((*value - min) / span).clamp(0.0, 1.0);
+    let cy = rect.center().y;
+    let track_h = 4.0;
+    let track_rect = Rect::from_min_max(
+        Pos2::new(track_left, cy - track_h * 0.5),
+        Pos2::new(track_right, cy + track_h * 0.5),
+    );
+    let painter = ui.painter();
+    let track_cr = rad(radius::PILL);
+    painter.rect_filled(track_rect, track_cr, theme::bg_pill_track());
+    if t > 0.0 {
+        let fill_rect = Rect::from_min_max(
+            track_rect.min,
+            Pos2::new(track_left + track_w * t, track_rect.max.y),
+        );
+        painter.rect_filled(fill_rect, track_cr, theme::accent_blue());
+    }
+
+    let knob_center = Pos2::new(track_left + track_w * t, cy);
+    // Soft drop shadow + crisp white knob (no harsh dark ring).
+    painter.circle_filled(
+        knob_center + Vec2::new(0.0, 1.0),
+        knob_r + 0.5,
+        Color32::from_black_alpha(if qs_theme::pal().dark { 96 } else { 36 }),
+    );
+    painter.circle_filled(knob_center, knob_r, Color32::WHITE);
+    painter.circle_stroke(
+        knob_center,
+        knob_r,
+        Stroke::new(
+            0.75,
+            if resp.hovered() || resp.dragged() {
+                theme::accent_blue()
+            } else {
+                Color32::from_black_alpha(if qs_theme::pal().dark { 60 } else { 32 })
+            },
+        ),
+    );
+
+    if resp.hovered() || resp.dragged() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    changed
+}
+
+/// Compact selectable chip for multi-toggle options (e.g. Torn edge sides).
+pub fn toggle_chip(ui: &mut egui::Ui, on: &mut bool, label: &str) -> bool {
+    let size = Vec2::new(
+        ui.painter()
+            .layout_no_wrap(
+                label.to_owned(),
+                egui::FontId::proportional(fs(font::CAPTION) + 0.5),
+                theme::text_primary(),
+            )
+            .size()
+            .x
+            + 14.0,
+        22.0,
+    );
+    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+    let mut changed = false;
+    if resp.clicked() {
+        *on = !*on;
+        changed = true;
+    }
+    let painter = ui.painter();
+    let cr = rad(radius::SM);
+    let (fill, border, fg) = if *on {
+        (
+            theme::accent_alpha(if qs_theme::pal().dark { 56 } else { 28 }),
+            theme::accent_alpha(if qs_theme::pal().dark { 140 } else { 90 }),
+            if qs_theme::pal().dark {
+                theme::accent_blue_soft()
+            } else {
+                theme::accent_blue()
+            },
+        )
+    } else if resp.hovered() {
+        (
+            theme::bg_pill_hover(),
+            theme::border_hot(),
+            theme::text_primary(),
+        )
+    } else {
+        (
+            theme::bg_card(),
+            theme::border_subtle(),
+            theme::text_secondary(),
+        )
+    };
+    painter.rect_filled(rect, cr, fill);
+    painter.rect_stroke(rect, cr, Stroke::new(1.0, border), StrokeKind::Inside);
+    painter.text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        label,
+        egui::FontId::proportional(fs(font::CAPTION) + 0.5),
+        fg,
+    );
+    if resp.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    changed
+}
+
+/// Translucent full-viewport scrim painted behind modal alerts/dialogs.
+pub fn modal_backdrop(ctx: &egui::Context, id: &str) {
+    let rect = ctx.content_rect();
+    egui::Area::new(egui::Id::new(id))
+        .order(egui::Order::Middle)
+        .fixed_pos(rect.min)
+        .show(ctx, |ui| {
+            let (_r, _resp) = ui.allocate_exact_size(rect.size(), Sense::click());
+            ui.painter().rect_filled(
+                rect,
+                CornerRadius::ZERO,
+                Color32::from_black_alpha(if qs_theme::pal().dark { 120 } else { 52 }),
+            );
+        });
+}
+
+/// Borderless, centered macOS-style alert/modal container with custom title,
+/// body copy, and bottom action row.
+pub fn modal_window(
+    ctx: &egui::Context,
+    id: &str,
+    title: &str,
+    min_width: f32,
+    add_contents: impl FnOnce(&mut egui::Ui),
+) {
+    modal_backdrop(ctx, &format!("{id}_scrim"));
+    egui::Window::new(title)
+        .id(egui::Id::new(id))
+        .title_bar(false)
+        .order(egui::Order::Foreground)
+        .frame(theme::modal_frame())
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
+        .show(ctx, |ui| {
+            ui.set_min_width(min_width);
+            ui.label(
+                egui::RichText::new(title)
+                    .size(fs(font::HEADING) - 1.0)
+                    .strong()
+                    .color(theme::text_primary()),
+            );
+            ui.add_space(sp(space::SM));
+            add_contents(ui);
+        });
+}
+
+/// Consistent popover menu row (`28px` height, rounded hover pill, left label,
+/// optional active accent dot, right-aligned shortcut hint).
+pub fn menu_item(
+    ui: &mut egui::Ui,
+    label: &str,
+    shortcut: Option<&str>,
+    active: bool,
+    enabled: bool,
+    danger: bool,
+) -> bool {
+    let width = ui.available_width().max(160.0);
+    let (rect, resp) = ui.allocate_exact_size(
+        Vec2::new(width, 28.0),
+        if enabled { Sense::click() } else { Sense::hover() },
+    );
+    let hovered = enabled && resp.hovered();
+    let painter = ui.painter();
+    let cr = rad(radius::SM);
+
+    if hovered {
+        let fill = if danger {
+            Color32::from_rgba_unmultiplied(
+                theme::danger_red().r(),
+                theme::danger_red().g(),
+                theme::danger_red().b(),
+                if qs_theme::pal().dark { 48 } else { 28 },
+            )
+        } else {
+            theme::bg_pill_hover()
+        };
+        painter.rect_filled(rect, cr, fill);
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+
+    let text_x = rect.left() + 10.0;
+    if active {
+        painter.circle_filled(
+            Pos2::new(rect.left() + 5.0, rect.center().y),
+            2.5,
+            theme::accent_blue(),
+        );
+    }
+
+    let fg = if !enabled {
+        theme::text_disabled()
+    } else if danger {
+        theme::danger_red()
+    } else if active {
+        theme::accent_blue()
+    } else {
+        theme::text_primary()
+    };
+
+    painter.text(
+        Pos2::new(if active { text_x + 4.0 } else { text_x }, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        label,
+        egui::FontId::proportional(fs(font::SMALL) + 0.5),
+        fg,
+    );
+
+    if let Some(sc) = shortcut {
+        painter.text(
+            Pos2::new(rect.right() - 10.0, rect.center().y),
+            egui::Align2::RIGHT_CENTER,
+            sc,
+            egui::FontId::monospace(fs(font::CAPTION) + 0.5),
+            if enabled {
+                theme::text_tertiary()
+            } else {
+                theme::text_disabled()
+            },
+        );
+    }
+
+    enabled && resp.clicked()
+}
+
+/// Selectable option card used inside dialogs (replaces raw egui radio buttons).
+pub fn radio_card(ui: &mut egui::Ui, selected: bool, label: &str) -> bool {
+    let width = ui.available_width().max(180.0);
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, 32.0), Sense::click());
+    let hovered = resp.hovered();
+    let painter = ui.painter();
+    let cr = rad(radius::MD);
+
+    let (fill, border) = if selected {
+        (
+            theme::accent_alpha(if qs_theme::pal().dark { 44 } else { 24 }),
+            theme::accent_blue(),
+        )
+    } else if hovered {
+        (theme::bg_pill_hover(), theme::border_hot())
+    } else {
+        (theme::bg_inspector_top(), theme::border_subtle())
+    };
+    painter.rect_filled(rect, cr, fill);
+    painter.rect_stroke(rect, cr, Stroke::new(1.0, border), StrokeKind::Inside);
+
+    let dot_c = Pos2::new(rect.left() + 15.0, rect.center().y);
+    if selected {
+        painter.circle_filled(dot_c, 5.5, theme::accent_blue());
+        painter.circle_filled(dot_c, 2.2, Color32::WHITE);
+    } else {
+        painter.circle_stroke(dot_c, 5.0, Stroke::new(1.25, theme::border_hot()));
+    }
+
+    painter.text(
+        Pos2::new(rect.left() + 30.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        label,
+        egui::FontId::proportional(fs(font::SMALL) + 0.5),
+        if selected {
+            theme::text_primary()
+        } else {
+            theme::text_secondary()
+        },
+    );
+    if hovered {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    resp.clicked()
+}
+
 pub fn empty_state(
     ui: &mut egui::Ui,
     title: &str,

@@ -151,11 +151,20 @@ pub fn sync_egui_visuals(ctx: &egui::Context) {
         s.visuals.widgets.active.fg_stroke = Stroke::new(1.0, text_primary());
         s.visuals.widgets.active.corner_radius = RADIUS_PILL;
 
+        // Open ComboBox / dropdown trigger: subtle accent focus ring.
+        s.visuals.widgets.open.bg_fill = bg_card();
+        s.visuals.widgets.open.weak_bg_fill = bg_card();
+        s.visuals.widgets.open.bg_stroke = Stroke::new(1.25, accent_blue());
+        s.visuals.widgets.open.fg_stroke = Stroke::new(1.0, text_primary());
+        s.visuals.widgets.open.corner_radius = RADIUS_PILL;
+
         s.visuals.selection.bg_fill = accent_alpha(if dark { 70 } else { 42 });
         s.visuals.selection.stroke = Stroke::new(1.0, accent_blue());
 
         s.spacing.item_spacing = Vec2::new(8.0, 6.0);
         s.spacing.button_padding = Vec2::new(10.0, 5.0);
+        s.spacing.menu_margin = egui::Margin::same(6);
+        s.spacing.menu_spacing = 2.0;
         // The inspector is 236 px wide; a wider rail pushed its labels and
         // value fields outside the panel.
         s.spacing.slider_width = 84.0;
@@ -474,9 +483,30 @@ pub fn section_header(ui: &mut egui::Ui, title: &str) {
 
 /// Consistent modal window frame for editor dialogs (`radius::XL`, `space::LG` padding).
 pub fn modal_frame() -> egui::Frame {
-    egui::Frame::window(&egui::Style::default())
+    egui::Frame::NONE
         .fill(bg_card())
         .stroke(Stroke::new(1.0, border_hot()))
         .corner_radius(RADIUS_WINDOW)
+        .shadow(egui::epaint::Shadow {
+            offset: [0, 10],
+            blur: 28,
+            spread: 0,
+            color: Color32::from_black_alpha(if qs_theme::pal().dark { 130 } else { 48 }),
+        })
         .inner_margin(egui::Margin::same(qs_theme::space::LG as i8))
+}
+
+/// Elevated popover / dropdown menu frame (`radius::LG`, crisp rim, soft shadow).
+pub fn popover_frame() -> egui::Frame {
+    egui::Frame::NONE
+        .fill(bg_card())
+        .stroke(Stroke::new(1.0, border_hot()))
+        .corner_radius(RADIUS_CARD)
+        .shadow(egui::epaint::Shadow {
+            offset: [0, 6],
+            blur: 18,
+            spread: 0,
+            color: Color32::from_black_alpha(if qs_theme::pal().dark { 110 } else { 36 }),
+        })
+        .inner_margin(egui::Margin::same(6))
 }

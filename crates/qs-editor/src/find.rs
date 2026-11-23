@@ -47,10 +47,7 @@ pub fn render(
         // Clear of the toolbar and the properties bar, which are 96 px tall.
         .anchor(egui::Align2::CENTER_TOP, Vec2::new(0.0, 132.0))
         .show(ctx, |ui| {
-            egui::Frame::NONE
-                .fill(theme::bg_card())
-                .stroke(egui::Stroke::new(1.0, theme::border_subtle()))
-                .corner_radius(qs_theme::radius::LG as u8)
+            theme::popover_frame()
                 .inner_margin(egui::Margin::symmetric(space::MD as i8, space::SM as i8))
                 .show(ui, |ui| {
             ui.horizontal(|ui| {

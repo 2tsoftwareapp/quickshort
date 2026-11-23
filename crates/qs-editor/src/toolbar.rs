@@ -354,10 +354,20 @@ pub fn render_top_bar(
     res.export_rect = Some(export_rect);
     // Secondary action buttons (Save / Export) + Primary CTA (Copy)
     if compact_actions {
+        let pair_rect = Rect::from_min_max(save_rect.min, export_rect.max);
+        paint_segmented_track(ui.painter(), pair_rect, RADIUS_TRACK);
+        let mid_x = (save_rect.right() + export_rect.left()) * 0.5;
+        ui.painter().line_segment(
+            [
+                Pos2::new(mid_x, pair_rect.top() + 6.0),
+                Pos2::new(mid_x, pair_rect.bottom() - 6.0),
+            ],
+            Stroke::new(1.0, divider_vertical()),
+        );
         if icon_segment(
             ui,
             "tb_save",
-            save_rect,
+            save_rect.shrink(3.0),
             ActionIcon::Save,
             false,
             true,
@@ -368,7 +378,7 @@ pub fn render_top_bar(
         if icon_segment(
             ui,
             "tb_export",
-            export_rect,
+            export_rect.shrink(3.0),
             ActionIcon::Export,
             false,
             true,
