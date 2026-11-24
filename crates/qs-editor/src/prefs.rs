@@ -1,10 +1,7 @@
-//! Shared Quickshort `config.toml` preferences reader/writer for `qs-editor`.
-//!
-//! Reads and updates `theme`, `accent`, `after_capture`, and `copy_after_save`
-//! in-place while preserving all other keys and `[[profiles]]` sections owned
-//! by `qs-app`.
+//! Quickshort settings used by the standalone editor.
 
-use std::path::{Path, PathBuf};
+use serde::Deserialize;
+use std::path::PathBuf;
 
 pub const AFTER_CAPTURE_OPTIONS: &[(&str, &str)] = &[
     ("shelf", "Show Shelf"),
@@ -12,7 +9,8 @@ pub const AFTER_CAPTURE_OPTIONS: &[(&str, &str)] = &[
     ("copy", "Copy to Clipboard"),
 ];
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(default)]
 pub struct AppPrefs {
     pub theme: String,
     pub accent: String,
@@ -43,58 +41,21 @@ impl Default for AppPrefs {
 }
 
 impl AppPrefs {
-    /// Same config path as `qs-app::config::Config::path()`.
-    pub fn config_path() -> PathBuf {
-        let base = if cfg!(target_os = "macos") {
-            std::env::var_os("HOME")
-                .map(|h| PathBuf::from(h).join("Library").join("Application Support"))
-        } else if cfg!(target_os = "windows") {
-            std::env::var_os("APPDATA").map(PathBuf::from)
-        } else {
-            std::env::var_os("XDG_CONFIG_HOME")
-                .map(PathBuf::from)
-                .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
-        };
-        base.unwrap_or_else(|| PathBuf::from("."))
-            .join("quickshort")
-            .join("config.toml")
-    }
-
     pub fn load() -> Self {
-        Self::load_from(&Self::config_path())
-    }
-
-    pub fn load_from(path: &Path) -> Self {
-        let mut prefs = Self::default();
-        let Ok(raw) = std::fs::read_to_string(path) else {
-            return prefs;
-        };
-        for line in raw.lines() {
-            let trimmed = line.trim();
-            if trimmed.starts_with('[') {
-                // Stop at first table/section header (`[[profiles]]` etc.)
-                break;
-            }
-            let Some((k, v)) = trimmed.split_once('=') else {
-                continue;
-            };
-            let key = k.trim();
-            let val = v.trim().trim_matches('"');
-            match key {
-                "theme" => prefs.theme = val.to_owned(),
-                "accent" => prefs.accent = val.to_owned(),
-                "after_capture" => prefs.after_capture = val.to_owned(),
-                "copy_after_save" => prefs.copy_after_save = val == "true",
-                "ocr_lang" => prefs.ocr_lang = val.to_owned(),
-                "watermark_text" => prefs.watermark_text = val.to_owned(),
-                "save_dir"
-                    if !val.is_empty() => {
-                        prefs.save_dir = Some(PathBuf::from(val));
-                    }
-                _ => {}
+        match Self::read() {
+            Ok(prefs) => prefs,
+            Err(error) => {
+                eprintln!("editor settings: {error}");
+                Self::default()
             }
         }
-        prefs
+    }
+
+    pub fn read() -> std::io::Result<Self> {
+        match qs_core::config::read(&qs_core::config::path()) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
+            result => result,
+        }
     }
 
     /// The capture folder: what the app config says, else the documented
@@ -102,139 +63,28 @@ impl AppPrefs {
     pub fn capture_dir(&self) -> PathBuf {
         self.save_dir
             .clone()
+            .filter(|path| !path.as_os_str().is_empty())
             .or_else(qs_library::default_dir)
             .unwrap_or_else(|| PathBuf::from("."))
     }
 
-    pub fn save(&self) {
-        self.save_to(&Self::config_path());
+    pub fn save_theme(theme: &str) -> std::io::Result<()> {
+        qs_core::config::update(
+            &qs_core::config::path(),
+            &std::collections::BTreeMap::from([("theme", theme)]),
+        )
     }
 
-    pub fn save_to(&self, path: &Path) {
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let existing = std::fs::read_to_string(path).unwrap_or_default();
-        let updated = patch_toml(&existing, self);
-        let _ = std::fs::write(path, updated);
+    pub fn save_watermark(text: &str) -> std::io::Result<()> {
+        qs_core::config::update(
+            &qs_core::config::path(),
+            &std::collections::BTreeMap::from([("watermark_text", text)]),
+        )
     }
 
     /// Apply live theme + accent to `qs-theme` immediately.
     pub fn apply_live(&self) {
         qs_theme::set_theme(&self.theme);
         qs_theme::set_accent(qs_theme::accent_by_name(&self.accent));
-    }
-}
-
-fn patch_toml(existing: &str, prefs: &AppPrefs) -> String {
-    let mut out = Vec::new();
-    let mut seen_theme = false;
-    let mut seen_accent = false;
-    let mut seen_after = false;
-    let mut seen_copy = false;
-    let mut seen_wm = false;
-    let mut in_section = false;
-    let mut insert_at = None;
-
-    for line in existing.lines() {
-        let trimmed = line.trim();
-        if !in_section && trimmed.starts_with('[') {
-            in_section = true;
-            insert_at = Some(out.len());
-        }
-        if !in_section {
-            if let Some((k, _)) = trimmed.split_once('=') {
-                match k.trim() {
-                    "theme" => {
-                        out.push(format!("theme = \"{}\"", prefs.theme));
-                        seen_theme = true;
-                        continue;
-                    }
-                    "accent" => {
-                        out.push(format!("accent = \"{}\"", prefs.accent));
-                        seen_accent = true;
-                        continue;
-                    }
-                    "after_capture" => {
-                        out.push(format!("after_capture = \"{}\"", prefs.after_capture));
-                        seen_after = true;
-                        continue;
-                    }
-                    "copy_after_save" => {
-                        out.push(format!("copy_after_save = {}", prefs.copy_after_save));
-                        seen_copy = true;
-                        continue;
-                    }
-                    "watermark_text" => {
-                        let escaped = prefs.watermark_text.replace('"', "\\\"");
-                        out.push(format!("watermark_text = \"{escaped}\""));
-                        seen_wm = true;
-                        continue;
-                    }
-                    _ => {}
-                }
-            }
-        }
-        out.push(line.to_owned());
-    }
-
-    let mut missing = Vec::new();
-    if !seen_theme {
-        missing.push(format!("theme = \"{}\"", prefs.theme));
-    }
-    if !seen_accent {
-        missing.push(format!("accent = \"{}\"", prefs.accent));
-    }
-    if !seen_after {
-        missing.push(format!("after_capture = \"{}\"", prefs.after_capture));
-    }
-    if !seen_copy {
-        missing.push(format!("copy_after_save = {}", prefs.copy_after_save));
-    }
-    if !seen_wm && !prefs.watermark_text.is_empty() {
-        let escaped = prefs.watermark_text.replace('"', "\\\"");
-        missing.push(format!("watermark_text = \"{escaped}\""));
-    }
-
-    if !missing.is_empty() {
-        let idx = insert_at.unwrap_or(out.len());
-        out.splice(idx..idx, missing);
-    }
-    let mut s = out.join("\n");
-    if !s.ends_with('\n') {
-        s.push('\n');
-    }
-    s
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn roundtrip_preserves_other_keys_and_sections() {
-        let dir = std::env::temp_dir().join(format!("qs_prefs_test_{}", std::process::id()));
-        let path = dir.join("config.toml");
-        let _ = std::fs::create_dir_all(&dir);
-        std::fs::write(
-            &path,
-            "hotkey = \"cmd+shift+4\"\ntheme = \"dark\"\n\n[[profiles]]\nname = \"Default\"\n",
-        )
-        .unwrap();
-
-        let mut prefs = AppPrefs::load_from(&path);
-        assert_eq!(prefs.theme, "dark");
-        prefs.theme = "light".into();
-        prefs.accent = "purple".into();
-        prefs.after_capture = "editor".into();
-        prefs.copy_after_save = true;
-        prefs.save_to(&path);
-
-        let reloaded = AppPrefs::load_from(&path);
-        assert_eq!(reloaded, prefs);
-        let raw = std::fs::read_to_string(&path).unwrap();
-        assert!(raw.contains("hotkey = \"cmd+shift+4\""));
-        assert!(raw.contains("[[profiles]]"));
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

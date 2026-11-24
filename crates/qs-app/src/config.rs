@@ -175,46 +175,47 @@ impl Default for Config {
 
 impl Config {
     pub fn path() -> PathBuf {
-        dirs::config_dir()
-            .or_else(dirs::home_dir)
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("quickshort")
-            .join("config.toml")
+        qs_core::config::path()
+    }
+
+    pub fn read() -> std::io::Result<Self> {
+        match qs_core::config::read(&Self::path()) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
+            result => result,
+        }
     }
 
     pub fn load() -> Self {
-        let cfg = match std::fs::read_to_string(Self::path()) {
-            Ok(s) => toml::from_str(&s).unwrap_or_else(|e| {
-                eprintln!("config parse failed ({e}), using defaults");
-                Self::default()
-            }),
-            Err(_) => Self::default(),
-        };
-        // every entry point loads the config first, so this is the one
-        // place the process-wide theme and accent get selected at startup
-        qs_theme::set_theme(&cfg.theme);
-        qs_theme::set_accent(cfg.accent_rgb());
+        let cfg = Self::read().unwrap_or_else(|error| {
+            eprintln!("config read: {error}");
+            Self::default()
+        });
+        cfg.apply_appearance();
         cfg
     }
 
-    pub fn save(&self) {
-        let p = Self::path();
-        if let Some(d) = p.parent() {
-            let _ = std::fs::create_dir_all(d);
-        }
-        let s = match toml::to_string_pretty(self) {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("config serialize: {e}");
-                return;
-            }
+    pub fn apply_appearance(&self) {
+        qs_theme::set_theme(&self.theme);
+        qs_theme::set_accent(self.accent_rgb());
+    }
+
+    /// Apply appearance changes made by another Quickshort process.
+    pub fn refresh_appearance(&mut self) -> bool {
+        let Ok(current) = Self::read() else {
+            return false;
         };
-        // atomic write — a crash mid-write must not leave a truncated config
-        let tmp = p.with_extension("toml.tmp");
-        let res = std::fs::write(&tmp, &s).and_then(|()| std::fs::rename(&tmp, &p));
-        if let Err(e) = res {
-            let _ = std::fs::remove_file(&tmp);
-            eprintln!("config write {}: {e}", p.display());
+        if current.theme == self.theme && current.accent == self.accent {
+            return false;
+        }
+        current.apply_appearance();
+        self.theme = current.theme;
+        self.accent = current.accent;
+        true
+    }
+
+    pub fn save_changes(&self, before: &Self) {
+        if let Err(error) = qs_core::config::save_changes(&Self::path(), before, self) {
+            eprintln!("config write: {error}");
         }
     }
 

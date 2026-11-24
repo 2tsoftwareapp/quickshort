@@ -8,6 +8,7 @@ description = "Standalone annotation editor window (egui)"
 [dependencies]
 anyhow.workspace = true
 image.workspace = true
+qs-core.workspace = true
 qs-doc.workspace = true
 qs-theme.workspace = true
 qs-render.workspace = true

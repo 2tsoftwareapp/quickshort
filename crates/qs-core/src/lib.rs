@@ -14,6 +14,8 @@ use image::{imageops, RgbaImage};
 mod beautify;
 pub use beautify::{beautify, beautify_opts, Beautify};
 
+pub mod config;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Point {
     pub x: i32,

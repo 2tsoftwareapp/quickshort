@@ -22,7 +22,6 @@ arboard = "3"
 dirs = "7.0.0"
 global-hotkey = "0.8.0"
 serde = { version = "1.0.229", features = ["derive"] }
-toml = "1.1.6"
 tray-icon = { version = "0.26.0", default-features = false }
 muda = { version = "0.21.0", default-features = false }
 winit = "0.30.13"

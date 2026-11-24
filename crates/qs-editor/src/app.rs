@@ -25,6 +25,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
+use std::time::{Duration, Instant};
 
 /// What the user picked in the "unsaved changes" dialog.
 enum CloseDecision {
@@ -151,6 +152,7 @@ pub struct EditorApp {
     canvas_anchor: (usize, usize),
     layer_drag_id: Option<ObjectId>,
     prefs: crate::prefs::AppPrefs,
+    next_prefs_poll: Instant,
     /// Quick Styles: built-in presets + the user's saved ones.
     styles: styles::Library,
     /// Text filter for the quick-style bar (session state).
@@ -186,6 +188,8 @@ impl EditorApp {
         cc: &eframe::CreationContext<'_>,
     ) -> Self {
         fonts::install(&cc.egui_ctx);
+        let prefs = crate::prefs::AppPrefs::load();
+        prefs.apply_live();
         theme::apply_macos_visuals(&cc.egui_ctx);
 
         // A previous session may have died with edits that never reached the
@@ -247,7 +251,8 @@ impl EditorApp {
             filmstrip,
             session_cache: std::collections::HashMap::new(),
             layer_drag_id: None,
-            prefs: crate::prefs::AppPrefs::load(),
+            prefs,
+            next_prefs_poll: Instant::now(),
             styles: styles::Library::load(),
             library: crate::library::Library::default(),
             style_filter: String::new(),
@@ -456,6 +461,7 @@ impl EditorApp {
             canvas_anchor: (1, 1),
             layer_drag_id: None,
             prefs: crate::prefs::AppPrefs::default(),
+            next_prefs_poll: Instant::now(),
             styles: styles::Library::default(),
             library: crate::library::Library::default(),
             style_filter: String::new(),
@@ -1130,6 +1136,21 @@ impl EditorApp {
                     });
     }
 
+    fn refresh_preferences(&mut self, ctx: &egui::Context) {
+        let now = Instant::now();
+        if now >= self.next_prefs_poll {
+            self.next_prefs_poll = now + Duration::from_millis(500);
+            if let Ok(prefs) = crate::prefs::AppPrefs::read() {
+                if prefs.theme != self.prefs.theme || prefs.accent != self.prefs.accent {
+                    prefs.apply_live();
+                    theme::sync_egui_visuals(ctx);
+                }
+                self.prefs = prefs;
+            }
+        }
+        ctx.request_repaint_after(self.next_prefs_poll.saturating_duration_since(now));
+    }
+
     /// App menu at the left of the top bar: the actions that used to crowd
     /// the status bar, which now only reports.
     fn app_menu(&mut self, ctx: &egui::Context) {
@@ -1235,10 +1256,15 @@ impl EditorApp {
             spawn_app("--settings");
         }
         if flip_theme {
-            self.prefs.theme = if is_dark { "light" } else { "dark" }.into();
-            self.prefs.apply_live();
-            self.prefs.save();
-            theme::sync_egui_visuals(ctx);
+            let next = if is_dark { "light" } else { "dark" };
+            match crate::prefs::AppPrefs::save_theme(next) {
+                Ok(()) => {
+                    self.prefs.theme = next.into();
+                    qs_theme::set_theme(next);
+                    theme::sync_egui_visuals(ctx);
+                }
+                Err(error) => self.show_toast(format!("Could not save theme: {error}")),
+            }
         }
     }
 
@@ -2384,6 +2410,7 @@ impl eframe::App for EditorApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        self.refresh_preferences(&ctx);
 
         self.recovery_guard(&ctx);
         self.close_guard(&ctx);

@@ -528,9 +528,18 @@ fn effects_ui(ui: &mut egui::Ui, editor: &mut Editor, prefs: &mut crate::prefs::
                         .hint_text("Watermark text…")
                         .desired_width(f32::INFINITY),
                 );
-                if txt_resp.lost_focus() && w.text != prefs.watermark_text {
-                    prefs.watermark_text = w.text.clone();
-                    prefs.save();
+                let watermark_edit = txt_resp.id.with("watermark_changed");
+                if txt_resp.changed() {
+                    ui.data_mut(|data| data.insert_temp(watermark_edit, true));
+                }
+                if txt_resp.lost_focus() {
+                    let edited = ui.data_mut(|data| data.remove_temp::<bool>(watermark_edit));
+                    if edited == Some(true) && w.text != prefs.watermark_text {
+                        match crate::prefs::AppPrefs::save_watermark(&w.text) {
+                            Ok(()) => prefs.watermark_text.clone_from(&w.text),
+                            Err(error) => eprintln!("could not save default watermark: {error}"),
+                        }
+                    }
                 }
                 components::prop_row(ui, "Position", true, |ui| {
                     egui::ComboBox::from_id_salt("effect_watermark_pos")

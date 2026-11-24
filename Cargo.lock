@@ -3927,7 +3927,6 @@ dependencies = [
  "serde_json",
  "sha2",
  "softbuffer",
- "toml 1.1.6+spec-1.1.0",
  "tray-icon",
  "ureq",
  "wayland-backend",
@@ -3965,7 +3964,10 @@ dependencies = [
 name = "qs-core"
 version = "0.1.0"
 dependencies = [
+ "dirs",
  "image",
+ "serde",
+ "toml_edit 0.25.15+spec-1.1.0",
 ]
 
 [[package]]
@@ -3996,6 +3998,7 @@ dependencies = [
  "arboard",
  "eframe",
  "image",
+ "qs-core",
  "qs-doc",
  "qs-edit",
  "qs-library",
@@ -5106,8 +5109,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1340ea94a5856333492c9064b02c778b191dd2c853778d9609debdcdfea3a614"
 dependencies = [
  "indexmap",
+ "serde_core",
+ "serde_spanned 1.1.1",
  "toml_datetime 1.1.1+spec-1.1.0",
  "toml_parser",
+ "toml_writer",
  "winnow 1.0.4",
 ]
 

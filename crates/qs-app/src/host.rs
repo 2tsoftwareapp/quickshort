@@ -7,6 +7,7 @@ use global_hotkey::{hotkey::HotKey, GlobalHotKeyEvent, GlobalHotKeyManager, HotK
 use muda::{MenuEvent, MenuId};
 use qs_overlay::{Overlay, OverlayEvent};
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
@@ -129,6 +130,7 @@ struct Host {
     #[cfg(target_os = "linux")]
     hotkey_guard: Option<crate::hotkey_linux::Guard>,
     settings: Option<Settings>,
+    next_appearance_poll: Instant,
     toast: Option<Toast>,
     /// Post-capture thumbnail card — fallback where the chrome layer
     /// isn't implemented yet (Windows/Linux until their backends land).
@@ -188,6 +190,7 @@ impl Host {
             #[cfg(target_os = "linux")]
             hotkey_guard: None,
             settings: None,
+            next_appearance_poll: Instant::now(),
             toast: None,
             card: None,
             chrome,
@@ -240,11 +243,12 @@ impl Host {
         // used on Linux so the build stays warning-free.
         #[cfg(target_os = "linux")]
         let _ = el;
+        let before = self.cfg.clone();
         self.cfg.last_update_check = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        self.cfg.save();
+        self.cfg.save_changes(&before);
         #[cfg(not(target_os = "linux"))]
         if manual && self.toast.is_none() {
             if let Ok(t) = Toast::open(
@@ -326,8 +330,17 @@ impl Host {
         }
     }
 
+    fn refresh_appearance(&mut self) {
+        if self.cfg.refresh_appearance() {
+            if let Some(settings) = &self.settings {
+                settings.win().request_redraw();
+            }
+        }
+    }
+
     /// Capture every monitor and spawn the overlay session.
     fn trigger(&mut self, el: &ActiveEventLoop) {
+        self.refresh_appearance();
         if self.overlay.is_some() {
             return; // a selection is already in progress
         }
@@ -351,6 +364,7 @@ impl Host {
     /// no overlay, no action picker. The PNG lands in the album like a
     /// region Save so Copy/Share/Pin stay one right-click away.
     fn trigger_full(&mut self, el: &ActiveEventLoop) {
+        self.refresh_appearance();
         if self.overlay.is_some() {
             return; // a selection is already in progress
         }
@@ -420,6 +434,7 @@ impl Host {
                 }
             }
             tray::ID_SETTINGS => {
+                self.refresh_appearance();
                 if self.settings.is_none() {
                     match Settings::open(el, &self.cfg) {
                         Ok(mut s) => {
@@ -437,8 +452,9 @@ impl Host {
                 }
             }
             tray::ID_GDRIVE => {
+                let before = self.cfg.clone();
                 self.cfg.share_to_drive = !self.cfg.share_to_drive;
-                self.cfg.save();
+                self.cfg.save_changes(&before);
                 self.rebuild_menu();
             }
             tray::ID_GDRIVE_DISCONNECT => {
@@ -446,12 +462,13 @@ impl Host {
                 self.rebuild_menu();
             }
             tray::ID_LOGIN => {
+                let before = self.cfg.clone();
                 self.cfg.launch_at_login = !self.cfg.launch_at_login;
                 if let Err(e) = tray::set_launch_at_login(self.cfg.launch_at_login) {
                     eprintln!("launch-at-login: {e:#}");
                     self.cfg.launch_at_login = !self.cfg.launch_at_login; // revert
                 }
-                self.cfg.save();
+                self.cfg.save_changes(&before);
                 self.rebuild_menu();
             }
             _ => {
@@ -560,8 +577,8 @@ impl Host {
 
     /// Persist config, (re)register the hotkeys, refresh the tray menu —
     /// called after the settings window mutates `cfg`.
-    fn apply_cfg(&mut self, el: &ActiveEventLoop) {
-        self.cfg.save();
+    fn apply_cfg(&mut self, el: &ActiveEventLoop, before: &Config) {
+        self.cfg.save_changes(before);
         self.chrome.set_popup_pos(&self.cfg.popup_pos);
         let (region, full) = (self.cfg.hotkey.clone(), self.cfg.hotkey_full.clone());
         self.rebind_slot(el, &region, false);
@@ -1468,6 +1485,7 @@ impl ApplicationHandler<HostEvent> for Host {
         let is_settings = self.settings.as_ref().is_some_and(|s| s.win_id() == id);
         if is_settings {
             let s = self.settings.as_mut().unwrap();
+            let before = self.cfg.clone();
             let ev = s.window_event(&mut self.cfg, event);
             let recording = s.is_recording();
             match ev {
@@ -1476,7 +1494,7 @@ impl ApplicationHandler<HostEvent> for Host {
                     // recording — a Browse/login change while still armed
                     // must keep it suspended or the next chord fires capture
                     self.suspend_hotkey(recording);
-                    self.apply_cfg(el);
+                    self.apply_cfg(el, &before);
                 }
                 Some(SettingsEvent::HotkeyRecord) => self.suspend_hotkey(recording),
                 Some(SettingsEvent::CheckUpdates) => self.check_updates(el, true),
@@ -1602,11 +1620,20 @@ impl ApplicationHandler<HostEvent> for Host {
         }
         // earliest wake wins — the settings poll (pack install) must not
         // be starved by a longer toast timeout, and vice versa
-        let mut wake: Option<std::time::Instant> = None;
+        let mut wake = None;
+        if self.settings.is_some() {
+            let now = Instant::now();
+            if now >= self.next_appearance_poll {
+                self.refresh_appearance();
+                self.next_appearance_poll = now + Duration::from_millis(500);
+            }
+            wake = Some(self.next_appearance_poll);
+        }
         if let Some(s) = &mut self.settings {
             s.about_to_wait();
             if s.poll_needed() {
-                wake = Some(std::time::Instant::now() + std::time::Duration::from_millis(250));
+                let poll = Instant::now() + Duration::from_millis(250);
+                wake = Some(wake.map_or(poll, |next| next.min(poll)));
             }
         }
         if let Some(t) = &mut self.toast {

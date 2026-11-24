@@ -2356,6 +2356,7 @@ pub fn standalone() -> Result<()> {
     struct Run {
         cfg: Config,
         s: Option<Settings>,
+        next_appearance_poll: Option<std::time::Instant>,
     }
     impl winit::application::ApplicationHandler for Run {
         fn resumed(&mut self, el: &ActiveEventLoop) {
@@ -2372,9 +2373,10 @@ pub fn standalone() -> Result<()> {
             if s.win_id() != id {
                 return;
             }
+            let before = self.cfg.clone();
             if let Some(e) = s.window_event(&mut self.cfg, ev) {
                 match e {
-                    SettingsEvent::Changed => self.cfg.save(),
+                    SettingsEvent::Changed => self.cfg.save_changes(&before),
                     SettingsEvent::HotkeyRecord
                     | SettingsEvent::CheckUpdates
                     | SettingsEvent::InstallUpdate => {} // standalone: no host
@@ -2383,16 +2385,26 @@ pub fn standalone() -> Result<()> {
             }
         }
         fn about_to_wait(&mut self, el: &ActiveEventLoop) {
-            if let Some(s) = &mut self.s {
-                s.about_to_wait();
-                // a pack install reports via shared state — wake the loop
-                // to poll it instead of waiting for a window event
-                if s.poll_needed() {
-                    el.set_control_flow(winit::event_loop::ControlFlow::WaitUntil(
-                        std::time::Instant::now() + std::time::Duration::from_millis(250),
-                    ));
+            let Some(s) = &mut self.s else { return };
+            let now = std::time::Instant::now();
+            if let Some(deadline) = &mut self.next_appearance_poll {
+                if now >= *deadline {
+                    if self.cfg.refresh_appearance() {
+                        s.win().request_redraw();
+                    }
+                    *deadline = now + std::time::Duration::from_millis(500);
                 }
             }
+            s.about_to_wait();
+            let mut wake = self.next_appearance_poll;
+            if s.poll_needed() {
+                let poll = now + std::time::Duration::from_millis(250);
+                wake = Some(wake.map_or(poll, |next| next.min(poll)));
+            }
+            el.set_control_flow(wake.map_or(
+                winit::event_loop::ControlFlow::Wait,
+                winit::event_loop::ControlFlow::WaitUntil,
+            ));
         }
     }
     let el = winit::event_loop::EventLoop::new()?;
@@ -2406,7 +2418,12 @@ pub fn standalone() -> Result<()> {
         cfg.theme = t;
         qs_theme::set_theme(&cfg.theme);
     }
-    let mut run = Run { cfg, s: None };
+    let preview = std::env::var_os("QS_THEME").is_some() || std::env::var_os("QS_ACCENT").is_some();
+    let mut run = Run {
+        cfg,
+        s: None,
+        next_appearance_poll: (!preview).then(std::time::Instant::now),
+    };
     el.run_app(&mut run)?;
     Ok(())
 }
