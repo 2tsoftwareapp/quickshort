@@ -60,13 +60,13 @@ pub fn render(ui: &mut egui::Ui, editor: &mut Editor, prefs: &mut crate::prefs::
                 });
             });
         });
-        ui.add_space(space::MD as f32);
+        ui.add_space(space::XS as f32 - 2.0);
     }
     if !editor.selection().is_empty() {
         components::card(ui, |ui| {
             changed |= object_ui(ui, editor);
         });
-        ui.add_space(space::MD as f32);
+        ui.add_space(space::XS as f32 - 2.0);
     }
     if matches!(
         editor.selected_object().map(|o| &o.kind),
@@ -75,7 +75,7 @@ pub fn render(ui: &mut egui::Ui, editor: &mut Editor, prefs: &mut crate::prefs::
         components::card(ui, |ui| {
             changed |= text_ui(ui, editor);
         });
-        ui.add_space(space::MD as f32);
+        ui.add_space(space::XS as f32 - 2.0);
     }
     if let Some(qs_doc::ObjectKind::Step { center, radius, rgb, .. }) =
         editor.selected_object().map(|o| o.kind.clone())
@@ -104,12 +104,12 @@ pub fn render(ui: &mut egui::Ui, editor: &mut Editor, prefs: &mut crate::prefs::
                 changed = true;
             }
         });
-        ui.add_space(space::MD as f32);
+        ui.add_space(space::XS as f32 - 2.0);
     }
     components::card(ui, |ui| {
         changed |= beautify_ui(ui, editor);
     });
-    ui.add_space(space::MD as f32);
+    ui.add_space(space::XS as f32 - 2.0);
     components::card(ui, |ui| {
         section(ui, "Transform");
         let cmds = [
@@ -131,22 +131,42 @@ pub fn render(ui: &mut egui::Ui, editor: &mut Editor, prefs: &mut crate::prefs::
             changed = true;
         }
     });
-    ui.add_space(space::MD as f32);
+    ui.add_space(space::XS as f32 - 2.0);
     components::card(ui, |ui| {
         changed |= effects_ui(ui, editor, prefs);
     });
     changed
 }
 
-/// gradient-stop presets baked into the export backdrop
+/// gradient-stop presets baked into the export backdrop — locked to the
+/// mockup's `.grads` row (135° top-left → bottom-right stops).
 const BG_PRESETS: &[(&str, u32, u32)] = &[
-    ("Ocean", 0x2563EB, 0x06B6D4),  // allow-hex: document data
-    ("Sunset", 0xF97316, 0xEC4899), // allow-hex: document data
-    ("Lavender", 0x6366F1, 0xA855F7), // allow-hex: document data
-    ("Emerald", 0x059669, 0x14B8A6), // allow-hex: document data
-    ("Slate", 0x334155, 0x0F172A),  // allow-hex: document data
-    ("Peach", 0xFB7185, 0xFBBF24),  // allow-hex: document data
+    ("Sky", 0x38BDF8, 0x2563EB),    // allow-hex: document data
+    ("Sunset", 0xFB923C, 0xF43F5E), // allow-hex: document data
+    ("Violet", 0xA855F7, 0x6366F1), // allow-hex: document data
+    ("Mint", 0x34D399, 0x0D9488),   // allow-hex: document data
+    ("Graphite", 0x3F3F46, 0x18181B), // allow-hex: document data
+    ("Amber", 0xFBBF24, 0xF97316),  // allow-hex: document data
 ];
+
+/// `.sw` chip outline — inner white hairline at rest; selected gets the
+/// `--fg-dim` ring offset by a 2px surface gap (mockup `.sw.on`).
+fn chip_ring(painter: &egui::Painter, r: egui::Rect, sel: bool) {
+    painter.rect_stroke(
+        r.shrink(0.5),
+        egui::CornerRadius::same(6),
+        egui::Stroke::new(1.0, egui::Color32::from_white_alpha(40)),
+        egui::StrokeKind::Inside,
+    );
+    if sel {
+        painter.rect_stroke(
+            r.expand(2.0),
+            egui::CornerRadius::same(8),
+            egui::Stroke::new(1.5, theme::text_secondary()),
+            egui::StrokeKind::Inside,
+        );
+    }
+}
 
 /// 1-click Beautify card: gradient backdrop presets + auto rounded corners &
 /// soft drop shadow + padding slider.
@@ -157,28 +177,26 @@ fn beautify_ui(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
 
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = egui::Vec2::new(6.0, 6.0);
-        // "Off" chip
+        // "None" chip: mockup paints the graphite gradient + a grey slash.
         let off_sel = active_bg.is_none();
         let (off_r, off_resp) =
-            ui.allocate_exact_size(egui::Vec2::splat(24.0), egui::Sense::click());
-        ui.painter().rect_filled(
+            ui.allocate_exact_size(egui::Vec2::splat(22.0), egui::Sense::click());
+        theme::paint_grad_chip(
+            ui.painter(),
             off_r,
-            egui::CornerRadius::same(6),
-            theme::bg_inspector_top(),
+            6.0,
+            theme::bg_card(),
+            theme::bg_btn_secondary_hover_top(),
+            theme::bg_btn_secondary_bot(),
         );
         ui.painter().line_segment(
-            [off_r.left_bottom() + egui::Vec2::new(4.0, -4.0), off_r.right_top() + egui::Vec2::new(-4.0, 4.0)],
-            egui::Stroke::new(1.4, theme::danger_red()),
+            [
+                off_r.left_top() + egui::Vec2::new(4.0, 4.0),
+                off_r.right_bottom() + egui::Vec2::new(-4.0, -4.0),
+            ],
+            egui::Stroke::new(1.4, theme::text_tertiary()),
         );
-        ui.painter().rect_stroke(
-            off_r,
-            egui::CornerRadius::same(6),
-            egui::Stroke::new(
-                if off_sel { 1.75 } else { 1.0 },
-                if off_sel { theme::accent_blue() } else { theme::border_subtle() },
-            ),
-            egui::StrokeKind::Inside,
-        );
+        chip_ring(ui.painter(), off_r, off_sel);
         if off_resp.hovered() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
@@ -189,25 +207,11 @@ fn beautify_ui(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
         for &(name, ca, cb) in BG_PRESETS {
             let sel = active_bg.is_some_and(|b| b.color_a == ca && b.color_b == cb);
             let (r, resp) =
-                ui.allocate_exact_size(egui::Vec2::splat(24.0), egui::Sense::click());
+                ui.allocate_exact_size(egui::Vec2::splat(22.0), egui::Sense::click());
             let c1 = egui::Color32::from_rgb((ca >> 16) as u8, (ca >> 8) as u8, ca as u8);
             let c2 = egui::Color32::from_rgb((cb >> 16) as u8, (cb >> 8) as u8, cb as u8);
-            theme::paint_rounded_v_gradient(
-                ui.painter(),
-                r,
-                egui::CornerRadius::same(6),
-                c1,
-                c2,
-            );
-            ui.painter().rect_stroke(
-                r,
-                egui::CornerRadius::same(6),
-                egui::Stroke::new(
-                    if sel { 2.0 } else { 1.0 },
-                    if sel { theme::accent_blue() } else { egui::Color32::from_black_alpha(36) },
-                ),
-                egui::StrokeKind::Inside,
-            );
+            theme::paint_grad_chip(ui.painter(), r, 6.0, theme::bg_card(), c1, c2);
+            chip_ring(ui.painter(), r, sel);
             if resp.hovered() {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
             }
@@ -271,14 +275,14 @@ fn object_ui(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
     ui.horizontal_wrapped(|ui| {
         if ui
             .add_enabled(count >= 2, egui::Button::new("Group"))
-            .on_hover_text("Ctrl+G")
+            .on_hover_text(components::platform_shortcut("Ctrl+G"))
             .clicked()
         {
             editor.group_selected();
         }
         if ui
             .add_enabled(editor.selection_grouped(), egui::Button::new("Ungroup"))
-            .on_hover_text("Ctrl+Shift+G")
+            .on_hover_text(components::platform_shortcut("Ctrl+Shift+G"))
             .clicked()
         {
             editor.ungroup_selected();
@@ -414,17 +418,12 @@ fn effects_ui(ui: &mut egui::Ui, editor: &mut Editor, prefs: &mut crate::prefs::
             components::slider_row(ui, "Blur", &mut s.blur_radius, 0.0..=128.0, " px", 0);
             components::slider_row(ui, "Offset X", &mut s.offset.x, -256.0..=256.0, " px", 0);
             components::slider_row(ui, "Offset Y", &mut s.offset.y, -256.0..=256.0, " px", 0);
-            let mut op_pct = (s.opacity * 100.0).round();
-            if components::slider_row(ui, "Opacity", &mut op_pct, 0.0..=100.0, "%", 0) {
-                s.opacity = (op_pct / 100.0).clamp(0.0, 1.0);
-            }
-            color(ui, "Color", &mut s.color);
         });
     }
     let mut filter = effects.color_filter.unwrap_or(qs_doc::ColorFilter::None);
     components::prop_row(ui, "Filter", filter != qs_doc::ColorFilter::None, |ui| {
         egui::ComboBox::from_id_salt("effect_color_filter")
-            .width(104.0)
+            .width(66.0)
             .selected_text(format!("{filter:?}"))
             .show_ui(ui, |ui| {
                 use qs_doc::ColorFilter::*;
@@ -441,7 +440,6 @@ fn effects_ui(ui: &mut egui::Ui, editor: &mut Editor, prefs: &mut crate::prefs::
         || effects.reflection.is_some()
         || effects.watermark.is_some()
         || effects.edge.is_some();
-    ui.add_space(space::XS as f32);
     egui::CollapsingHeader::new(
         RichText::new("More effects")
             .size(qs_theme::font::SMALL as f32)
@@ -450,6 +448,13 @@ fn effects_ui(ui: &mut egui::Ui, editor: &mut Editor, prefs: &mut crate::prefs::
     .id_salt("inspector_more_effects")
     .default_open(has_more_active)
     .show(ui, |ui| {
+        if let Some(s) = &mut effects.shadow {
+            let mut opacity = (s.opacity * 100.0).round();
+            if components::slider_row(ui, "Shadow opacity", &mut opacity, 0.0..=100.0, "%", 0) {
+                s.opacity = (opacity / 100.0).clamp(0.0, 1.0);
+            }
+            color(ui, "Shadow color", &mut s.color);
+        }
         toggle(ui, "Color adjustments", &mut effects.color_adjust);
         if let Some(c) = &mut effects.color_adjust {
             components::effect_group(ui, |ui| {

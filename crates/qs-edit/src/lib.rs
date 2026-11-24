@@ -49,9 +49,103 @@ pub enum Tool {
     Fill,
     /// Move existing canvas content: drag a box, then click where it lands.
     SmartMove,
+    /// Polygon shapes (mockup-locked additions): drawn inside the drag rect.
+    Triangle,
+    Diamond,
+    Star,
+    Hexagon,
 }
 
 impl Tool {
+    /// Every tool, for iterating keyboard shortcuts.
+    pub const ALL: &[Tool] = &[
+        Tool::Select,
+        Tool::SelectRegion,
+        Tool::SmartMove,
+        Tool::Pen,
+        Tool::Highlighter,
+        Tool::Eraser,
+        Tool::Line,
+        Tool::Arrow,
+        Tool::Rect,
+        Tool::Ellipse,
+        Tool::Fill,
+        Tool::Text,
+        Tool::Callout,
+        Tool::Step,
+        Tool::Stamp,
+        Tool::Blur,
+        Tool::Spotlight,
+        Tool::Magnify,
+        Tool::Cutout,
+        Tool::Crop,
+        Tool::Triangle,
+        Tool::Diamond,
+        Tool::Star,
+        Tool::Hexagon,
+    ];
+
+    /// Single-key shortcut (no modifiers) that arms this tool — the one
+    /// source of truth for both key dispatch and the palette subscript.
+    pub fn key(self) -> char {
+        match self {
+            Tool::Select => 'v',
+            Tool::SelectRegion => 'm',
+            Tool::SmartMove => 'y',
+            Tool::Pen => 'p',
+            Tool::Highlighter => 'h',
+            Tool::Eraser => 'e',
+            Tool::Line => 'l',
+            Tool::Arrow => 'a',
+            Tool::Rect => 'r',
+            Tool::Ellipse => 'o',
+            Tool::Fill => 'u',
+            Tool::Text => 't',
+            Tool::Callout => 'c',
+            Tool::Step => 's',
+            Tool::Stamp => 'g',
+            Tool::Blur => 'b',
+            Tool::Spotlight => 'f',
+            Tool::Magnify => 'i',
+            Tool::Cutout => 'x',
+            Tool::Crop => 'k',
+            Tool::Triangle => 'n',
+            Tool::Diamond => 'd',
+            Tool::Star => 'j',
+            Tool::Hexagon => 'w',
+        }
+    }
+
+    /// Human name shown in the tool-tag and tooltips.
+    pub fn label(self) -> &'static str {
+        match self {
+            Tool::Select => "Select",
+            Tool::SelectRegion => "Select Region",
+            Tool::SmartMove => "Smart Move",
+            Tool::Pen => "Pen",
+            Tool::Highlighter => "Highlight",
+            Tool::Eraser => "Eraser",
+            Tool::Line => "Line",
+            Tool::Arrow => "Arrow",
+            Tool::Rect => "Rectangle",
+            Tool::Ellipse => "Ellipse",
+            Tool::Fill => "Paint Bucket",
+            Tool::Text => "Text",
+            Tool::Callout => "Callout",
+            Tool::Step => "Step",
+            Tool::Stamp => "Stamp",
+            Tool::Blur => "Blur / Redact",
+            Tool::Spotlight => "Spotlight",
+            Tool::Magnify => "Magnify",
+            Tool::Cutout => "Cutout",
+            Tool::Crop => "Crop / Trim",
+            Tool::Triangle => "Triangle",
+            Tool::Diamond => "Diamond",
+            Tool::Star => "Star",
+            Tool::Hexagon => "Hexagon",
+        }
+    }
+
     /// Freehand tools stay active after each stroke.
     fn keeps_tool(self) -> bool {
         matches!(self, Tool::Pen | Tool::Highlighter)
@@ -310,7 +404,11 @@ fn constrain(tool: Tool, a: PointF, b: PointF, shift: bool) -> PointF {
         | Tool::Callout
         | Tool::Magnify
         | Tool::Spotlight
-        | Tool::Stamp => {
+        | Tool::Stamp
+        | Tool::Triangle
+        | Tool::Diamond
+        | Tool::Star
+        | Tool::Hexagon => {
             let m = dx.abs().max(dy.abs());
             PointF::new(a.x + m * dx.signum(), a.y + m * dy.signum())
         }
@@ -326,7 +424,8 @@ fn degenerate(k: &ObjectKind) -> bool {
         | ObjectKind::Blur { r, .. }
         | ObjectKind::Magnify { rect: r, .. }
         | ObjectKind::Spotlight { rect: r, .. }
-        | ObjectKind::Stamp { rect: r, .. } => r.w.abs() < 3.0 || r.h.abs() < 3.0,
+        | ObjectKind::Stamp { rect: r, .. }
+        | ObjectKind::Polygon { r, .. } => r.w.abs() < 3.0 || r.h.abs() < 3.0,
         ObjectKind::Eraser { pts, .. } => pts.len() < 2 || pts.iter().all(|p| p.dist(pts[0]) < 1.0),
         _ => false,
     }
@@ -341,7 +440,8 @@ fn stroke_mut(k: &mut ObjectKind) -> Option<&mut Stroke> {
         | Line { stroke, .. }
         | Rect { stroke, .. }
         | Ellipse { stroke, .. }
-        | Callout { stroke, .. } => Some(stroke),
+        | Callout { stroke, .. }
+        | Polygon { stroke, .. } => Some(stroke),
         _ => None,
     }
 }
@@ -349,9 +449,11 @@ fn stroke_mut(k: &mut ObjectKind) -> Option<&mut Stroke> {
 fn fill_mut(k: &mut ObjectKind) -> Option<&mut Fill> {
     use ObjectKind::*;
     match k {
-        Rect { fill, .. } | Ellipse { fill, .. } | Text { fill, .. } | Callout { fill, .. } => {
-            Some(fill)
-        }
+        Rect { fill, .. }
+        | Ellipse { fill, .. }
+        | Text { fill, .. }
+        | Callout { fill, .. }
+        | Polygon { fill, .. } => Some(fill),
         _ => None,
     }
 }
@@ -374,7 +476,8 @@ fn selection_rgb(k: &ObjectKind) -> Option<u32> {
         | Rect { stroke, .. }
         | Ellipse { stroke, .. }
         | Callout { stroke, .. }
-        | Magnify { stroke, .. } => Some(stroke.rgb),
+        | Magnify { stroke, .. }
+        | Polygon { stroke, .. } => Some(stroke.rgb),
         Text { style, .. } => Some(style.rgb),
         Step { rgb, .. } | Stamp { rgb, .. } => Some(*rgb),
         _ => None,
@@ -1042,6 +1145,19 @@ impl Editor {
                     style: TextStyle { rgb, ..st.text },
                 }
             }
+            Tool::Triangle | Tool::Diamond | Tool::Star | Tool::Hexagon => {
+                ObjectKind::Polygon {
+                    kind: match self.tool {
+                        Tool::Triangle => qs_doc::PolyKind::Triangle,
+                        Tool::Diamond => qs_doc::PolyKind::Diamond,
+                        Tool::Star => qs_doc::PolyKind::Star,
+                        _ => qs_doc::PolyKind::Hexagon,
+                    },
+                    r: r0,
+                    stroke,
+                    fill: st.fill,
+                }
+            }
             _ => return,
         };
         self.begin_change();
@@ -1154,7 +1270,8 @@ impl Editor {
                         ObjectKind::Arrow { b, .. } | ObjectKind::Line { b, .. } => *b = q,
                         ObjectKind::Rect { r, .. }
                         | ObjectKind::Ellipse { r, .. }
-                        | ObjectKind::Blur { r, .. } => *r = RectF::from_points(start, q),
+                        | ObjectKind::Blur { r, .. }
+                        | ObjectKind::Polygon { r, .. } => *r = RectF::from_points(start, q),
                         ObjectKind::Magnify { rect, .. }
                         | ObjectKind::Spotlight { rect, .. }
                         | ObjectKind::Stamp { rect, .. } => *rect = RectF::from_points(start, q),

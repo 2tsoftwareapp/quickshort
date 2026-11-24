@@ -233,6 +233,58 @@ impl StampKind {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PolyKind {
+    Triangle,
+    Diamond,
+    Star,
+    Hexagon,
+}
+
+impl PolyKind {
+    pub const ALL: [Self; 4] = [Self::Triangle, Self::Diamond, Self::Star, Self::Hexagon];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Triangle => "Triangle",
+            Self::Diamond => "Diamond",
+            Self::Star => "Star",
+            Self::Hexagon => "Hexagon",
+        }
+    }
+}
+
+pub fn poly_points(kind: PolyKind, rect: RectF) -> Vec<PointF> {
+    let rect = rect.normalized();
+    let vertices: &[(f32, f32)] = match kind {
+        PolyKind::Triangle => &[(0.5, 0.0), (1.0, 1.0), (0.0, 1.0)],
+        PolyKind::Diamond => &[(0.5, 0.0), (1.0, 0.5), (0.5, 1.0), (0.0, 0.5)],
+        PolyKind::Hexagon => &[
+            (0.25, 0.0), (0.75, 0.0), (1.0, 0.5),
+            (0.75, 1.0), (0.25, 1.0), (0.0, 0.5),
+        ],
+        PolyKind::Star => {
+            let center = rect.center();
+            return (0..10)
+                .map(|index| {
+                    let angle = index as f32 * std::f32::consts::TAU / 10.0
+                        - std::f32::consts::FRAC_PI_2;
+                    let radius = if index % 2 == 0 { 0.5 } else { 0.22 };
+                    PointF::new(
+                        center.x + angle.cos() * radius * rect.w,
+                        center.y + angle.sin() * radius * rect.h,
+                    )
+                })
+                .collect();
+        }
+    };
+    vertices
+        .iter()
+        .map(|&(x, y)| PointF::new(rect.x + x * rect.w, rect.y + y * rect.h))
+        .collect()
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum ObjectKind {
@@ -265,6 +317,13 @@ pub enum ObjectKind {
         radius: f32,
     },
     Ellipse {
+        r: RectF,
+        stroke: Stroke,
+        #[serde(default)]
+        fill: Fill,
+    },
+    Polygon {
+        kind: PolyKind,
         r: RectF,
         stroke: Stroke,
         #[serde(default)]
@@ -730,7 +789,9 @@ impl ObjectKind {
             Rect { r, stroke, radius, .. } => {
                 r.is_finite() && stroke.width.is_finite() && radius.is_finite()
             }
-            Ellipse { r, stroke, .. } => r.is_finite() && stroke.width.is_finite(),
+            Ellipse { r, stroke, .. } | Polygon { r, stroke, .. } => {
+                r.is_finite() && stroke.width.is_finite()
+            }
             Text {
                 pos, style, wrap_w, ..
             } => pos.is_finite() && style.px.is_finite() && wrap_w.is_none_or(f32::is_finite),
@@ -767,6 +828,7 @@ impl ObjectKind {
             Line { .. } => "Line",
             Rect { .. } => "Rectangle",
             Ellipse { .. } => "Ellipse",
+            Polygon { kind, .. } => kind.label(),
             Text { .. } => "Text",
             Callout { .. } => "Callout",
             Step { .. } => "Step",
@@ -794,7 +856,9 @@ impl ObjectKind {
                 *a = a.offset(dx, dy);
                 *b = b.offset(dx, dy);
             }
-            Rect { r, .. } | Ellipse { r, .. } | Blur { r, .. } => *r = r.offset(dx, dy),
+            Rect { r, .. } | Ellipse { r, .. } | Polygon { r, .. } | Blur { r, .. } => {
+                *r = r.offset(dx, dy)
+            }
             Magnify { rect, .. } | Spotlight { rect, .. } | Stamp { rect, .. } => *rect = rect.offset(dx, dy),
             Text { pos, .. } => *pos = pos.offset(dx, dy),
             Callout { body, tail, .. } => {

@@ -4001,6 +4001,7 @@ dependencies = [
  "qs-core",
  "qs-doc",
  "qs-edit",
+ "qs-icons",
  "qs-library",
  "qs-ocr",
  "qs-render",
@@ -4008,6 +4009,13 @@ dependencies = [
  "rfd 0.15.4",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "qs-icons"
+version = "0.1.0"
+dependencies = [
+ "kurbo",
 ]
 
 [[package]]

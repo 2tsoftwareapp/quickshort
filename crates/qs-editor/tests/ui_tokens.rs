@@ -25,7 +25,8 @@ fn frame<R>(f: impl FnOnce(&mut eframe::egui::Ui) -> R) -> R {
 fn every_control_uses_the_shared_height() {
     let (pill, status) = frame(|ui| (pill_size(ui, "Open"), status_pill_size(ui, "Layers")));
     assert_eq!(pill.y, CONTROL_H, "action pill height");
-    assert_eq!(status.y, CONTROL_H, "status pill height");
+    // Status pills are the mockup's slimmer footer chips, not chrome controls.
+    assert_eq!(status.y, 20.0, "status pill height");
     assert_eq!(CONTROL_H, 26.0, "the shared control height is the design value");
     assert!(pill.x > 0.0 && status.x > 0.0, "sizes must be measured");
 }

@@ -41,7 +41,7 @@ fn uat_responsive_toolbar_and_inspector_across_viewports_and_themes() {
         qs_theme::set_theme(theme_name);
         for &(w, h) in &[(720.0, 600.0), (900.0, 700.0), (1000.0, 700.0), (1280.0, 800.0), (1600.0, 1000.0)] {
             let ctx = egui::Context::default();
-            theme::apply_macos_visuals(&ctx);
+            theme::sync_egui_visuals(&ctx);
             let raw = egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(
                     egui::Pos2::ZERO,
@@ -51,7 +51,12 @@ fn uat_responsive_toolbar_and_inspector_across_viewports_and_themes() {
             };
             let mut out = ctx.run_ui(raw, |ui| {
                 egui::Panel::top("uat_top").show(ui, |ui| {
-                    let _ = toolbar::render_top_bar(ui, &mut editor, 1.0, Some(&path));
+                    let top = ui.available_rect_before_wrap().top();
+                    let header = toolbar::render_top_bar(ui, &mut editor, 1.0, Some(&path));
+                    for button in [header.menu_rect.unwrap(), header.export_rect.unwrap()] {
+                        assert_eq!(button.top() - top, 8.0);
+                        assert_eq!(top + theme::TOOLBAR_HEIGHT - button.bottom(), 8.0);
+                    }
                 });
                 egui::Panel::top("uat_props").show(ui, |ui| {
                     let _ = toolbar::render_properties_bar(ui, &mut editor);

@@ -157,6 +157,24 @@ impl CanvasView {
 pub fn paint_workspace(painter: &egui::Painter, rect: Rect) {
     theme::paint_rect_v_gradient(painter, rect, bg_workspace_top(), bg_workspace_bot());
 
+    // Quiet dot grid over the workspace, clipped to what is actually painted.
+    const PITCH: f32 = 22.0;
+    let col = theme::dot_grid();
+    let clip = painter.clip_rect().intersect(rect);
+    if clip.width() > 0.0 && clip.height() > 0.0 {
+        // Grid anchored to the workspace's top-left like the mockup's
+        // `0 0/22px` tile — first dot row sits right below the chrome edge.
+        let mut y = rect.top() + 1.0;
+        while y < clip.bottom() {
+            let mut x = rect.left() + 1.0;
+            while x < clip.right() {
+                painter.circle_filled(Pos2::new(x, y), 0.7, col);
+                x += PITCH;
+            }
+            y += PITCH;
+        }
+    }
+
     // Subtle 4px top inner shadow beneath the inspector bar
     let top_strip = Rect::from_min_size(rect.min, Vec2::new(rect.width(), 5.0));
     theme::paint_rect_v_gradient(
@@ -323,7 +341,8 @@ pub fn paint_handles(
             ObjectKind::Rect { .. }
             | ObjectKind::Ellipse { .. }
             | ObjectKind::Text { .. }
-            | ObjectKind::Blur { .. } => {
+            | ObjectKind::Blur { .. }
+            | ObjectKind::Polygon { .. } => {
                 let b = qs_render::bounds(kind);
                 let sr = view.doc_rect_to_screen(b, screen_rect);
                 painter.rect_stroke(

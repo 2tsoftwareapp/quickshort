@@ -34,8 +34,13 @@ pub fn run_editor(
     let native_options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title("Quickshort Editor")
-            .with_inner_size([1100.0, 750.0])
-            .with_min_inner_size([640.0, 480.0]),
+            .with_inner_size([1180.0, 720.0])
+            .with_min_inner_size([640.0, 480.0])
+            // Content spans the titlebar area (macOS): the docbar doubles as
+            // the title row and the traffic lights float over it.
+            .with_fullsize_content_view(true)
+            .with_title_shown(false)
+            .with_titlebar_shown(false),
         ..Default::default()
     };
 
@@ -52,8 +57,11 @@ pub fn open_file(path: impl AsRef<Path>) -> anyhow::Result<()> {
     let native_options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title(format!("Quickshort Editor — {}", p.display()))
-            .with_inner_size([1100.0, 750.0])
-            .with_min_inner_size([640.0, 480.0]),
+            .with_inner_size([1180.0, 720.0])
+            .with_min_inner_size([640.0, 480.0])
+            .with_fullsize_content_view(true)
+            .with_title_shown(false)
+            .with_titlebar_shown(false),
         ..Default::default()
     };
 

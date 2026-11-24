@@ -16,7 +16,9 @@ pub fn bounds(kind: &ObjectKind) -> RectF {
             let hl = 6.0 + stroke.width * 2.0;
             RectF::from_points(*a, *b).inflate(stroke.width / 2.0 + hl * 0.5)
         }
-        Rect { r, stroke, .. } | Ellipse { r, stroke, .. } => r.normalized().inflate(stroke.width / 2.0),
+        Rect { r, stroke, .. } | Ellipse { r, stroke, .. } | Polygon { r, stroke, .. } => {
+            r.normalized().inflate(stroke.width / 2.0)
+        }
         Text { pos, text, style, wrap_w, fill } => {
             let lay = text::layout(text, style, *wrap_w);
             let r = RectF::new(pos.x, pos.y, lay.width.max(style.px * 0.5), lay.height);

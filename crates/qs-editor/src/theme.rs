@@ -7,11 +7,13 @@ use eframe::epaint::{Mesh, Vertex, WHITE_UV};
 // Design Tokens (derived strictly from `qs_theme::{space, radius, font}`)
 // ---------------------------------------------------------------------------
 
-pub const TOOLBAR_HEIGHT: f32 = 48.0;
-pub const INSPECTOR_HEIGHT: f32 = 40.0;
+pub const TOOLBAR_HEIGHT: f32 = 44.0;
+/// Second chrome row: the flat grouped tool palette.
+pub const PALETTE_HEIGHT: f32 = 40.0;
+pub const INSPECTOR_HEIGHT: f32 = 36.0;
 pub const CHROME_PAD_X: f32 = qs_theme::space::MD as f32;
 
-pub const RADIUS_WINDOW: CornerRadius = CornerRadius::same(qs_theme::radius::XL as u8);
+pub const RADIUS_WINDOW: CornerRadius = CornerRadius::same(qs_theme::radius::LG as u8);
 pub const RADIUS_CARD: CornerRadius = CornerRadius::same(qs_theme::radius::LG as u8);
 /// macOS 26 toolbar groups are capsules; egui clamps to half the height.
 pub const RADIUS_TRACK: CornerRadius = CornerRadius::same(255);
@@ -53,8 +55,13 @@ pub fn bg_inspector_top() -> Color32 { c(qs_theme::pal().panel_top) }
 pub fn bg_inspector_bot() -> Color32 { c(qs_theme::pal().panel_bottom) }
 pub fn bg_card() -> Color32 { c(qs_theme::pal().card_bg) }
 pub fn bg_status() -> Color32 { c(qs_theme::pal().status_bg) }
+/// Properties row sits on the window base (`--bg`), a step darker than the
+/// toolbars above it so the rows stay visually separated.
+pub fn bg_props() -> Color32 { c(qs_theme::pal().bg_top) }
 pub fn bg_pill_track() -> Color32 { c(qs_theme::pal().track) }
 pub fn bg_pill_hover() -> Color32 { c_a(qs_theme::pal().wash, 28) }
+/// Canvas dot-grid colour — `wash` (white-on-dark / black-on-light) barely on.
+pub fn dot_grid() -> Color32 { c_a(qs_theme::pal().wash, 13) }
 pub fn bg_pill_active_top() -> Color32 { c(qs_theme::pal().pill_top) }
 pub fn bg_pill_active_bot() -> Color32 { c(qs_theme::pal().pill_bottom) }
 pub fn bg_btn_secondary_top() -> Color32 { c(qs_theme::pal().btn_top) }
@@ -76,6 +83,12 @@ pub fn accent_blue_top() -> Color32 { c(qs_theme::accent_top()) }
 pub fn accent_blue_bot() -> Color32 { c(qs_theme::accent_bottom()) }
 pub fn accent_blue_soft() -> Color32 { c(qs_theme::accent_soft()) }
 pub fn accent_alpha(a: u8) -> Color32 { c_a(qs_theme::accent(), a) }
+/// Lightened accent (`--accent-hi`) — icon/text drawn on the muted accent
+/// selection state instead of white-on-accent.
+pub fn accent_hi() -> Color32 {
+    let shade = if qs_theme::pal().dark { Color32::WHITE } else { Color32::BLACK };
+    mix_c(accent_blue(), shade, 0.30)
+}
 pub fn switch_off() -> Color32 { c(qs_theme::pal().switch_off) }
 pub fn on_accent() -> Color32 { c(qs_theme::pal().on_accent) }
 pub fn success_green() -> Color32 { c(qs_theme::pal().success) }
@@ -107,6 +120,9 @@ pub fn tool_active_gradient() -> (Color32, Color32) {
 // ---------------------------------------------------------------------------
 
 pub fn apply_macos_visuals(ctx: &egui::Context) {
+    // Saved prefs first so a standalone launch honours the user's theme;
+    // `QS_THEME`/`QS_ACCENT` (set by the qs-app host) then override.
+    crate::prefs::AppPrefs::load().apply_live();
     init_theme_from_env();
     sync_egui_visuals(ctx);
 }
@@ -256,6 +272,58 @@ pub fn paint_rounded_v_gradient(
     }
 }
 
+/// Diagonal (135°) two-stop gradient clipped to a rounded rect — drawn as a
+/// strip of 4-vertex meshes so the corner radius is exact (`with_clip_rect`
+/// is rect-only and square tips read as bugs on small chips).
+/// Gradient chip clipped to a rounded rect. egui meshes are not anti-aliased,
+/// so rather than approximating the rounded path with slice chords (which
+/// leaves dark scallops inside the corners), the gradient fills the whole
+/// `rect` and the corner overflow is masked by a `mask`-coloured ring stroked
+/// just outside the rounded path — path strokes ARE feathered, so the edge
+/// comes out smooth.
+pub fn paint_grad_chip(
+    painter: &egui::Painter,
+    rect: Rect,
+    cr: f32,
+    mask: Color32,
+    ca: Color32,
+    cb: Color32,
+) {
+    const N: usize = 18;
+    let (w, h) = (rect.width(), rect.height());
+    if w <= 0.0 || h <= 0.0 {
+        return;
+    }
+    let col_at = |x: f32, y: f32| {
+        let t = (((x - rect.left()) / w) + ((y - rect.top()) / h)) * 0.5;
+        lerp_color(ca, cb, t.clamp(0.0, 1.0))
+    };
+    for i in 0..N {
+        let x0 = rect.left() + w * i as f32 / N as f32;
+        let x1 = rect.left() + w * (i + 1) as f32 / N as f32;
+        let mut mesh = Mesh::default();
+        for (x, y) in [(x0, rect.top()), (x1, rect.top()), (x1, rect.bottom()), (x0, rect.bottom())]
+        {
+            mesh.vertices.push(Vertex {
+                pos: Pos2::new(x, y),
+                uv: WHITE_UV,
+                color: col_at(x, y),
+            });
+        }
+        mesh.indices.extend_from_slice(&[0, 1, 2, 0, 2, 3]);
+        painter.add(mesh);
+    }
+    // Ring just outside `rect`: its inner edge follows the rounded path
+    // exactly, so only the corner overflow is masked (reaches ~cr*(1-1/√2)).
+    let ring_w = 4.0f32.max(cr * 0.5);
+    painter.rect_stroke(
+        rect.expand(ring_w),
+        CornerRadius::same((cr + ring_w) as u8),
+        Stroke::new(ring_w, mask),
+        StrokeKind::Inside,
+    );
+}
+
 pub fn paint_soft_shadow(
     painter: &egui::Painter,
     rect: Rect,
@@ -285,6 +353,8 @@ pub fn paint_soft_shadow(
 // Chrome & Control Painting Functions
 // ---------------------------------------------------------------------------
 
+/// Flat chrome bar: callers pick the surface (toolbar = `--panel`, props =
+/// `--bg`); every bar ends in a bottom hairline like the reference mockup.
 pub fn paint_chrome_bar(
     painter: &egui::Painter,
     rect: Rect,
@@ -292,9 +362,13 @@ pub fn paint_chrome_bar(
     bot: Color32,
     _is_top_level: bool,
 ) {
-    // macOS 26: no bar slab; control groups float over the workspace.
-    let _ = bot;
-    painter.rect_filled(rect, CornerRadius::ZERO, bg_workspace_top());
+    let _ = _top;
+    painter.rect_filled(rect, CornerRadius::ZERO, bot);
+    painter.hline(
+        rect.left()..=rect.right(),
+        (rect.bottom() - 0.5).round() + 0.5,
+        Stroke::new(1.0, border_dark_hairline()),
+    );
 }
 
 fn soft_shadow() -> egui::epaint::Shadow {
@@ -307,14 +381,16 @@ fn soft_shadow() -> egui::epaint::Shadow {
 }
 
 /// Floating glass panel (Layers, Inspector): inset from the window edge,
-/// large concentric corners, hairline edge and a soft drop shadow.
+/// modest concentric corners (`radius::MD`), hairline edge, soft shadow.
+/// Squarer than transient popovers (`radius::LG`) — these are structural
+/// surfaces, not floating chrome (DESIGN.md §3).
 pub fn glass_panel_frame() -> egui::Frame {
     egui::Frame::NONE
         .fill(bg_inspector_top())
-        .corner_radius(CornerRadius::same(qs_theme::radius::XL as u8))
+        .corner_radius(CornerRadius::same(qs_theme::radius::MD as u8))
         .stroke(Stroke::new(1.0, border_subtle()))
         .shadow(soft_shadow())
-        .inner_margin(egui::Margin::same(qs_theme::space::MD as i8))
+        .inner_margin(egui::Margin::same(qs_theme::space::SM as i8))
 }
 
 /// Paints the glass card over the whole space the panel gives it and lays
@@ -322,7 +398,7 @@ pub fn glass_panel_frame() -> egui::Frame {
 /// stretch the card past the window edge.
 pub fn glass_panel<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
     let rect = ui.available_rect_before_wrap();
-    let cr = CornerRadius::same(qs_theme::radius::XL as u8);
+    let cr = CornerRadius::same(qs_theme::radius::MD as u8);
     ui.painter().add(soft_shadow().as_shape(rect, cr));
     ui.painter().rect(
         rect,
@@ -331,7 +407,7 @@ pub fn glass_panel<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -
         Stroke::new(1.0, border_subtle()),
         StrokeKind::Inside,
     );
-    let inner = rect.shrink(qs_theme::space::MD as f32);
+    let inner = rect.shrink(qs_theme::space::SM as f32);
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner));
     child.set_clip_rect(rect.shrink(1.0).intersect(ui.clip_rect()));
     // stock sliders size their rail from a fixed width; fit it to the card
@@ -341,11 +417,17 @@ pub fn glass_panel<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -
     out
 }
 
-/// Transparent gutter a side panel reserves around its `glass_panel_frame`,
-/// so the panel floats inset from the window edge.
-pub fn panel_gutter() -> egui::Frame {
+/// Transparent gutter a side panel reserves around its `glass_panel_frame`.
+/// Mockup `.side` is `margin:8px 0 8px 8px` / `.insp` `8px 8px 8px 0` — the
+/// workspace-facing edge is flush so the card border doubles as the divider.
+pub fn panel_gutter(workspace_side_clear: bool) -> egui::Frame {
     let gap = qs_theme::space::SM as i8;
-    egui::Frame::NONE.inner_margin(egui::Margin { left: gap, right: gap, top: 0, bottom: gap })
+    egui::Frame::NONE.inner_margin(egui::Margin {
+        left: if workspace_side_clear { gap } else { 0 },
+        right: if workspace_side_clear { 0 } else { gap },
+        top: gap,
+        bottom: gap,
+    })
 }
 
 pub fn paint_segmented_track(painter: &egui::Painter, rect: Rect, corner_radius: CornerRadius) {
@@ -359,12 +441,33 @@ pub fn paint_segmented_track(painter: &egui::Painter, rect: Rect, corner_radius:
     );
 }
 
+/// Animated hover factor (0..1) for a widget — ease in/out over ~120ms.
+/// Callers pass the result into the `hot` params of the paint fns below.
+pub fn hot_t(resp: &egui::Response) -> f32 {
+    resp.ctx
+        .animate_bool_with_time(resp.id, resp.hovered(), 0.12)
+}
+
+fn mix_c(a: Color32, b: Color32, t: f32) -> Color32 {
+    let (a, b) = (a.to_array(), b.to_array());
+    Color32::from_rgba_unmultiplied(
+        (a[0] as f32 + (b[0] as f32 - a[0] as f32) * t) as u8,
+        (a[1] as f32 + (b[1] as f32 - a[1] as f32) * t) as u8,
+        (a[2] as f32 + (b[2] as f32 - a[2] as f32) * t) as u8,
+        (a[3] as f32 + (b[3] as f32 - a[3] as f32) * t) as u8,
+    )
+}
+
+fn alpha_scaled(col: Color32, t: f32) -> Color32 {
+    Color32::from_rgba_unmultiplied(col.r(), col.g(), col.b(), (col.a() as f32 * t) as u8)
+}
+
 pub fn paint_pill_button(
     painter: &egui::Painter,
     rect: Rect,
     corner_radius: impl Into<CornerRadius>,
     active: bool,
-    hovered: bool,
+    hot: f32,
     enabled: bool,
     is_accent: bool,
 ) {
@@ -374,21 +477,15 @@ pub fn paint_pill_button(
     }
 
     if is_accent {
-        let fill = if hovered { accent_blue_top() } else { accent_blue() };
-        painter.rect_filled(rect, cr, fill);
+        painter.rect_filled(rect, cr, mix_c(accent_blue(), accent_blue_top(), hot));
         return;
     }
 
     if active {
         painter.rect_filled(rect, cr, bg_card());
-        painter.rect_stroke(
-            rect,
-            cr,
-            Stroke::new(1.0, border_hot()),
-            StrokeKind::Inside,
-        );
-    } else if hovered {
-        painter.rect_filled(rect, cr, bg_pill_hover());
+        painter.rect_stroke(rect, cr, Stroke::new(1.0, border_hot()), StrokeKind::Inside);
+    } else if hot > 0.0 {
+        painter.rect_filled(rect, cr, alpha_scaled(bg_pill_hover(), hot));
     }
 }
 
@@ -396,7 +493,7 @@ pub fn paint_secondary_button(
     painter: &egui::Painter,
     rect: Rect,
     corner_radius: impl Into<CornerRadius>,
-    hovered: bool,
+    hot: f32,
     enabled: bool,
     danger_hover: bool,
 ) {
@@ -405,13 +502,22 @@ pub fn paint_secondary_button(
         return;
     }
 
-    let (fill, border) = if hovered && danger_hover {
-        (c(qs_theme::pal().danger_top), c(qs_theme::pal().danger_edge))
-    } else if hovered {
-        (bg_btn_secondary_hover_bot(), border_hot())
+    let (rest, target) = if danger_hover {
+        (
+            (bg_btn_secondary_bot(), border_subtle()),
+            (
+                c(qs_theme::pal().danger_top),
+                c(qs_theme::pal().danger_edge),
+            ),
+        )
     } else {
-        (bg_btn_secondary_bot(), border_subtle())
+        (
+            (bg_btn_secondary_bot(), border_subtle()),
+            (bg_btn_secondary_hover_bot(), border_hot()),
+        )
     };
+    let fill = mix_c(rest.0, target.0, hot);
+    let border = mix_c(rest.1, target.1, hot);
 
     painter.rect_filled(rect, cr, fill);
     painter.rect_stroke(rect, cr, Stroke::new(1.0, border), StrokeKind::Inside);
@@ -423,7 +529,7 @@ pub fn paint_color_swatch(
     radius: f32,
     color: Color32,
     selected: bool,
-    hovered: bool,
+    hot: f32,
 ) {
     let shadow_a = if qs_theme::pal().dark { 72 } else { 26 };
     painter.circle_filled(
@@ -444,27 +550,20 @@ pub fn paint_color_swatch(
     }
 
     if selected {
-        painter.circle_stroke(
-            center,
-            radius + 2.5,
-            Stroke::new(1.75, accent_blue()),
-        );
-        painter.circle_stroke(
-            center,
-            radius + 0.9,
-            Stroke::new(1.0, bg_inspector_top()),
-        );
-    } else if hovered {
-        painter.circle_stroke(
-            center,
-            radius + 2.0,
-            Stroke::new(1.25, c_a(qs_theme::pal().wash, 120)),
-        );
+        painter.circle_stroke(center, radius + 2.5, Stroke::new(1.75, accent_blue()));
+        painter.circle_stroke(center, radius + 0.9, Stroke::new(1.0, bg_inspector_top()));
     } else {
         painter.circle_stroke(
             center,
-            radius,
-            Stroke::new(0.75, c_a(qs_theme::pal().wash, 35)),
+            radius + 2.0 * hot,
+            Stroke::new(
+                0.75 + 0.5 * hot,
+                lerp_color(
+                    c_a(qs_theme::pal().wash, 35),
+                    c_a(qs_theme::pal().wash, 120),
+                    hot,
+                ),
+            ),
         );
     }
 }
@@ -493,7 +592,7 @@ pub fn section_header(ui: &mut egui::Ui, title: &str) {
     crate::components::section_header(ui, title);
 }
 
-/// Consistent modal window frame for editor dialogs (`radius::XL`, `space::LG` padding).
+/// Consistent modal window frame for editor dialogs (`radius::LG`, `space::LG` padding).
 pub fn modal_frame() -> egui::Frame {
     egui::Frame::NONE
         .fill(bg_card())

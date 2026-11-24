@@ -422,6 +422,12 @@ fn draw_object(pm: &mut Pixmap, xf: &Xf, kind: &ObjectKind, step_no: u32, snap: 
                 stroke_path(pm, xf, &path, stroke, LineJoin::Round);
             }
         }
+        ObjectKind::Polygon { kind, r, stroke, fill } => {
+            if let Some(path) = poly_path(&qs_doc::poly_points(*kind, *r), true) {
+                fill_path(pm, xf, &path, fill);
+                stroke_path(pm, xf, &path, stroke, LineJoin::Round);
+            }
+        }
         ObjectKind::Text { pos, text, style, wrap_w, fill } => {
             let lay = text::layout(text, style, *wrap_w);
             if !fill.is_none() {

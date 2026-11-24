@@ -84,6 +84,11 @@ pub fn hit(kind: &ObjectKind, p: PointF, tol: f32) -> bool {
             (filled(fill) && shapes::point_in_poly(p, &poly))
                 || poly_dist(&poly, p, true) <= stroke.width / 2.0 + tol
         }
+        Polygon { kind, r, stroke, fill } => {
+            let poly = qs_doc::poly_points(*kind, *r);
+            (filled(fill) && shapes::point_in_poly(p, &poly))
+                || poly_dist(&poly, p, true) <= stroke.width / 2.0 + tol
+        }
         Text { .. } => bounds(kind).inflate(tol).contains(p),
         Callout {
             shape,
@@ -142,7 +147,7 @@ fn box_handles(r: RectF) -> Vec<Handle> {
 pub fn handles(kind: &ObjectKind) -> Vec<Handle> {
     use ObjectKind::*;
     match kind {
-        Rect { r, .. } | Ellipse { r, .. } | Blur { r, .. } => box_handles(*r),
+        Rect { r, .. } | Ellipse { r, .. } | Polygon { r, .. } | Blur { r, .. } => box_handles(*r),
         Magnify { rect, .. } | Spotlight { rect, .. } | Stamp { rect, .. } => box_handles(*rect),
         Eraser { .. } | Fill { .. } | SmartMove { .. } => Vec::new(),
         Callout { body, tail, .. } => {
@@ -205,7 +210,7 @@ pub fn resized(orig: &ObjectKind, hd: HandleId, to: PointF) -> ObjectKind {
     use ObjectKind::*;
     let mut k = orig.clone();
     match &mut k {
-        Rect { r, .. } | Ellipse { r, .. } | Blur { r, .. } => {
+        Rect { r, .. } | Ellipse { r, .. } | Polygon { r, .. } | Blur { r, .. } => {
             *r = min_size(resize_rect(*r, hd, to))
         }
         Magnify { rect, .. } | Spotlight { rect, .. } | Stamp { rect, .. } => {

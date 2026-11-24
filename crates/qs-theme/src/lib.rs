@@ -118,8 +118,8 @@ pub struct Palette {
 
 /// Dark — neutral greys after the macOS 26 system palette.
 pub const DARK: Palette = Palette {
-    bg_top: 0x171717,
-    bg_bottom: 0x121212,
+    bg_top: 0x16171B,
+    bg_bottom: 0x16171B,
     sidebar: 0x161616,
     surface: 0x1F1F1F,
     surface_hover: 0x292929,
@@ -135,34 +135,34 @@ pub const DARK: Palette = Palette {
     border: 0x2E2E2E,
     border_strong: 0x434343,
     popover_border: 0x4A4A4A,
-    fg: 0xF6F6F6,
-    fg_dim: 0xBABABA,
-    fg_faint: 0x949494,
+    fg: 0xECEEF1,
+    fg_dim: 0xA4AAB3,
+    fg_faint: 0x7D8490,
     on_accent: 0xFFFFFF,
     success: 0x30D158,
     danger: 0xFF453A,
     warning: 0xFF9F0A,
     dark: true,
-    ws_top: 0x131313,
-    ws_bottom: 0x0F0F0F,
-    bar_top: 0x1E1E1E,
-    bar_bottom: 0x1A1A1A,
-    panel_top: 0x181818,
-    panel_bottom: 0x151515,
-    track: 0x141414,
-    pill_top: 0x323232,
-    pill_bottom: 0x292929,
-    tool_active_top: 0x1A8CFF,
-    tool_active_bot: 0x006AE6,
-    card_bg: 0x202020,
-    status_bg: 0x161616,
-    btn_top: 0x2A2A2A,
-    btn_bottom: 0x242424,
-    btn_hot_top: 0x363636,
-    btn_hot_bottom: 0x2E2E2E,
-    hairline: 0x2A2A2A,
-    border_soft: 0x323232,
-    border_hot: 0x484848,
+    ws_top: 0x1A1C20,
+    ws_bottom: 0x1A1C20,
+    bar_top: 0x1D1F24,
+    bar_bottom: 0x1D1F24,
+    panel_top: 0x1D1F24,
+    panel_bottom: 0x1D1F24,
+    track: 0x1A1C20,
+    pill_top: 0x23262C,
+    pill_bottom: 0x23262C,
+    tool_active_top: 0x23334E,
+    tool_active_bot: 0x23334E,
+    card_bg: 0x23262C,
+    status_bg: 0x1D1F24,
+    btn_top: 0x2B2E35,
+    btn_bottom: 0x272A31,
+    btn_hot_top: 0x353943,
+    btn_hot_bottom: 0x2F333C,
+    hairline: 0x2E3136,
+    border_soft: 0x33363D,
+    border_hot: 0x464A53,
     danger_top: 0x5A1C1F,
     danger_bottom: 0x461518,
     danger_edge: 0xC83A35,
@@ -232,7 +232,7 @@ pub const LIGHT: Palette = Palette {
 
 /// Default accent (Apple Liquid Blue) and its gradient stops. The user's choice in
 /// Settings overrides this at runtime; these are the fallback.
-pub const ACCENT_DEFAULT: u32 = 0x007AFF;
+pub const ACCENT_DEFAULT: u32 = 0x3D82F7;
 pub const ACCENT_TOP: u32 = 0x1A8CFF;
 pub const ACCENT_BOTTOM: u32 = 0x0066E0;
 pub const ACCENT_SOFT: u32 = 0x4DA6FF;
@@ -289,7 +289,7 @@ pub fn accent_soft() -> u32 {
 
 /// Accent presets shared by Settings in `qs-app` and `qs-editor` — (key, rgb).
 pub const ACCENTS: &[(&str, u32)] = &[
-    ("blue", 0x007AFF),
+    ("blue", ACCENT_DEFAULT),
     ("purple", 0xAF52DE),
     ("pink", 0xFF2D55),
     ("orange", 0xFF9500),

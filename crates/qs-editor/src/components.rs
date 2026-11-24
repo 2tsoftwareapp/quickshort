@@ -25,6 +25,26 @@ fn fs(v: f64) -> f32 {
     v as f32
 }
 
+/// Linear RGBA blend — feed it `animate_bool_with_time` output for
+/// hover fade transitions (`motion::FAST`-ish ~120ms).
+fn cmix(a: Color32, b: Color32, t: f32) -> Color32 {
+    let (a, b) = (a.to_array(), b.to_array());
+    Color32::from_rgba_unmultiplied(
+        (a[0] as f32 + (b[0] as f32 - a[0] as f32) * t) as u8,
+        (a[1] as f32 + (b[1] as f32 - a[1] as f32) * t) as u8,
+        (a[2] as f32 + (b[2] as f32 - a[2] as f32) * t) as u8,
+        (a[3] as f32 + (b[3] as f32 - a[3] as f32) * t) as u8,
+    )
+}
+
+/// Display the platform's primary modifier in editor shortcut hints.
+pub(crate) fn platform_shortcut(text: &str) -> std::borrow::Cow<'_, str> {
+    if cfg!(target_os = "macos") && text.contains("Ctrl+") {
+        return text.replace("Ctrl+Shift+", "⌘⇧").replace("Ctrl+", "⌘").into();
+    }
+    text.into()
+}
+
 /// Inner-only panel hairline edge (prevents 4-sided double borders at panel junctions).
 #[derive(Clone, Copy)]
 pub enum DividerEdge {
@@ -46,13 +66,15 @@ pub fn panel_divider(ui: &egui::Ui, rect: Rect, edge: DividerEdge) {
         .line_segment(seg, Stroke::new(1.0, theme::border_dark_hairline()));
 }
 
-/// Elevated inspector card (`radius::LG` = 10px, `space::MD` = 12px padding).
+/// Elevated inspector card (`radius::SM` = 8px, `space::MD` = 12px padding).
+/// Section cards sit one level below floating popovers/modals (`radius::LG`),
+/// so they stay visibly squarer — DESIGN.md §3 L2 vs L4.
 pub fn card(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
     let resp = egui::Frame::NONE
         .fill(theme::bg_card())
         .stroke(Stroke::new(1.0, theme::border_subtle()))
-        .corner_radius(rad(radius::LG))
-        .inner_margin(egui::Margin::same(sp(space::MD) as i8))
+        .corner_radius(rad(radius::SM))
+        .inner_margin(egui::Margin::symmetric(sp(space::MD) as i8, 11))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             add_contents(ui);
@@ -65,22 +87,24 @@ pub fn card(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
     };
     ui.painter().line_segment(
         [
-            Pos2::new(r.left() + sp(radius::LG), r.top() + 0.75),
-            Pos2::new(r.right() - sp(radius::LG), r.top() + 0.75),
+            Pos2::new(r.left() + sp(radius::SM), r.top() + 0.75),
+            Pos2::new(r.right() - sp(radius::SM), r.top() + 0.75),
         ],
         Stroke::new(1.0, spec),
     );
 }
 
-/// Uppercase section header inside a card (`font::CAPTION`, `space::SM` bottom gap).
+/// Uppercase section header inside a card — the mockup's `h4`: 11px/600 with
+/// `.05em` tracking and a 9px bottom gap.
 pub fn section_header(ui: &mut egui::Ui, title: &str) {
     ui.label(
         egui::RichText::new(title.to_uppercase())
             .size(fs(font::CAPTION))
             .strong()
+            .extra_letter_spacing(0.55)
             .color(theme::text_tertiary()),
     );
-    ui.add_space(sp(space::SM));
+    ui.add_space(sp(space::XS));
 }
 
 /// Button hierarchy variants (strictly 1 Primary CTA per view; Tonal/Secondary/Ghost elsewhere).
@@ -93,26 +117,18 @@ pub enum ButtonVariant {
 }
 
 /// Standardized full-width button (`28px` height >= 24px hit target, `radius::MD` = 8px).
-pub fn button(
-    ui: &mut egui::Ui,
-    label: &str,
-    variant: ButtonVariant,
-    tip: &str,
-) -> egui::Response {
+pub fn button(ui: &mut egui::Ui, label: &str, variant: ButtonVariant, tip: &str) -> egui::Response {
     let h = sp(space::XL + space::XS); // 28px
     let width = ui.available_width();
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, h), Sense::click());
     let hovered = resp.hovered();
+    let ht = ui.ctx().animate_bool_with_time(resp.id, hovered, 0.12);
     let painter = ui.painter();
     let cr = rad(radius::MD);
 
     match variant {
         ButtonVariant::Primary => {
-            let fill = if hovered {
-                theme::accent_blue_top()
-            } else {
-                theme::accent_blue()
-            };
+            let fill = cmix(theme::accent_blue(), theme::accent_blue_top(), ht);
             painter.rect_filled(rect, cr, fill);
             painter.text(
                 rect.center(),
@@ -123,16 +139,20 @@ pub fn button(
             );
         }
         ButtonVariant::Tonal => {
-            let fill = if hovered {
-                theme::accent_alpha(if qs_theme::pal().dark { 56 } else { 34 })
+            let (rest, hot) = if qs_theme::pal().dark {
+                (36, 56)
             } else {
-                theme::accent_alpha(if qs_theme::pal().dark { 36 } else { 20 })
+                (20, 34)
             };
+            let fill = cmix(theme::accent_alpha(rest), theme::accent_alpha(hot), ht);
             painter.rect_filled(rect, cr, fill);
             painter.rect_stroke(
                 rect,
                 cr,
-                Stroke::new(1.0, theme::accent_alpha(if hovered { 130 } else { 72 })),
+                Stroke::new(
+                    1.0,
+                    cmix(theme::accent_alpha(72), theme::accent_alpha(130), ht),
+                ),
                 StrokeKind::Inside,
             );
             painter.text(
@@ -148,16 +168,12 @@ pub fn button(
             );
         }
         ButtonVariant::Secondary => {
-            let fill = if hovered {
-                theme::bg_btn_secondary_hover_bot()
-            } else {
-                theme::bg_btn_secondary_bot()
-            };
-            let border = if hovered {
-                theme::border_hot()
-            } else {
-                theme::border_subtle()
-            };
+            let fill = cmix(
+                theme::bg_btn_secondary_bot(),
+                theme::bg_btn_secondary_hover_bot(),
+                ht,
+            );
+            let border = cmix(theme::border_subtle(), theme::border_hot(), ht);
             painter.rect_filled(rect, cr, fill);
             painter.rect_stroke(rect, cr, Stroke::new(1.0, border), StrokeKind::Inside);
             painter.text(
@@ -169,19 +185,25 @@ pub fn button(
             );
         }
         ButtonVariant::Ghost => {
-            if hovered {
-                painter.rect_filled(rect, cr, theme::bg_pill_hover());
+            if ht > 0.0 {
+                let hov = theme::bg_pill_hover();
+                painter.rect_filled(
+                    rect,
+                    cr,
+                    Color32::from_rgba_unmultiplied(
+                        hov.r(),
+                        hov.g(),
+                        hov.b(),
+                        (hov.a() as f32 * ht) as u8,
+                    ),
+                );
             }
             painter.text(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
                 label,
                 egui::FontId::proportional(fs(font::SMALL) + 0.5),
-                if hovered {
-                    theme::text_primary()
-                } else {
-                    theme::text_secondary()
-                },
+                cmix(theme::text_secondary(), theme::text_primary(), ht),
             );
         }
     }
@@ -192,14 +214,14 @@ pub fn button(
     if tip.is_empty() {
         resp
     } else {
-        resp.on_hover_text(tip)
+        resp.on_hover_text(platform_shortcut(tip))
     }
 }
 
 /// Standardized Apple toggle switch row (`28px` hit target >= 24px, aligned label + capsule switch).
 pub fn switch_row(ui: &mut egui::Ui, on: &mut bool, label: &str) -> bool {
     // 26 px control plus a hair of breathing room, matching the pill scale.
-    let row_h = CONTROL_H + sp(space::XS);
+    let row_h = CONTROL_H;
     let width = ui.available_width().max(120.0);
     let (row_rect, resp) = ui.allocate_exact_size(Vec2::new(width, row_h), Sense::click());
     let mut changed = false;
@@ -225,8 +247,8 @@ pub fn switch_row(ui: &mut egui::Ui, on: &mut bool, label: &str) -> bool {
         },
     );
 
-    let sw_w = sp(space::XXL); // 32px
-    let sw_h = 18.0;
+    let sw_w = 32.0;
+    let sw_h = 19.0;
     let sw_rect = Rect::from_min_size(
         Pos2::new(
             row_rect.right() - sw_w - sp(space::XS),
@@ -234,23 +256,15 @@ pub fn switch_row(ui: &mut egui::Ui, on: &mut bool, label: &str) -> bool {
         ),
         Vec2::new(sw_w, sw_h),
     );
-    let capsule = rad(radius::PILL);
-    painter.rect_filled(
-        sw_rect,
-        capsule,
-        if *on {
-            theme::accent_blue()
-        } else {
-            theme::switch_off()
-        },
+    let progress = ui.ctx().animate_bool_with_time(
+        resp.id,
+        *on,
+        (qs_theme::motion::FAST / 1000.0) as f32,
     );
-
-    let knob_r = 7.0;
-    let knob_x = if *on {
-        sw_rect.right() - 9.0
-    } else {
-        sw_rect.left() + 9.0
-    };
+    let track = theme::switch_off().lerp_to_gamma(theme::accent_blue(), progress);
+    painter.rect_filled(sw_rect, rad(radius::PILL), track);
+    let knob_r = 7.5;
+    let knob_x = sw_rect.left() + 9.5 + progress * (sw_w - 19.0);
     let knob_center = Pos2::new(knob_x, sw_rect.center().y);
     painter.circle_filled(
         knob_center + Vec2::new(0.0, 0.75),
@@ -275,78 +289,27 @@ pub enum TransformIcon {
 }
 
 fn draw_transform_icon(painter: &egui::Painter, c: Pos2, icon: TransformIcon, color: Color32) {
-    let st = Stroke::new(1.5, color);
-    match icon {
-        TransformIcon::RotateCcw | TransformIcon::RotateCw => {
-            let cw = matches!(icon, TransformIcon::RotateCw);
-            let r = 5.2;
-            let steps = 14;
-            let (a0, a1) = if cw {
-                (-std::f32::consts::FRAC_PI_2 - 0.3, std::f32::consts::PI * 1.15)
-            } else {
-                (-std::f32::consts::FRAC_PI_2 + 0.3, -std::f32::consts::PI * 1.85)
-            };
-            let pts: Vec<Pos2> = (0..=steps)
-                .map(|i| {
-                    let a = a0 + (a1 - a0) * (i as f32 / steps as f32);
-                    Pos2::new(c.x + r * a.cos(), c.y + r * a.sin())
-                })
-                .collect();
-            painter.add(egui::Shape::line(pts, st));
-            let tip = Pos2::new(c.x + if cw { 1.8 } else { -1.8 }, c.y - r);
-            let dx = if cw { -3.2 } else { 3.2 };
-            painter.line_segment([tip, Pos2::new(tip.x + dx, tip.y - 2.2)], st);
-            painter.line_segment([tip, Pos2::new(tip.x + dx, tip.y + 2.5)], st);
-        }
-        TransformIcon::FlipH => {
-            painter.line_segment(
-                [Pos2::new(c.x, c.y - 6.0), Pos2::new(c.x, c.y + 6.0)],
-                Stroke::new(1.1, theme::divider_vertical()),
-            );
-            let left = vec![
-                Pos2::new(c.x - 2.0, c.y - 4.5),
-                Pos2::new(c.x - 6.5, c.y + 4.5),
-                Pos2::new(c.x - 2.0, c.y + 4.5),
-            ];
-            painter.add(egui::Shape::convex_polygon(left, color, Stroke::NONE));
-            let right = vec![
-                Pos2::new(c.x + 2.0, c.y - 4.5),
-                Pos2::new(c.x + 6.5, c.y + 4.5),
-                Pos2::new(c.x + 2.0, c.y + 4.5),
-            ];
-            painter.add(egui::Shape::closed_line(right, Stroke::new(1.3, color)));
-        }
-        TransformIcon::FlipV => {
-            painter.line_segment(
-                [Pos2::new(c.x - 6.0, c.y), Pos2::new(c.x + 6.0, c.y)],
-                Stroke::new(1.1, theme::divider_vertical()),
-            );
-            let top = vec![
-                Pos2::new(c.x - 4.5, c.y - 2.0),
-                Pos2::new(c.x + 4.5, c.y - 2.0),
-                Pos2::new(c.x, c.y - 6.5),
-            ];
-            painter.add(egui::Shape::convex_polygon(top, color, Stroke::NONE));
-            let bot = vec![
-                Pos2::new(c.x - 4.5, c.y + 2.0),
-                Pos2::new(c.x + 4.5, c.y + 2.0),
-                Pos2::new(c.x, c.y + 6.5),
-            ];
-            painter.add(egui::Shape::closed_line(bot, Stroke::new(1.3, color)));
-        }
-    }
+    let paths = match icon {
+        TransformIcon::RotateCcw => qs_icons::ROTATE_CCW,
+        TransformIcon::RotateCw => qs_icons::ROTATE_CW,
+        TransformIcon::FlipH => qs_icons::FLIP_HORIZONTAL_2,
+        TransformIcon::FlipV => qs_icons::FLIP_VERTICAL_2,
+    };
+    crate::icons::draw_paths(painter, c, paths, color);
 }
 
 /// Single-row segmented vector-icon bar (`32px` height, concentric `radius::MD` / `radius::SM`).
+/// `.seg` — shallow well track with gap-separated segments, no internal
+/// dividers (mockup Transform bar).
 pub fn segmented_icon_bar(ui: &mut egui::Ui, items: &[(TransformIcon, &str)]) -> Option<usize> {
     if items.is_empty() {
         return None;
     }
-    let h = sp(space::XXL); // 32px
+    let h = sp(space::XL); // 24px — the mockup's low four-button bar
     let total_w = ui.available_width();
     let (track_rect, _) = ui.allocate_exact_size(Vec2::new(total_w, h), Sense::hover());
     let painter = ui.painter();
-    theme::paint_segmented_track(painter, track_rect, rad(radius::MD));
+    theme::paint_segmented_track(painter, track_rect, egui::CornerRadius::same(6));
 
     let pad = sp(space::HAIR); // 2px
     let inner = track_rect.shrink(pad);
@@ -356,28 +319,23 @@ pub fn segmented_icon_bar(ui: &mut egui::Ui, items: &[(TransformIcon, &str)]) ->
     for (i, (icon, tip)) in items.iter().enumerate() {
         let seg_rect = Rect::from_min_size(
             Pos2::new(inner.left() + i as f32 * seg_w, inner.top()),
-            Vec2::new(seg_w, inner.height()),
+            Vec2::new(seg_w - pad, inner.height()),
         );
-        let resp = ui.interact(seg_rect, ui.scope_id().with(("seg_icon", i)), Sense::click());
+        let resp = ui.interact(
+            seg_rect,
+            ui.scope_id().with(("seg_icon", i)),
+            Sense::click(),
+        );
         let hovered = resp.hovered();
         if hovered {
-            painter.rect_filled(seg_rect, rad(radius::SM), theme::bg_card());
+            painter.rect_filled(seg_rect, rad(radius::XS), theme::bg_card());
             painter.rect_stroke(
                 seg_rect,
-                rad(radius::SM),
+                rad(radius::XS),
                 Stroke::new(0.75, theme::border_hot()),
                 StrokeKind::Inside,
             );
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-        }
-        if i > 0 {
-            painter.line_segment(
-                [
-                    Pos2::new(seg_rect.left(), inner.top() + sp(space::XS)),
-                    Pos2::new(seg_rect.left(), inner.bottom() - sp(space::XS)),
-                ],
-                Stroke::new(1.0, theme::divider_vertical()),
-            );
         }
         draw_transform_icon(
             painter,
@@ -396,7 +354,8 @@ pub fn segmented_icon_bar(ui: &mut egui::Ui, items: &[(TransformIcon, &str)]) ->
     clicked
 }
 
-/// Status bar pill (`24px` height >= 24px Vercel Labs hit-target minimum, `radius::SM`).
+/// Status bar pill — 20px capsule, `radius::PILL`. Active state is the quiet
+/// `--control` fill of the mockup, not accent.
 /// Size of a status pill for `label`; the single place its height is decided.
 pub fn status_pill_size(ui: &egui::Ui, label: &str) -> Vec2 {
     let galley = ui.painter().layout_no_wrap(
@@ -404,45 +363,37 @@ pub fn status_pill_size(ui: &egui::Ui, label: &str) -> Vec2 {
         egui::FontId::proportional(fs(font::SMALL)),
         theme::text_primary(),
     );
-    Vec2::new(galley.size().x + sp(space::LG), CONTROL_H)
+    Vec2::new(galley.size().x + 20.0, 20.0)
 }
 
 pub fn status_pill(ui: &mut egui::Ui, label: &str, active: bool, tip: &str) -> bool {
     let size = status_pill_size(ui, label);
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
     let hovered = resp.hovered();
+    let ht = theme::hot_t(&resp);
     let painter = ui.painter();
-    let cr = rad(radius::SM);
+    let cr = rad(radius::PILL);
 
-    if active {
-        let fill = theme::accent_alpha(if qs_theme::pal().dark { 48 } else { 26 });
-        painter.rect_filled(rect, cr, fill);
-        painter.rect_stroke(
+    if active || ht > 0.0 {
+        let hov = theme::bg_btn_secondary_top();
+        let a = if active { hov.a() as f32 } else { hov.a() as f32 * ht };
+        painter.rect_filled(
             rect,
             cr,
-            Stroke::new(0.75, theme::accent_alpha(if qs_theme::pal().dark { 110 } else { 70 })),
-            StrokeKind::Inside,
+            Color32::from_rgba_unmultiplied(hov.r(), hov.g(), hov.b(), a as u8),
         );
-    } else if hovered {
-        painter.rect_filled(rect, cr, theme::bg_pill_hover());
     }
 
     let fg = if active {
-        if qs_theme::pal().dark {
-            theme::accent_blue_soft()
-        } else {
-            theme::accent_blue()
-        }
-    } else if hovered {
         theme::text_primary()
     } else {
-        theme::text_secondary()
+        cmix(theme::text_secondary(), theme::text_primary(), ht)
     };
     painter.text(
         rect.center(),
         egui::Align2::CENTER_CENTER,
         label,
-        egui::FontId::proportional(fs(font::SMALL)),
+        egui::FontId::proportional(fs(font::CAPTION) + 0.5),
         fg,
     );
     if hovered {
@@ -451,7 +402,7 @@ pub fn status_pill(ui: &mut egui::Ui, label: &str, active: bool, tip: &str) -> b
     let resp = if tip.is_empty() {
         resp
     } else {
-        resp.on_hover_text(tip)
+        resp.on_hover_text(platform_shortcut(tip))
     };
     resp.clicked()
 }
@@ -501,7 +452,7 @@ pub fn pill_button_primary(ui: &mut egui::Ui, label: &str, tip: &str) -> bool {
         rect,
         rad(radius::SM),
         false,
-        resp.hovered(),
+        theme::hot_t(&resp),
         true,
         true,
     );
@@ -515,30 +466,24 @@ pub fn pill_button_primary(ui: &mut egui::Ui, label: &str, tip: &str) -> bool {
     if tip.is_empty() {
         resp.clicked()
     } else {
-        resp.on_hover_text(tip).clicked()
+        resp.on_hover_text(platform_shortcut(tip)).clicked()
     }
 }
 
 /// Same pill with a custom label colour, for destructive actions.
-pub fn pill_button_colored(
-    ui: &mut egui::Ui,
-    label: &str,
-    tip: &str,
-    color: Color32,
-) -> bool {
+pub fn pill_button_colored(ui: &mut egui::Ui, label: &str, tip: &str, color: Color32) -> bool {
     let size = pill_size(ui, label);
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
-    let hovered = resp.hovered();
     let painter = ui.painter();
     let cr = rad(radius::SM);
     painter.rect_filled(
         rect,
         cr,
-        if hovered {
-            theme::bg_btn_secondary_hover_top()
-        } else {
-            theme::bg_btn_secondary_top()
-        },
+        cmix(
+            theme::bg_btn_secondary_top(),
+            theme::bg_btn_secondary_hover_top(),
+            theme::hot_t(&resp),
+        ),
     );
     painter.rect_stroke(
         rect,
@@ -556,25 +501,32 @@ pub fn pill_button_colored(
     if tip.is_empty() {
         resp.clicked()
     } else {
-        resp.on_hover_text(tip).clicked()
+        resp.on_hover_text(platform_shortcut(tip)).clicked()
     }
 }
 
 /// Subtle inset container for an expanded effect's sub-controls so nested
 /// sliders/pickers visually belong to their parent switch rather than bleeding
 /// into the next toggle row.
+/// Sub-group separator inside a card: a hairline bled to the card's edge —
+/// not a bordered well. Card-on-card depth was the flagged anti-pattern;
+/// structure comes from tone and whitespace, never nested boxes.
 pub fn effect_group(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
-    ui.add_space(sp(space::HAIR));
-    egui::Frame::NONE
-        .fill(theme::bg_inspector_top())
-        .stroke(Stroke::new(1.0, theme::border_subtle()))
-        .corner_radius(rad(radius::MD))
-        .inner_margin(egui::Margin::symmetric(sp(space::SM) as i8, sp(space::SM) as i8))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.spacing_mut().item_spacing.y = sp(space::SM);
-            add_contents(ui);
-        });
+    ui.add_space(sp(space::XS));
+    let hair = ui.available_rect_before_wrap();
+    let bleed = sp(space::MD);
+    ui.painter().line_segment(
+        [
+            Pos2::new(hair.left() - bleed, hair.top() + 0.5),
+            Pos2::new(hair.right() + bleed, hair.top() + 0.5),
+        ],
+        Stroke::new(1.0, theme::border_subtle()),
+    );
+    ui.add_space(sp(space::XS));
+    ui.scope(|ui| {
+        ui.spacing_mut().item_spacing.y = sp(space::XS);
+        add_contents(ui);
+    });
     ui.add_space(sp(space::XS));
 }
 
@@ -631,11 +583,13 @@ pub fn slider_row(
     let mut changed = false;
 
     ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new(label)
+        ui.spacing_mut().interact_size.y = 18.0;
+        ui.allocate_ui(Vec2::new(58.0, 18.0), |ui| {
+            ui.set_min_width(58.0);
+            ui.label(egui::RichText::new(label)
                 .size(fs(font::SMALL))
-                .color(theme::text_secondary()),
-        );
+                .color(theme::text_secondary()));
+        });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if let Some(mut buf) = editing.take() {
                 let te = ui.add(
@@ -647,7 +601,7 @@ pub fn slider_row(
                 let esc = ui.input(|i| i.key_pressed(egui::Key::Escape));
                 if enter || (te.lost_focus() && !esc) {
                     let clean = buf.trim().trim_end_matches(suffix.trim()).trim();
-                    if let Ok(parsed) = clean.parse::<f32>() {
+                    if let Some(parsed) = clean.parse::<f32>().ok().filter(|value| value.is_finite()) {
                         let clamped = parsed.clamp(min, max);
                         if (clamped - *value).abs() > f32::EPSILON {
                             *value = clamped;
@@ -665,13 +619,15 @@ pub fn slider_row(
                 }
             } else {
                 let val_resp = ui
-                    .add(
+                    .add_sized(
+                        Vec2::new(42.0, 18.0),
                         egui::Label::new(
                             egui::RichText::new(&formatted)
                                 .size(fs(font::SMALL))
                                 .monospace()
                                 .color(theme::text_primary()),
                         )
+                        .halign(egui::Align::Max)
                         .sense(Sense::click()),
                     )
                     .on_hover_text("Click to type a value");
@@ -687,92 +643,98 @@ pub fn slider_row(
                     ui.data_mut(|d| d.insert_temp(edit_id, raw));
                 }
             }
-        });
-    });
 
-    let width = ui.available_width().max(80.0);
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, 18.0), Sense::click_and_drag());
-    let knob_r: f32 = if resp.dragged() { 7.0 } else if resp.hovered() { 6.5 } else { 6.0 };
-    let pad = 7.0;
-    let track_left = rect.left() + pad;
-    let track_right = (rect.right() - pad).max(track_left + 1.0);
-    let track_w = track_right - track_left;
+            let width = ui.available_width();
+            let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, 18.0), Sense::click_and_drag());
+            let knob_r: f32 = if resp.dragged() {
+                7.0
+            } else if resp.hovered() {
+                6.5
+            } else {
+                6.0
+            };
+            let pad = 7.0;
+            let track_left = rect.left() + pad;
+            let track_right = (rect.right() - pad).max(track_left + 1.0);
+            let track_w = track_right - track_left;
 
-    if resp.dragged() {
-        let fine = ui.input(|i| i.modifiers.shift);
-        if fine {
-            let dx = resp.drag_delta().x;
-            if dx.abs() > 0.0 {
-                let next = (*value + (dx / track_w) * span * 0.25).clamp(min, max);
-                let next = if decimals == 0 { next.round() } else { next };
-                if (next - *value).abs() > f32::EPSILON {
-                    *value = next;
-                    changed = true;
+            if resp.dragged() {
+                let fine = ui.input(|i| i.modifiers.shift);
+                if fine {
+                    let dx = resp.drag_delta().x;
+                    if dx.abs() > 0.0 {
+                        let next = (*value + (dx / track_w) * span * 0.25).clamp(min, max);
+                        let next = if decimals == 0 { next.round() } else { next };
+                        if (next - *value).abs() > f32::EPSILON {
+                            *value = next;
+                            changed = true;
+                        }
+                    }
+                } else if let Some(pos) = resp.interact_pointer_pos() {
+                    let t = ((pos.x - track_left) / track_w).clamp(0.0, 1.0);
+                    let next = min + t * span;
+                    let next = if decimals == 0 { next.round() } else { next };
+                    if (next - *value).abs() > f32::EPSILON {
+                        *value = next;
+                        changed = true;
+                    }
+                }
+            } else if resp.clicked() {
+                if let Some(pos) = resp.interact_pointer_pos() {
+                    let t = ((pos.x - track_left) / track_w).clamp(0.0, 1.0);
+                    let next = min + t * span;
+                    let next = if decimals == 0 { next.round() } else { next };
+                    if (next - *value).abs() > f32::EPSILON {
+                        *value = next;
+                        changed = true;
+                    }
                 }
             }
-        } else if let Some(pos) = resp.interact_pointer_pos() {
-            let t = ((pos.x - track_left) / track_w).clamp(0.0, 1.0);
-            let next = min + t * span;
-            let next = if decimals == 0 { next.round() } else { next };
-            if (next - *value).abs() > f32::EPSILON {
-                *value = next;
-                changed = true;
-            }
-        }
-    } else if resp.clicked() {
-        if let Some(pos) = resp.interact_pointer_pos() {
-            let t = ((pos.x - track_left) / track_w).clamp(0.0, 1.0);
-            let next = min + t * span;
-            let next = if decimals == 0 { next.round() } else { next };
-            if (next - *value).abs() > f32::EPSILON {
-                *value = next;
-                changed = true;
-            }
-        }
-    }
 
-    let t = ((*value - min) / span).clamp(0.0, 1.0);
-    let cy = rect.center().y;
-    let track_h = 4.0;
-    let track_rect = Rect::from_min_max(
-        Pos2::new(track_left, cy - track_h * 0.5),
-        Pos2::new(track_right, cy + track_h * 0.5),
-    );
-    let painter = ui.painter();
-    let track_cr = rad(radius::PILL);
-    painter.rect_filled(track_rect, track_cr, theme::bg_pill_track());
-    if t > 0.0 {
-        let fill_rect = Rect::from_min_max(
-            track_rect.min,
-            Pos2::new(track_left + track_w * t, track_rect.max.y),
-        );
-        painter.rect_filled(fill_rect, track_cr, theme::accent_blue());
-    }
+            let t = ((*value - min) / span).clamp(0.0, 1.0);
+            let cy = rect.center().y;
+            let track_h = 4.0;
+            let track_rect = Rect::from_min_max(
+                Pos2::new(track_left, cy - track_h * 0.5),
+                Pos2::new(track_right, cy + track_h * 0.5),
+            );
+            let painter = ui.painter();
+            let track_cr = rad(radius::PILL);
+            painter.rect_filled(track_rect, track_cr, theme::bg_pill_track());
+            if t > 0.0 {
+                let fill_rect = Rect::from_min_max(
+                    track_rect.min,
+                    Pos2::new(track_left + track_w * t, track_rect.max.y),
+                );
+                painter.rect_filled(fill_rect, track_cr, theme::accent_blue());
+            }
 
-    let knob_center = Pos2::new(track_left + track_w * t, cy);
-    // Soft drop shadow + crisp white knob (no harsh dark ring).
-    painter.circle_filled(
-        knob_center + Vec2::new(0.0, 1.0),
-        knob_r + 0.5,
-        Color32::from_black_alpha(if qs_theme::pal().dark { 96 } else { 36 }),
-    );
-    painter.circle_filled(knob_center, knob_r, Color32::WHITE);
-    painter.circle_stroke(
-        knob_center,
-        knob_r,
-        Stroke::new(
-            0.75,
+            let knob_center = Pos2::new(track_left + track_w * t, cy);
+            // Soft drop shadow + crisp white knob (no harsh dark ring).
+            painter.circle_filled(
+                knob_center + Vec2::new(0.0, 1.0),
+                knob_r + 0.5,
+                Color32::from_black_alpha(if qs_theme::pal().dark { 96 } else { 36 }),
+            );
+            painter.circle_filled(knob_center, knob_r, Color32::WHITE);
+            painter.circle_stroke(
+                knob_center,
+                knob_r,
+                Stroke::new(
+                    0.75,
+                    if resp.hovered() || resp.dragged() {
+                        theme::accent_blue()
+                    } else {
+                        Color32::from_black_alpha(if qs_theme::pal().dark { 60 } else { 32 })
+                    },
+                ),
+            );
+
             if resp.hovered() || resp.dragged() {
-                theme::accent_blue()
-            } else {
-                Color32::from_black_alpha(if qs_theme::pal().dark { 60 } else { 32 })
-            },
-        ),
-    );
-
-    if resp.hovered() || resp.dragged() {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-    }
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+        });
+    });
     changed
 }
 
@@ -893,31 +855,70 @@ pub fn menu_item(
     enabled: bool,
     danger: bool,
 ) -> bool {
+    menu_row(ui, None, label, shortcut, active, enabled, danger)
+}
+
+pub(crate) fn menu_item_with_icon(
+    ui: &mut egui::Ui,
+    icon: &[qs_icons::StrokePath],
+    label: &str,
+    shortcut: Option<&str>,
+    enabled: bool,
+    danger: bool,
+) -> bool {
+    menu_row(ui, Some(icon), label, shortcut, false, enabled, danger)
+}
+
+fn menu_row(
+    ui: &mut egui::Ui,
+    icon: Option<&[qs_icons::StrokePath]>,
+    label: &str,
+    shortcut: Option<&str>,
+    active: bool,
+    enabled: bool,
+    danger: bool,
+) -> bool {
     let width = ui.available_width().max(160.0);
     let (rect, resp) = ui.allocate_exact_size(
         Vec2::new(width, 28.0),
-        if enabled { Sense::click() } else { Sense::hover() },
+        if enabled {
+            Sense::click()
+        } else {
+            Sense::hover()
+        },
     );
     let hovered = enabled && resp.hovered();
+    let ht = ui.ctx().animate_bool_with_time(resp.id, hovered, 0.12);
     let painter = ui.painter();
     let cr = rad(radius::SM);
 
-    if hovered {
+    if ht > 0.0 {
         let fill = if danger {
             Color32::from_rgba_unmultiplied(
                 theme::danger_red().r(),
                 theme::danger_red().g(),
                 theme::danger_red().b(),
-                if qs_theme::pal().dark { 48 } else { 28 },
+                (if qs_theme::pal().dark { 48.0 } else { 28.0 } * ht) as u8,
             )
         } else {
-            theme::bg_pill_hover()
+            let hov = theme::bg_pill_hover();
+            Color32::from_rgba_unmultiplied(hov.r(), hov.g(), hov.b(), (hov.a() as f32 * ht) as u8)
         };
         painter.rect_filled(rect, cr, fill);
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
 
-    let text_x = rect.left() + 10.0;
+    let text_x = if let Some(icon) = icon {
+        crate::icons::draw_paths(
+            painter,
+            Pos2::new(rect.left() + 16.5, rect.center().y),
+            icon,
+            if enabled { theme::text_secondary() } else { theme::text_disabled() },
+        );
+        rect.left() + 32.0
+    } else {
+        rect.left() + 10.0
+    };
     if active {
         painter.circle_filled(
             Pos2::new(rect.left() + 5.0, rect.center().y),
@@ -948,8 +949,8 @@ pub fn menu_item(
         painter.text(
             Pos2::new(rect.right() - 10.0, rect.center().y),
             egui::Align2::RIGHT_CENTER,
-            sc,
-            egui::FontId::monospace(fs(font::CAPTION) + 0.5),
+            platform_shortcut(sc),
+            egui::FontId::proportional(fs(font::CAPTION) + 0.5),
             if enabled {
                 theme::text_tertiary()
             } else {

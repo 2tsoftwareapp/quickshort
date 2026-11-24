@@ -4,17 +4,14 @@ use crate::{
     icons::{self, ActionIcon},
     theme::*,
 };
-use eframe::egui::{
-    self, Color32, FontId, Pos2, Rect, Sense, Stroke, Ui, Vec2,
-};
+use eframe::egui::{self, Color32, FontId, Pos2, Rect, Sense, Stroke, Ui, Vec2};
 use qs_doc::{
     Align, ArrowHead, BlurMode, CalloutShape, Fill, ObjectKind, PALETTE, SIZES, TEXT_SIZES,
 };
 use qs_edit::{Editor, Tool, ZOrder};
 use std::path::Path;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-#[derive(Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum ZoomCmd {
     #[default]
     None,
@@ -42,7 +39,6 @@ pub struct TopBarResult {
     pub close: bool,
     pub zoom: ZoomCmd,
 }
-
 
 pub fn rgb_to_color32(rgb: u32) -> Color32 {
     Color32::from_rgb(
@@ -84,234 +80,183 @@ pub fn render_top_bar(
         true,
     );
 
-    let inner = bar_rect.shrink2(Vec2::new(CHROME_PAD_X, 0.0));
-    let cy = inner.center().y;
-
-    // --- Left Zone: Open / Save As + Undo / Redo Capsule + optional filename ---
-    let hist_w = 60.0;
-    let hist_h = 30.0;
-    // the capsule stays dead-center only while the right zone keeps its width,
-    // so the file buttons appear once there is room for them
-    let show_file_buttons = bar_rect.width() > 980.0;
-    let mut left_x = inner.left();
-    let menu_track = Rect::from_min_size(
-        Pos2::new(left_x, cy - hist_h * 0.5),
-        Vec2::new(30.0, hist_h),
+    // macOS: the docbar spans the transparent titlebar — leave room for the
+    // floating traffic lights exactly like the mockup's `padding-left: 78px`.
+    let left_inset = if cfg!(target_os = "macos") {
+        78.0
+    } else {
+        CHROME_PAD_X
+    };
+    let inner = Rect::from_min_max(
+        Pos2::new(bar_rect.left() + left_inset, bar_rect.top()),
+        Pos2::new(bar_rect.right() - CHROME_PAD_X, bar_rect.bottom()),
     );
-    paint_segmented_track(ui.painter(), menu_track, RADIUS_TRACK);
-    if icon_segment(
+    let cy = inner.center().y;
+    /// `.ibtn` — square transparent chrome button.
+    const BTN: f32 = 28.0;
+    /// `.docbar` is a flex row with `gap:10px` — every child (button or sep)
+    /// is followed by this trailing gap.
+    const GAP: f32 = 10.0;
+
+    // --- Left: menu · open · save-as │ undo · redo │ doctab ---
+    let mut x = inner.left();
+    let take = |w: f32, x: &mut f32| {
+        let r = Rect::from_min_size(Pos2::new(*x, cy - w * 0.5), Vec2::new(w, w));
+        *x += w + GAP;
+        r
+    };
+    // `.sep` — 1px hairline occupying its own flex slot.
+    let sep = |painter: &egui::Painter, x: &mut f32| {
+        let px = (*x + 0.5).round() + 0.5;
+        painter.line_segment(
+            [Pos2::new(px, cy - 9.0), Pos2::new(px, cy + 9.0)],
+            Stroke::new(1.0, divider_vertical()),
+        );
+        *x += 1.0 + GAP;
+    };
+    let menu_rect = take(BTN, &mut x);
+    res.menu_rect = Some(menu_rect);
+    if bar_ibtn(
         ui,
         "tb_menu",
-        menu_track.shrink(3.0),
+        menu_rect,
         ActionIcon::Menu,
-        false,
         true,
         "New capture, Library, Settings, theme",
     ) {
         res.menu = true;
     }
-    res.menu_rect = Some(menu_track);
-    left_x = menu_track.right() + 8.0;
-    if show_file_buttons {
-        let io_track_w = 60.0;
-        let io_track = Rect::from_min_size(
-            Pos2::new(left_x, cy - hist_h * 0.5),
-            Vec2::new(io_track_w, hist_h),
-        );
-        paint_segmented_track(ui.painter(), io_track, RADIUS_TRACK);
-        let io_seg_w = (io_track_w - 6.0) * 0.5;
-        let open_rect = Rect::from_min_size(
-            Pos2::new(io_track.left() + 3.0, io_track.top() + 3.0),
-            Vec2::new(io_seg_w, hist_h - 6.0),
-        );
-        if icon_segment(
-            ui,
-            "tb_open",
-            open_rect,
-            ActionIcon::Open,
-            false,
-            true,
-            "Open… (Ctrl+O)",
-        ) {
-            res.open = true;
-        }
-        let save_as_rect = Rect::from_min_size(
-            Pos2::new(open_rect.right(), io_track.top() + 3.0),
-            Vec2::new(io_seg_w, hist_h - 6.0),
-        );
-        if icon_segment(
-            ui,
-            "tb_save_as",
-            save_as_rect,
-            ActionIcon::SaveAs,
-            false,
-            true,
-            "Save As… (Ctrl+Shift+S)",
-        ) {
-            res.save_as = true;
-        }
-        left_x = io_track.right() + 8.0;
+    if bar_ibtn(
+        ui,
+        "tb_open",
+        take(BTN, &mut x),
+        ActionIcon::Open,
+        true,
+        "Open… (Ctrl+O)",
+    ) {
+        res.open = true;
     }
+    if bar_ibtn(
+        ui,
+        "tb_save_as",
+        take(BTN, &mut x),
+        ActionIcon::SaveAs,
+        true,
+        "Save As… (Ctrl+Shift+S)",
+    ) {
+        res.save_as = true;
+    }
+    sep(ui.painter(), &mut x);
 
-    let hist_rect = Rect::from_min_size(
-        Pos2::new(left_x, cy - hist_h * 0.5),
-        Vec2::new(hist_w, hist_h),
-    );
-    paint_segmented_track(ui.painter(), hist_rect, RADIUS_TRACK);
-
-    let seg_w = (hist_w - 6.0) * 0.5;
-    let undo_rect = Rect::from_min_size(
-        Pos2::new(hist_rect.left() + 3.0, hist_rect.top() + 3.0),
-        Vec2::new(seg_w, hist_h - 6.0),
-    );
-    let redo_rect = Rect::from_min_size(
-        Pos2::new(undo_rect.right(), hist_rect.top() + 3.0),
-        Vec2::new(seg_w, hist_h - 6.0),
-    );
-
-    let can_undo = editor.can_undo();
-    let can_redo = editor.can_redo();
-
-    if icon_segment(
+    if bar_ibtn(
         ui,
         "tb_undo",
-        undo_rect,
+        take(BTN, &mut x),
         ActionIcon::Undo,
-        false,
-        can_undo,
+        editor.can_undo(),
         "Undo (Ctrl+Z)",
     ) && editor.undo()
     {
         res.mutated = true;
     }
-
-    ui.painter().line_segment(
-        [
-            Pos2::new(undo_rect.right() + 0.5, hist_rect.top() + 6.0),
-            Pos2::new(undo_rect.right() + 0.5, hist_rect.bottom() - 6.0),
-        ],
-        Stroke::new(1.0, divider_vertical()),
-    );
-
-    if icon_segment(
+    if bar_ibtn(
         ui,
         "tb_redo",
-        redo_rect,
+        take(BTN, &mut x),
         ActionIcon::Redo,
-        false,
-        can_redo,
-        "Redo (Ctrl+Y)",
+        editor.can_redo(),
+        "Redo (Ctrl+Shift+Z)",
     ) && editor.redo()
     {
         res.mutated = true;
     }
+    sep(ui.painter(), &mut x);
 
-    // Canvas controls live beside history, away from the centered tool capsule.
-    let compact_canvas = bar_rect.width() < 880.0;
-    let canvas_w = if compact_canvas { 30.0 } else { 72.0 };
-    let canvas_rect = Rect::from_min_size(
-        Pos2::new(hist_rect.right() + 8.0, cy - hist_h * 0.5),
-        Vec2::new(canvas_w, hist_h),
-    );
-    if compact_canvas {
-        if icon_segment(
-            ui,
-            "tb_canvas",
-            canvas_rect,
-            ActionIcon::Canvas,
-            false,
-            true,
-            "Canvas… (Resize & background)",
-        ) {
-            res.canvas = true;
-        }
-    } else if chrome_button(
-        ui,
-        "tb_canvas",
-        canvas_rect,
-        ActionIcon::Canvas,
-        "Canvas",
-        false,
-        "Resize canvas and change its background",
-    ) {
-        res.canvas = true;
-    }
-    let left_end = canvas_rect.right();
+    // doctab: document icon + file name, quiet — the mockup's identity chip.
+    // Painted only after the right cluster's extent is known so it never
+    // runs under the buttons on narrow windows.
+    let doc_name = doc_path
+        .and_then(|p| p.file_name())
+        .and_then(|s| s.to_str())
+        .unwrap_or("Untitled")
+        .to_owned();
+    let left_end = x;
 
-    // --- Right Zone: Zoom Pill + Save / Export / Copy ---
+    // --- Right: zoom − pct + │ Save · Export · Copy · × ---
+    // Widths are measured off the right edge so the cluster hugs the margin.
+    let mut rx = inner.right();
+
+    let close_rect = {
+        rx -= BTN;
+        Rect::from_min_size(Pos2::new(rx, cy - BTN * 0.5), Vec2::splat(BTN))
+    };
+    rx -= GAP;
+
+    // `.tbtn` widths: 11px padding + 13px icon + 6px gap + label.
+    let label_font = FontId::proportional(qs_theme::font::SMALL as f32);
+    let tbtn_w = |label: &str| -> f32 {
+        let g = ui
+            .painter()
+            .layout_no_wrap(label.to_owned(), label_font.clone(), text_primary());
+        11.0 + 13.0 + 6.0 + g.size().x + 11.0
+    };
     let compact_actions = bar_rect.width() < 1080.0;
-    let show_zoom_pill = bar_rect.width() >= 760.0;
-    let zoom_w = 94.0;
-    let save_w = if compact_actions { 30.0 } else { 64.0 };
-    let export_w = if compact_actions { 30.0 } else { 72.0 };
-    // 54 clipped the label at compact widths: icon starts at +14 and the
-    // text at +24.5, so "Copy" needs the extra room.
-    let copy_w = if compact_actions { 64.0 } else { 68.0 };
-    let btn_h = 30.0;
-    let close_w = 30.0;
-    let right_gap = 6.0;
+    let copy_w = if compact_actions { BTN } else { tbtn_w("Copy") };
+    let export_w = if compact_actions { BTN } else { tbtn_w("Export") };
+    let save_w = if compact_actions { BTN } else { tbtn_w("Save") };
 
-    let mut x_cursor = inner.right();
+    let copy_rect = {
+        rx -= copy_w;
+        Rect::from_min_size(Pos2::new(rx, cy - BTN * 0.5), Vec2::new(copy_w, BTN))
+    };
+    rx -= GAP;
+    let export_rect = {
+        rx -= export_w;
+        Rect::from_min_size(Pos2::new(rx, cy - BTN * 0.5), Vec2::new(export_w, BTN))
+    };
+    rx -= GAP;
+    let save_rect = {
+        rx -= save_w;
+        Rect::from_min_size(Pos2::new(rx, cy - BTN * 0.5), Vec2::new(save_w, BTN))
+    };
 
-    let close_rect = Rect::from_min_size(
-        Pos2::new(x_cursor - close_w, cy - btn_h * 0.5),
-        Vec2::new(close_w, btn_h),
-    );
-    x_cursor = close_rect.left() - right_gap;
+    res.export_rect = Some(export_rect);
 
-    let copy_rect = Rect::from_min_size(
-        Pos2::new(x_cursor - copy_w, cy - btn_h * 0.5),
-        Vec2::new(copy_w, btn_h),
-    );
-    x_cursor = copy_rect.left() - right_gap;
+    // Zoom cluster: flat `− % +`, pct click-to-type / double-click Fit.
+    let zoom_pct = format!("{:.0}%", zoom * 100.0);
+    let pct_w = 44.0;
+    let show_zoom = bar_rect.width() >= 620.0;
+    let zoom_right = if show_zoom {
+        // `.sep` child sits between zoom and Save in the mockup — in
+        // right-to-left layout it comes before the zoom cluster.
+        rx -= GAP;
+        let sep_x = rx;
+        rx -= 1.0 + GAP;
+        let mut zx = rx;
+        let z_in_rect = {
+            zx -= BTN;
+            Rect::from_min_size(Pos2::new(zx, cy - BTN * 0.5), Vec2::splat(BTN))
+        };
+        let z_mid_rect = {
+            zx -= pct_w;
+            Rect::from_min_size(Pos2::new(zx, cy - BTN * 0.5), Vec2::new(pct_w, BTN))
+        };
+        let z_out_rect = {
+            zx -= BTN;
+            Rect::from_min_size(Pos2::new(zx, cy - BTN * 0.5), Vec2::splat(BTN))
+        };
+        rx = zx;
 
-    let export_rect = Rect::from_min_size(
-        Pos2::new(x_cursor - export_w, cy - btn_h * 0.5),
-        Vec2::new(export_w, btn_h),
-    );
-    x_cursor = export_rect.left() - right_gap;
-
-    let save_rect = Rect::from_min_size(
-        Pos2::new(x_cursor - save_w, cy - btn_h * 0.5),
-        Vec2::new(save_w, btn_h),
-    );
-    x_cursor = save_rect.left() - if show_zoom_pill { 10.0 } else { 0.0 };
-
-    let right_start = if show_zoom_pill {
-        let zoom_rect = Rect::from_min_size(
-            Pos2::new(x_cursor - zoom_w, cy - btn_h * 0.5),
-            Vec2::new(zoom_w, btn_h),
+        let px = (sep_x - 0.5).round() + 0.5;
+        ui.painter().line_segment(
+            [Pos2::new(px, cy - 9.0), Pos2::new(px, cy + 9.0)],
+            Stroke::new(1.0, divider_vertical()),
         );
 
-        // Zoom pill: [-] [100%] [+]
-        paint_segmented_track(ui.painter(), zoom_rect, RADIUS_TRACK);
-        let z_btn_w = 23.0;
-        let z_out_rect = Rect::from_min_size(
-            Pos2::new(zoom_rect.left() + 3.0, zoom_rect.top() + 3.0),
-            Vec2::new(z_btn_w, btn_h - 6.0),
-        );
-        let z_in_rect = Rect::from_min_size(
-            Pos2::new(zoom_rect.right() - 3.0 - z_btn_w, zoom_rect.top() + 3.0),
-            Vec2::new(z_btn_w, btn_h - 6.0),
-        );
-        let z_mid_rect = Rect::from_min_max(
-            Pos2::new(z_out_rect.right(), zoom_rect.top() + 3.0),
-            Pos2::new(z_in_rect.left(), zoom_rect.bottom() - 3.0),
-        );
-
-        if icon_segment(
-            ui,
-            "tb_zout",
-            z_out_rect,
-            ActionIcon::ZoomOut,
-            false,
-            true,
-            "Zoom Out",
-        ) {
+        if bar_text_btn(ui, "tb_zout", z_out_rect, "−", "Zoom Out") {
             res.zoom = ZoomCmd::Out;
         }
 
-        let zoom_pct = format!("{:.0}%", zoom * 100.0);
         let z_edit_id = ui.auto_id_with("tb_zedit");
         let z_editing: Option<String> = ui.data_mut(|d| d.get_temp(z_edit_id));
         if let Some(mut buf) = z_editing {
@@ -341,9 +286,8 @@ pub fn render_top_bar(
                 ui.data_mut(|d| d.insert_temp(z_edit_id, buf));
             }
         } else {
-            let z_mid_id = ui.auto_id_with("tb_zfit");
             let z_mid_resp = ui
-                .interact(z_mid_rect, z_mid_id, Sense::click())
+                .interact(z_mid_rect, ui.auto_id_with("tb_zfit"), Sense::click())
                 .on_hover_text("Click to type zoom % · Double-click to Fit (Ctrl+0)");
             if z_mid_resp.hovered() {
                 ui.painter().rect_filled(z_mid_rect, 4.0, bg_pill_hover());
@@ -367,59 +311,41 @@ pub fn render_top_bar(
             }
         }
 
-        if icon_segment(
-            ui,
-            "tb_zin",
-            z_in_rect,
-            ActionIcon::ZoomIn,
-            false,
-            true,
-            "Zoom In",
-        ) {
+        if bar_text_btn(ui, "tb_zin", z_in_rect, "+", "Zoom In") {
             res.zoom = ZoomCmd::In;
         }
-        zoom_rect.left()
+        rx
     } else {
         save_rect.left()
     };
+    let right_start = zoom_right;
 
-    res.export_rect = Some(export_rect);
-    // Secondary action buttons (Save / Export) + Primary CTA (Copy)
     if compact_actions {
-        let pair_rect = Rect::from_min_max(save_rect.min, export_rect.max);
-        paint_segmented_track(ui.painter(), pair_rect, RADIUS_TRACK);
-        let mid_x = (save_rect.right() + export_rect.left()) * 0.5;
-        ui.painter().line_segment(
-            [
-                Pos2::new(mid_x, pair_rect.top() + 6.0),
-                Pos2::new(mid_x, pair_rect.bottom() - 6.0),
-            ],
-            Stroke::new(1.0, divider_vertical()),
-        );
-        if icon_segment(
-            ui,
-            "tb_save",
-            save_rect.shrink(3.0),
-            ActionIcon::Save,
-            false,
-            true,
-            "Save .qsdoc (Ctrl+S)",
-        ) {
+        if bar_ibtn(ui, "tb_save", save_rect, ActionIcon::Save, true, "Save .qsdoc (Ctrl+S)") {
             res.save = true;
         }
-        if icon_segment(
+        if bar_ibtn(
             ui,
             "tb_export",
-            export_rect.shrink(3.0),
+            export_rect,
             ActionIcon::Export,
-            false,
             true,
             "Export image (Ctrl+Shift+E)",
         ) {
             res.export = true;
         }
+        if bar_ibtn(
+            ui,
+            "tb_copy",
+            copy_rect,
+            ActionIcon::Copy,
+            true,
+            "Copy Flattened Image (Ctrl+C)",
+        ) {
+            res.copy = true;
+        }
     } else {
-        if chrome_button(
+        if tbtn(
             ui,
             "tb_save",
             save_rect,
@@ -430,7 +356,7 @@ pub fn render_top_bar(
         ) {
             res.save = true;
         }
-        if chrome_button(
+        if tbtn(
             ui,
             "tb_export",
             export_rect,
@@ -441,244 +367,217 @@ pub fn render_top_bar(
         ) {
             res.export = true;
         }
+        if tbtn(
+            ui,
+            "tb_copy",
+            copy_rect,
+            ActionIcon::Copy,
+            "Copy",
+            true,
+            "Copy Flattened Image (Ctrl+C)",
+        ) {
+            res.copy = true;
+        }
     }
 
-    if chrome_button(
-        ui,
-        "tb_copy",
-        copy_rect,
-        ActionIcon::Copy,
-        "Copy",
-        true,
-        "Copy Flattened Image (Ctrl+C)",
-    ) {
-        res.copy = true;
-    }
-
-    paint_segmented_track(ui.painter(), close_rect, RADIUS_TRACK);
-    if icon_segment(
+    if bar_ibtn(
         ui,
         "tb_close",
-        close_rect.shrink(3.0),
+        close_rect,
         ActionIcon::Close,
-        false,
         true,
         "Close (Ctrl+W)",
     ) {
         res.close = true;
     }
 
-    // --- Center Zone: Focused 10-tool core capsule + More overflow ---
-    // Keeps the toolbar calm and readable at every window width instead of
-    // crowding all 20 tools into one long bar.
-    let compact_tools = true;
-    let tool_w = 29.0;
-    let tool_h = 26.0;
-    let div_w = 9.0;
-    let tools_group1 = [(Tool::Select, "Select (V)")];
-    let tools_group2 = [(Tool::Arrow, "Arrow (A)")];
-    let tools_group3 = [(Tool::Crop, "Crop / Trim (K)")];
-    let full_w = 6.0 + 3.0 * tool_w + 2.0 * div_w;
-
-    let primary_compact: [(Tool, &str); 10] = [
-        (Tool::Select, "Select (V)"),
-        (Tool::Arrow, "Arrow (A)"),
-        (Tool::Rect, "Rectangle (R)"),
-        (Tool::Ellipse, "Ellipse (O)"),
-        (Tool::Text, "Text (T)"),
-        (Tool::Callout, "Callout Bubble (C)"),
-        (Tool::Step, "Step Counter (S)"),
-        (Tool::Blur, "Blur / Redact (B)"),
-        (Tool::Highlighter, "Highlight (H)"),
-        (Tool::Crop, "Crop / Trim (K)"),
-    ];
-    let overflow_tools: [(Tool, &str); 10] = [
-        (Tool::Pen, "Pen (P)"),
-        (Tool::Line, "Line (L)"),
-        (Tool::Magnify, "Magnify Lens (I)"),
-        (Tool::Spotlight, "Spotlight (F)"),
-        (Tool::Stamp, "Stamp (G)"),
-        (Tool::Eraser, "Eraser (E)"),
-        (Tool::Cutout, "Cutout Strip (X)"),
-        (Tool::SelectRegion, "Select Region (M)"),
-        (Tool::Fill, "Paint Bucket (U)"),
-        (Tool::SmartMove, "Smart Move (Y)"),
-    ];
-
-    let more_w = 34.0;
-    let track_w = if compact_tools {
-        6.0 + (primary_compact.len() as f32) * 28.0 + more_w + 4.0
-    } else {
-        full_w
-    };
-    let track_h = 32.0;
-
-    let ideal_center = bar_rect.center().x;
-    let min_center = left_end + 10.0 + track_w * 0.5;
-    let max_center = right_start - 10.0 - track_w * 0.5;
-    let center_x = if min_center <= max_center {
-        ideal_center.clamp(min_center, max_center)
-    } else {
-        (left_end + right_start) * 0.5
-    };
-    let track_rect = Rect::from_center_size(Pos2::new(center_x, cy), Vec2::new(track_w, track_h));
-    paint_segmented_track(ui.painter(), track_rect, RADIUS_TRACK);
-
-    // Draw filename only in the verified free gap between Canvas and the tool capsule
-    let name_gap = track_rect.left() - (left_end + 12.0);
-    if name_gap >= 96.0 {
-        if let Some(p) = doc_path {
-            if let Some(name) = p.file_name().and_then(|s| s.to_str()) {
-                let max_chars = ((name_gap - 12.0) / 6.5).floor().max(8.0) as usize;
-                let mut disp = name.to_string();
-                if disp.len() > max_chars {
-                    disp.truncate(max_chars.saturating_sub(3));
-                    disp.push_str("...");
-                }
-                ui.painter().text(
-                    Pos2::new(left_end + 12.0, cy),
-                    egui::Align2::LEFT_CENTER,
-                    &disp,
-                    FontId::proportional(qs_theme::font::SMALL as f32),
-                    text_tertiary(),
-                );
-            }
+    // doctab in the leftover gap, truncated to what actually fits.
+    let gap = right_start - left_end;
+    if gap >= 60.0 {
+        icons::draw_action_icon(
+            ui.painter(),
+            Pos2::new(left_end + 6.5, cy),
+            ActionIcon::DocTab,
+            text_secondary(),
+        );
+        let max_w = gap - 24.0;
+        let font = FontId::proportional(qs_theme::font::SMALL as f32);
+        let mut disp = doc_name;
+        let mut g = ui
+            .painter()
+            .layout_no_wrap(disp.clone(), font.clone(), text_secondary());
+        if g.size().x > max_w {
+            let max_chars = (max_w / 6.5).floor().max(6.0) as usize;
+            disp.truncate(max_chars.saturating_sub(1));
+            disp.push('…');
+            g = ui
+                .painter()
+                .layout_no_wrap(disp.clone(), font.clone(), text_secondary());
         }
-    }
-
-    let cur_tool = editor.tool();
-    let mut tx = track_rect.left() + 3.0;
-    let ty = track_rect.top() + 3.0;
-
-    let mut clicked_tool = None;
-
-    if compact_tools {
-        for &(t, tip) in &primary_compact {
-            let r = Rect::from_min_size(Pos2::new(tx, ty), Vec2::new(28.0, tool_h));
-            let active = cur_tool == t;
-            let id = ui.auto_id_with(("tb_tool", t));
-            let resp = ui.interact(r, id, Sense::click()).on_hover_text(tip);
-            paint_tool_segment(ui.painter(), r, active, resp.hovered());
-            let icon_col = if active {
-                Color32::WHITE
-            } else if resp.hovered() {
-                text_primary()
-            } else {
-                text_secondary()
-            };
-            icons::draw_tool_icon(ui.painter(), r.center(), t, icon_col);
-            if resp.clicked() {
-                clicked_tool = Some(t);
-            }
-            tx += 28.0;
-        }
-        let more_rect = Rect::from_min_size(Pos2::new(tx + 2.0, ty), Vec2::new(more_w, tool_h));
-        // When the active tool lives in the overflow, the button shows that
-        // tool's icon instead of dots: otherwise the toolbar gives no hint of
-        // what is selected once the tool list collapses.
-        let active_overflow = overflow_tools.iter().find(|(t, _)| *t == cur_tool);
-        let overflow_active = active_overflow.is_some();
-        let more_id = ui.scope_id().with("tb_more_tools");
-        let more_tip = match active_overflow {
-            Some((_, tip)) => format!("Current tool: {tip} — open for more"),
-            None => "More tools (Line, Ellipse, Magnify, Spotlight, Stamp, Eraser)".to_owned(),
-        };
-        let more_resp = ui
-            .interact(more_rect, more_id, Sense::click())
-            .on_hover_text(more_tip);
-        paint_tool_segment(ui.painter(), more_rect, overflow_active, more_resp.hovered());
-        match active_overflow {
-            Some((tool, _)) => {
-                icons::draw_tool_icon(ui.painter(), more_rect.center(), *tool, Color32::WHITE);
-            }
-            None => {
-                let more_col = if more_resp.hovered() {
-                    text_primary()
-                } else {
-                    text_secondary()
-                };
-                ui.painter().text(
-                    more_rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    "•••",
-                    FontId::proportional(12.0),
-                    more_col,
-                );
-            }
-        }
-        let popup_id = ui.scope_id().with("tb_more_popup");
-        if more_resp.clicked() {
-            egui::Popup::toggle_id(ui.ctx(), popup_id);
-        }
-        egui::Popup::from_toggle_button_response(&more_resp)
-            .id(popup_id)
-            .show(|ui| {
-                ui.set_min_width(150.0);
-                for &(t, tip) in &overflow_tools {
-                    let selected = cur_tool == t;
-                    if ui.selectable_label(selected, tip).clicked() {
-                        clicked_tool = Some(t);
-                    }
-                }
-            });
-    } else {
-        let mut check_group = |ui: &mut Ui, group: &[(Tool, &str)], x: &mut f32| {
-            for &(t, tip) in group {
-                let r = Rect::from_min_size(Pos2::new(*x, ty), Vec2::new(tool_w, tool_h));
-                let active = cur_tool == t;
-                let id = ui.auto_id_with(("tb_tool", t));
-                let resp = ui.interact(r, id, Sense::click()).on_hover_text(tip);
-                paint_tool_segment(ui.painter(), r, active, resp.hovered());
-                let icon_col = if active {
-                    Color32::WHITE
-                } else if resp.hovered() {
-                    text_primary()
-                } else {
-                    text_secondary()
-                };
-                icons::draw_tool_icon(ui.painter(), r.center(), t, icon_col);
-                if resp.clicked() {
-                    clicked_tool = Some(t);
-                }
-                *x += tool_w;
-            }
-        };
-
-        check_group(ui, &tools_group1, &mut tx);
-        paint_bar_divider(ui.painter(), tx + div_w * 0.5, track_rect);
-        tx += div_w;
-        check_group(ui, &tools_group2, &mut tx);
-        paint_bar_divider(ui.painter(), tx + div_w * 0.5, track_rect);
-        tx += div_w;
-        check_group(ui, &tools_group3, &mut tx);
-    }
-
-    if let Some(t) = clicked_tool {
-        editor.set_tool(t);
+        ui.painter().galley(
+            Pos2::new(left_end + 20.0, cy - g.size().y * 0.5),
+            g,
+            text_secondary(),
+        );
     }
 
     res
 }
 
-fn paint_bar_divider(painter: &egui::Painter, x: f32, track: Rect) {
-    let px = x.round() + 0.5;
-    painter.line_segment(
-        [
-            Pos2::new(px, track.top() + 7.0),
-            Pos2::new(px, track.bottom() - 7.0),
-        ],
-        Stroke::new(1.0, divider_vertical()),
+/// Tools grouped exactly like the locked mockup: hairline dividers between
+/// functional groups, every tool visible (no overflow). The four Polygon
+/// shapes land in the third group via `Tool::key()` in Phase 5.
+const TOOL_GROUPS: &[&[(Tool, &str)]] = &[
+    &[
+        (Tool::Select, "Select (V)"),
+        (Tool::SelectRegion, "Select Region (M)"),
+        (Tool::SmartMove, "Smart Move (Y)"),
+    ],
+    &[
+        (Tool::Pen, "Pen (P)"),
+        (Tool::Highlighter, "Highlight (H)"),
+        (Tool::Eraser, "Eraser (E)"),
+    ],
+    &[
+        (Tool::Line, "Line (L)"),
+        (Tool::Arrow, "Arrow (A)"),
+        (Tool::Rect, "Rectangle (R)"),
+        (Tool::Ellipse, "Ellipse (O)"),
+        (Tool::Triangle, "Triangle (N)"),
+        (Tool::Diamond, "Diamond (D)"),
+        (Tool::Star, "Star (J)"),
+        (Tool::Hexagon, "Hexagon (W)"),
+        (Tool::Fill, "Paint Bucket (U)"),
+    ],
+    &[
+        (Tool::Text, "Text (T)"),
+        (Tool::Callout, "Callout Bubble (C)"),
+        (Tool::Step, "Step Counter (S)"),
+        (Tool::Stamp, "Stamp (G)"),
+    ],
+    &[
+        (Tool::Blur, "Blur / Redact (B)"),
+        (Tool::Spotlight, "Spotlight (F)"),
+        (Tool::Magnify, "Magnify Lens (I)"),
+        (Tool::Cutout, "Cutout Strip (X)"),
+    ],
+    &[(Tool::Crop, "Crop / Trim (K)")],
+];
+
+/// Second chrome row: flat grouped tool palette. Every tool button shows its
+/// bound key as a bottom-right subscript; the active tool's name sits at the
+/// row's right edge. Returns true when a tool was clicked.
+pub fn render_tool_palette(ui: &mut Ui, editor: &mut Editor) -> bool {
+    let avail = ui.available_rect_before_wrap();
+    let bar_rect = Rect::from_min_size(avail.min, Vec2::new(avail.width(), PALETTE_HEIGHT));
+    ui.allocate_rect(bar_rect, Sense::hover());
+    paint_chrome_bar(
+        ui.painter(),
+        bar_rect,
+        bg_toolbar_top(),
+        bg_toolbar_bot(),
+        false,
     );
+
+    let cur_tool = editor.tool();
+    let cy = bar_rect.center().y;
+    let n_tools: usize = TOOL_GROUPS.iter().map(|g| g.len()).sum();
+    let n_divs = (TOOL_GROUPS.len() - 1) as f32;
+    let div_w = 9.0;
+    let tool_space = bar_rect.width() - 2.0 * CHROME_PAD_X - n_divs * div_w;
+    let preferred_width = ((tool_space - 100.0) / n_tools as f32).clamp(24.0, 32.0);
+    let tool_w = preferred_width.min(tool_space / n_tools as f32 - 2.0);
+
+    let mut clicked = None;
+    // Flat row anchored to the left edge — no enclosing capsule (mockup).
+    let mut tx = bar_rect.left() + CHROME_PAD_X;
+    for (gi, group) in TOOL_GROUPS.iter().enumerate() {
+        if gi > 0 {
+            tx += bar_sep(ui.painter(), tx, cy);
+        }
+        for &(t, tip) in *group {
+            let r = Rect::from_center_size(
+                Pos2::new(tx + tool_w * 0.5, cy),
+                Vec2::new(tool_w, 32.0),
+            );
+            let active = cur_tool == t;
+            let resp = ui
+                .interact(r, ui.auto_id_with(("pal_tool", t)), Sense::click())
+                .on_hover_text(tip);
+            paint_tool_segment(ui.painter(), r, active, hot_t(&resp));
+            let icon_col = if active {
+                accent_hi()
+            } else if resp.hovered() {
+                text_primary()
+            } else {
+                text_secondary()
+            };
+            let icon_size = if tool_w < 24.0 { 13.0 } else { 17.0 };
+            icons::draw_tool_icon_sz(ui.painter(), r.center(), t, icon_col, icon_size);
+            // Shortcut subscript — same source as the key dispatch chain.
+            ui.painter().text(
+                Pos2::new(r.right() - 2.5, r.bottom() - 1.0),
+                egui::Align2::RIGHT_BOTTOM,
+                t.key().to_ascii_uppercase().to_string(),
+                FontId::monospace(8.5),
+                if active {
+                    accent_hi()
+                } else {
+                    text_tertiary()
+                },
+            );
+            if resp.clicked() {
+                clicked = Some(t);
+            }
+            tx += tool_w + 2.0;
+        }
+    }
+    let tools_end = tx;
+
+    // Active-tool name tag at the row's right edge, skipped when it would
+    // collide with the buttons on narrow windows.
+    let tag = cur_tool.label();
+    let galley = ui.painter().layout_no_wrap(
+        tag.to_owned(),
+        FontId::proportional(qs_theme::font::SMALL as f32),
+        text_tertiary(),
+    );
+    let tag_right = bar_rect.right() - CHROME_PAD_X;
+    if tag_right - galley.size().x > tools_end + 8.0 {
+        ui.painter().galley(
+            Pos2::new(tag_right - galley.size().x, cy - galley.size().y * 0.5),
+            galley,
+            text_tertiary(),
+        );
+    }
+
+    if let Some(t) = clicked {
+        editor.set_tool(t);
+        return true;
+    }
+    false
 }
 
-fn paint_tool_segment(painter: &egui::Painter, rect: Rect, active: bool, hovered: bool) {
+/// `.ibtn.on` — accent at 20 % over the bar, square-ish corner (mockup).
+fn paint_tool_segment(painter: &egui::Painter, rect: Rect, active: bool, hot: f32) {
     if active {
-        painter.rect_filled(rect, RADIUS_PILL, accent_blue());
-    } else if hovered {
-        painter.rect_filled(rect, RADIUS_PILL, bg_pill_hover());
+        painter.rect_filled(rect, 6.0, accent_alpha(51));
+    } else if hot > 0.0 {
+        let hov = bg_btn_secondary_top();
+        painter.rect_filled(
+            rect,
+            6.0,
+            Color32::from_rgba_unmultiplied(
+                hov.r(),
+                hov.g(),
+                hov.b(),
+                (hov.a() as f32 * hot) as u8,
+            ),
+        );
     }
 }
 
+/// Segmented-track button used by the properties bar swatch/stroke segments.
 fn icon_segment(
     ui: &mut Ui,
     id_salt: &str,
@@ -694,13 +593,13 @@ fn icon_segment(
         Sense::hover()
     };
     let id = ui.auto_id_with(id_salt);
-    let resp = ui.interact(rect, id, sense).on_hover_text(tooltip);
+    let resp = ui.interact(rect, id, sense).on_hover_text(crate::components::platform_shortcut(tooltip));
     paint_pill_button(
         ui.painter(),
         rect,
         5.5,
         active,
-        resp.hovered(),
+        hot_t(&resp),
         enabled,
         false,
     );
@@ -715,7 +614,90 @@ fn icon_segment(
     enabled && resp.clicked()
 }
 
-fn chrome_button(
+/// `.ibtn` — transparent chrome button resting on the bar; hover paints the
+/// `--control` surface, disabled dims to 35 % like the mockup.
+fn bar_ibtn(
+    ui: &mut Ui,
+    id_salt: &str,
+    rect: Rect,
+    icon: ActionIcon,
+    enabled: bool,
+    tooltip: &str,
+) -> bool {
+    let sense = if enabled {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    let resp = ui
+        .interact(rect, ui.auto_id_with(id_salt), sense)
+        .on_hover_text(crate::components::platform_shortcut(tooltip));
+    let ht = hot_t(&resp);
+    if ht > 0.0 && enabled {
+        let hov = bg_btn_secondary_top();
+        ui.painter().rect_filled(
+            rect,
+            6.0,
+            Color32::from_rgba_unmultiplied(hov.r(), hov.g(), hov.b(), (hov.a() as f32 * ht) as u8),
+        );
+    }
+    let color = if !enabled {
+        text_disabled()
+    } else if resp.hovered() {
+        text_primary()
+    } else {
+        text_secondary()
+    };
+    icons::draw_action_icon_sz(ui.painter(), rect.center(), icon, color, 15.0);
+    enabled && resp.clicked()
+}
+
+/// Same flat chrome as `bar_ibtn` but paints a text glyph (`−`, `+`).
+fn bar_text_btn(ui: &mut Ui, id_salt: &str, rect: Rect, glyph: &str, tooltip: &str) -> bool {
+    let resp = ui
+        .interact(rect, ui.auto_id_with(id_salt), Sense::click())
+        .on_hover_text(crate::components::platform_shortcut(tooltip));
+    let ht = hot_t(&resp);
+    if ht > 0.0 {
+        let hov = bg_btn_secondary_top();
+        ui.painter().rect_filled(
+            rect,
+            6.0,
+            Color32::from_rgba_unmultiplied(
+                hov.r(),
+                hov.g(),
+                hov.b(),
+                (hov.a() as f32 * ht) as u8,
+            ),
+        );
+    }
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        glyph,
+        FontId::proportional(qs_theme::font::BODY as f32),
+        if resp.hovered() {
+            text_primary()
+        } else {
+            text_secondary()
+        },
+    );
+    resp.clicked()
+}
+
+/// `.sep` — 1×18 hairline between chrome groups; returns the slot width.
+fn bar_sep(painter: &egui::Painter, x: f32, cy: f32) -> f32 {
+    let px = (x + 4.0).round() + 0.5;
+    painter.line_segment(
+        [Pos2::new(px, cy - 9.0), Pos2::new(px, cy + 9.0)],
+        Stroke::new(1.0, divider_vertical()),
+    );
+    9.0
+}
+
+/// `.tbtn` — bordered text+icon button (`--control`); `primary` is the one
+/// accent CTA per row (Copy).
+fn tbtn(
     ui: &mut Ui,
     id_salt: &str,
     rect: Rect,
@@ -724,33 +706,31 @@ fn chrome_button(
     primary_accent: bool,
     tooltip: &str,
 ) -> bool {
-    let id = ui.auto_id_with(id_salt);
-    let resp = ui.interact(rect, id, Sense::click()).on_hover_text(tooltip);
+    let resp = ui
+        .interact(rect, ui.auto_id_with(id_salt), Sense::click())
+        .on_hover_text(crate::components::platform_shortcut(tooltip));
+    let ht = hot_t(&resp);
     if primary_accent {
-        paint_pill_button(
-            ui.painter(),
-            rect,
-            RADIUS_BTN,
-            false,
-            resp.hovered(),
-            true,
-            true,
-        );
+        paint_pill_button(ui.painter(), rect, 6.0, false, ht, true, true);
     } else {
-        paint_secondary_button(ui.painter(), rect, RADIUS_BTN, resp.hovered(), true, false);
+        paint_secondary_button(ui.painter(), rect, 6.0, ht, true, false);
     }
     let fg = if primary_accent {
         Color32::WHITE
     } else {
         text_primary()
     };
-    let icon_pos = Pos2::new(rect.left() + 14.0, rect.center().y);
-    icons::draw_action_icon(ui.painter(), icon_pos, icon, fg);
+    icons::draw_action_icon(
+        ui.painter(),
+        Pos2::new(rect.left() + 11.0 + 6.5, rect.center().y),
+        icon,
+        fg,
+    );
     ui.painter().text(
-        Pos2::new(rect.left() + 24.5, rect.center().y),
+        Pos2::new(rect.left() + 11.0 + 13.0 + 6.0, rect.center().y),
         egui::Align2::LEFT_CENTER,
         label,
-        FontId::proportional(12.0),
+        FontId::proportional(qs_theme::font::SMALL as f32),
         fg,
     );
     resp.clicked()
@@ -782,11 +762,13 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
     let bar_rect = Rect::from_min_size(avail.min, Vec2::new(avail.width(), INSPECTOR_HEIGHT));
     ui.allocate_rect(bar_rect, Sense::hover());
 
+    // One step darker than the toolbar above (`--bg`) — keeps the rows
+    // visually separated like the mockup's `.proprow`.
     paint_chrome_bar(
         ui.painter(),
         bar_rect,
-        bg_inspector_top(),
-        bg_inspector_bot(),
+        bg_props(),
+        bg_props(),
         false,
     );
 
@@ -849,7 +831,8 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
             editor.style.text,
         ),
         Some(ObjectKind::Rect { stroke, fill, .. })
-        | Some(ObjectKind::Ellipse { stroke, fill, .. }) => (
+        | Some(ObjectKind::Ellipse { stroke, fill, .. })
+        | Some(ObjectKind::Polygon { stroke, fill, .. }) => (
             ContextKind::Shape,
             stroke.rgb,
             stroke.width,
@@ -932,24 +915,49 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
             editor.style.blur_strength,
             editor.style.text,
         ),
-        Some(ObjectKind::Stamp { .. }) => {
-            (ContextKind::Stamp, editor.style.rgb, editor.style.width, editor.style.fill, editor.style.callout_shape,
-             editor.style.arrow_head, editor.style.blur_mode, editor.style.blur_strength, editor.style.text)
-        }
+        Some(ObjectKind::Stamp { .. }) => (
+            ContextKind::Stamp,
+            editor.style.rgb,
+            editor.style.width,
+            editor.style.fill,
+            editor.style.callout_shape,
+            editor.style.arrow_head,
+            editor.style.blur_mode,
+            editor.style.blur_strength,
+            editor.style.text,
+        ),
         Some(ObjectKind::Eraser { .. }) => (
             ContextKind::Eraser,
-            editor.style.rgb, editor.style.width, editor.style.fill, editor.style.callout_shape,
-            editor.style.arrow_head, editor.style.blur_mode, editor.style.blur_strength, editor.style.text,
+            editor.style.rgb,
+            editor.style.width,
+            editor.style.fill,
+            editor.style.callout_shape,
+            editor.style.arrow_head,
+            editor.style.blur_mode,
+            editor.style.blur_strength,
+            editor.style.text,
         ),
         Some(ObjectKind::Fill { rgb, .. }) => (
             ContextKind::Shape,
-            *rgb, editor.style.width, editor.style.fill, editor.style.callout_shape,
-            editor.style.arrow_head, editor.style.blur_mode, editor.style.blur_strength, editor.style.text,
+            *rgb,
+            editor.style.width,
+            editor.style.fill,
+            editor.style.callout_shape,
+            editor.style.arrow_head,
+            editor.style.blur_mode,
+            editor.style.blur_strength,
+            editor.style.text,
         ),
         Some(ObjectKind::SmartMove { .. }) => (
             ContextKind::Generic,
-            editor.style.rgb, editor.style.width, editor.style.fill, editor.style.callout_shape,
-            editor.style.arrow_head, editor.style.blur_mode, editor.style.blur_strength, editor.style.text,
+            editor.style.rgb,
+            editor.style.width,
+            editor.style.fill,
+            editor.style.callout_shape,
+            editor.style.arrow_head,
+            editor.style.blur_mode,
+            editor.style.blur_strength,
+            editor.style.text,
         ),
         None => {
             let kind = match editor.tool() {
@@ -957,6 +965,9 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
                 Tool::Pen | Tool::Highlighter | Tool::Line => ContextKind::StrokeOnly,
                 Tool::Arrow => ContextKind::Arrow,
                 Tool::Rect | Tool::Ellipse => ContextKind::Shape,
+                Tool::Triangle | Tool::Diamond | Tool::Star | Tool::Hexagon => {
+                    ContextKind::Shape
+                }
                 Tool::Text => ContextKind::Text,
                 Tool::Callout => ContextKind::Callout,
                 Tool::Step => ContextKind::Step,
@@ -1046,7 +1057,7 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
             ui.painter(),
             dup_rect,
             RADIUS_PILL,
-            dup_resp.hovered(),
+            hot_t(&dup_resp),
             true,
             false,
         );
@@ -1073,7 +1084,7 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
             ui.painter(),
             del_rect,
             RADIUS_PILL,
-            del_resp.hovered(),
+            hot_t(&del_resp),
             true,
             true,
         );
@@ -1100,13 +1111,21 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
     let mut x = inner.left();
     let max_x = inner.right() - right_reserved;
 
+    if ctx_kind == ContextKind::Generic && !has_selection {
+        ui.painter().text(
+            Pos2::new(x, cy),
+            egui::Align2::LEFT_CENTER,
+            "No options for this tool",
+            FontId::proportional(qs_theme::font::SMALL as f32),
+            text_tertiary(),
+        );
+        return mutated;
+    }
+
     // 1. Color Swatches (for everything except Blur)
     if ctx_kind != ContextKind::Blur {
         for (idx, &rgb) in PALETTE.iter().enumerate() {
-            let sw_r = Rect::from_center_size(
-                Pos2::new(x + SWATCH * 0.5, cy),
-                Vec2::splat(SWATCH),
-            );
+            let sw_r = Rect::from_center_size(Pos2::new(x + SWATCH * 0.5, cy), Vec2::splat(SWATCH));
             if sw_r.right() > max_x {
                 break;
             }
@@ -1120,7 +1139,7 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
                 SWATCH * 0.34,
                 rgb_to_color32(rgb),
                 eff_rgb == rgb,
-                resp.hovered(),
+                hot_t(&resp),
             );
             if resp.clicked() {
                 editor.set_color(rgb);
@@ -1171,7 +1190,7 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
                     sr,
                     egui::CornerRadius::same(6),
                     active,
-                    resp.hovered(),
+                    hot_t(&resp),
                     true,
                     false,
                 );
@@ -1185,10 +1204,8 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
                 } else {
                     text_secondary()
                 };
-                let bar_rect = Rect::from_center_size(
-                    sr.center(),
-                    Vec2::new(sr.width() - 12.0, bar_h),
-                );
+                let bar_rect =
+                    Rect::from_center_size(sr.center(), Vec2::new(sr.width() - 12.0, bar_h));
                 ui.painter().rect_filled(bar_rect, RADIUS_CAPSULE, col);
                 if resp.clicked() {
                     editor.set_stroke_width(w);
@@ -1219,12 +1236,12 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
                     fr,
                     RADIUS_PILL,
                     true,
-                    resp.hovered(),
+                    hot_t(&resp),
                     true,
                     false,
                 );
             } else {
-                paint_secondary_button(ui.painter(), fr, RADIUS_PILL, resp.hovered(), true, false);
+                paint_secondary_button(ui.painter(), fr, RADIUS_PILL, hot_t(&resp), true, false);
             }
             let fg = if is_filled || resp.hovered() {
                 text_primary()
@@ -1340,11 +1357,7 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
                     ActionIcon::ArrowFilled,
                     "Filled Arrowhead",
                 ),
-                (
-                    ArrowHead::Curved,
-                    ActionIcon::Redo,
-                    "Curved Arrow (Bezier)",
-                ),
+                (ArrowHead::Curved, ActionIcon::Redo, "Curved Arrow (Bezier)"),
             ];
             let seg_w = 28.0;
             let tw = 6.0 + heads.len() as f32 * seg_w;
@@ -1361,15 +1374,7 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
                         1 => "ins_ah1",
                         _ => "ins_ah2",
                     };
-                    if icon_segment(
-                        ui,
-                        id,
-                        sr,
-                        ic,
-                        eff_arrow == hd,
-                        true,
-                        tip,
-                    ) {
+                    if icon_segment(ui, id, sr, ic, eff_arrow == hd, true, tip) {
                         editor.set_arrow_head(hd);
                         mutated = true;
                     }
@@ -1409,15 +1414,7 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
                         1 => "ins_bm1",
                         _ => "ins_bm2",
                     };
-                    if icon_segment(
-                        ui,
-                        id,
-                        sr,
-                        ic,
-                        eff_blur_mode == md,
-                        true,
-                        tip,
-                    ) {
+                    if icon_segment(ui, id, sr, ic, eff_blur_mode == md, true, tip) {
                         editor.set_blur_mode(md);
                         mutated = true;
                     }
@@ -1447,7 +1444,7 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
                         sr,
                         RADIUS_PILL,
                         active,
-                        resp.hovered(),
+                        hot_t(&resp),
                         true,
                         false,
                     );
@@ -1473,23 +1470,69 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
             x = draw_ins_divider(ui.painter(), x + 6.0, cy) + 6.0;
             for (i, zoom) in [1.5_f32, 2.0, 3.0, 4.0].into_iter().enumerate() {
                 let r = Rect::from_min_size(Pos2::new(x, cy - 11.0), Vec2::new(32.0, 22.0));
-                let resp = ui.interact(r, ui.auto_id_with(("magnify_zoom", i)), Sense::click())
+                let resp = ui
+                    .interact(r, ui.auto_id_with(("magnify_zoom", i)), Sense::click())
                     .on_hover_text(format!("Magnification: {zoom}×"));
                 let active = (editor.style.magnify_zoom - zoom).abs() < 0.01;
-                paint_pill_button(ui.painter(), r, RADIUS_PILL, active, resp.hovered(), true, false);
-                ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, format!("{zoom}×"), FontId::proportional(qs_theme::font::SMALL as f32), text_primary());
-                if resp.clicked() { editor.set_magnify_zoom(zoom); mutated = true; }
+                paint_pill_button(
+                    ui.painter(),
+                    r,
+                    RADIUS_PILL,
+                    active,
+                    hot_t(&resp),
+                    true,
+                    false,
+                );
+                ui.painter().text(
+                    r.center(),
+                    egui::Align2::CENTER_CENTER,
+                    format!("{zoom}×"),
+                    FontId::proportional(qs_theme::font::SMALL as f32),
+                    text_primary(),
+                );
+                if resp.clicked() {
+                    editor.set_magnify_zoom(zoom);
+                    mutated = true;
+                }
                 x += 34.0;
             }
             x = draw_ins_divider(ui.painter(), x + 4.0, cy) + 4.0;
-            for (i, shape) in [qs_doc::MagnifyShape::Ellipse, qs_doc::MagnifyShape::Rect].into_iter().enumerate() {
+            for (i, shape) in [qs_doc::MagnifyShape::Ellipse, qs_doc::MagnifyShape::Rect]
+                .into_iter()
+                .enumerate()
+            {
                 let r = Rect::from_min_size(Pos2::new(x, cy - 11.0), Vec2::new(38.0, 22.0));
-                let resp = ui.interact(r, ui.auto_id_with(("magnify_shape", i)), Sense::click())
-                    .on_hover_text(match shape { qs_doc::MagnifyShape::Ellipse => "Circular lens", qs_doc::MagnifyShape::Rect => "Rectangular lens" });
+                let resp = ui
+                    .interact(r, ui.auto_id_with(("magnify_shape", i)), Sense::click())
+                    .on_hover_text(match shape {
+                        qs_doc::MagnifyShape::Ellipse => "Circular lens",
+                        qs_doc::MagnifyShape::Rect => "Rectangular lens",
+                    });
                 let active = editor.style.magnify_shape == shape;
-                paint_pill_button(ui.painter(), r, RADIUS_PILL, active, resp.hovered(), true, false);
-                ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, if shape == qs_doc::MagnifyShape::Ellipse { "Circle" } else { "Rect" }, FontId::proportional(qs_theme::font::SMALL as f32), text_primary());
-                if resp.clicked() { editor.set_magnify_shape(shape); mutated = true; }
+                paint_pill_button(
+                    ui.painter(),
+                    r,
+                    RADIUS_PILL,
+                    active,
+                    hot_t(&resp),
+                    true,
+                    false,
+                );
+                ui.painter().text(
+                    r.center(),
+                    egui::Align2::CENTER_CENTER,
+                    if shape == qs_doc::MagnifyShape::Ellipse {
+                        "Circle"
+                    } else {
+                        "Rect"
+                    },
+                    FontId::proportional(qs_theme::font::SMALL as f32),
+                    text_primary(),
+                );
+                if resp.clicked() {
+                    editor.set_magnify_shape(shape);
+                    mutated = true;
+                }
                 x += 40.0;
             }
         }
@@ -1497,23 +1540,62 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
             x = draw_ins_divider(ui.painter(), x + 6.0, cy) + 6.0;
             for (i, dim) in [0.4_f32, 0.6, 0.8].into_iter().enumerate() {
                 let r = Rect::from_min_size(Pos2::new(x, cy - 11.0), Vec2::new(40.0, 22.0));
-                let resp = ui.interact(r, ui.auto_id_with(("spot_dim", i)), Sense::click())
+                let resp = ui
+                    .interact(r, ui.auto_id_with(("spot_dim", i)), Sense::click())
                     .on_hover_text(format!("Dim outside: {}%", (dim * 100.0) as u32));
                 let active = (editor.style.spot_dim - dim).abs() < 0.01;
-                paint_pill_button(ui.painter(), r, RADIUS_PILL, active, resp.hovered(), true, false);
-                ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, format!("{}%", (dim * 100.0) as u32), FontId::proportional(qs_theme::font::SMALL as f32), text_primary());
-                if resp.clicked() { editor.set_spotlight(Some(dim), None); mutated = true; }
+                paint_pill_button(
+                    ui.painter(),
+                    r,
+                    RADIUS_PILL,
+                    active,
+                    hot_t(&resp),
+                    true,
+                    false,
+                );
+                ui.painter().text(
+                    r.center(),
+                    egui::Align2::CENTER_CENTER,
+                    format!("{}%", (dim * 100.0) as u32),
+                    FontId::proportional(qs_theme::font::SMALL as f32),
+                    text_primary(),
+                );
+                if resp.clicked() {
+                    editor.set_spotlight(Some(dim), None);
+                    mutated = true;
+                }
                 x += 42.0;
             }
             x = draw_ins_divider(ui.painter(), x + 4.0, cy) + 4.0;
-            for (i, (blur, label)) in [(0.0_f32, "Sharp"), (8.0, "Soft"), (20.0, "Feather")].into_iter().enumerate() {
+            for (i, (blur, label)) in [(0.0_f32, "Sharp"), (8.0, "Soft"), (20.0, "Feather")]
+                .into_iter()
+                .enumerate()
+            {
                 let r = Rect::from_min_size(Pos2::new(x, cy - 11.0), Vec2::new(52.0, 22.0));
-                let resp = ui.interact(r, ui.auto_id_with(("spot_blur", i)), Sense::click())
+                let resp = ui
+                    .interact(r, ui.auto_id_with(("spot_blur", i)), Sense::click())
                     .on_hover_text(format!("Edge softness: {blur}px"));
                 let active = (editor.style.spot_blur - blur).abs() < 0.01;
-                paint_pill_button(ui.painter(), r, RADIUS_PILL, active, resp.hovered(), true, false);
-                ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, label, FontId::proportional(qs_theme::font::SMALL as f32), text_primary());
-                if resp.clicked() { editor.set_spotlight(None, Some(blur)); mutated = true; }
+                paint_pill_button(
+                    ui.painter(),
+                    r,
+                    RADIUS_PILL,
+                    active,
+                    hot_t(&resp),
+                    true,
+                    false,
+                );
+                ui.painter().text(
+                    r.center(),
+                    egui::Align2::CENTER_CENTER,
+                    label,
+                    FontId::proportional(qs_theme::font::SMALL as f32),
+                    text_primary(),
+                );
+                if resp.clicked() {
+                    editor.set_spotlight(None, Some(blur));
+                    mutated = true;
+                }
                 x += 54.0;
             }
         }
@@ -1521,12 +1603,30 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
             x = draw_ins_divider(ui.painter(), x + 6.0, cy) + 6.0;
             for (i, kind) in qs_doc::StampKind::ALL.into_iter().enumerate() {
                 let r = Rect::from_min_size(Pos2::new(x, cy - 11.0), Vec2::new(58.0, 22.0));
-                let resp = ui.interact(r, ui.auto_id_with(("stamp_kind", i)), Sense::click())
+                let resp = ui
+                    .interact(r, ui.auto_id_with(("stamp_kind", i)), Sense::click())
                     .on_hover_text(format!("{} stamp", kind.label()));
                 let active = editor.style.stamp_kind == kind;
-                paint_pill_button(ui.painter(), r, RADIUS_PILL, active, resp.hovered(), true, false);
-                ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, kind.label(), FontId::proportional(qs_theme::font::CAPTION as f32), text_primary());
-                if resp.clicked() { editor.set_stamp_kind(kind); mutated = true; }
+                paint_pill_button(
+                    ui.painter(),
+                    r,
+                    RADIUS_PILL,
+                    active,
+                    hot_t(&resp),
+                    true,
+                    false,
+                );
+                ui.painter().text(
+                    r.center(),
+                    egui::Align2::CENTER_CENTER,
+                    kind.label(),
+                    FontId::proportional(qs_theme::font::CAPTION as f32),
+                    text_primary(),
+                );
+                if resp.clicked() {
+                    editor.set_stamp_kind(kind);
+                    mutated = true;
+                }
                 x += 60.0;
             }
         }
@@ -1534,12 +1634,30 @@ pub fn render_properties_bar(ui: &mut Ui, editor: &mut Editor) -> bool {
             x = draw_ins_divider(ui.painter(), x + 6.0, cy) + 6.0;
             for (i, w) in [4.0_f32, 10.0, 24.0].into_iter().enumerate() {
                 let r = Rect::from_min_size(Pos2::new(x, cy - 11.0), Vec2::new(30.0, 22.0));
-                let resp = ui.interact(r, ui.auto_id_with(("eraser_w", i)), Sense::click())
+                let resp = ui
+                    .interact(r, ui.auto_id_with(("eraser_w", i)), Sense::click())
                     .on_hover_text(format!("Eraser size: {w}px"));
                 let active = (editor.style.eraser_width - w).abs() < 0.01;
-                paint_pill_button(ui.painter(), r, RADIUS_PILL, active, resp.hovered(), true, false);
-                ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, format!("{w}"), FontId::proportional(qs_theme::font::SMALL as f32), text_primary());
-                if resp.clicked() { editor.set_eraser_width(w); mutated = true; }
+                paint_pill_button(
+                    ui.painter(),
+                    r,
+                    RADIUS_PILL,
+                    active,
+                    hot_t(&resp),
+                    true,
+                    false,
+                );
+                ui.painter().text(
+                    r.center(),
+                    egui::Align2::CENTER_CENTER,
+                    format!("{w}"),
+                    FontId::proportional(qs_theme::font::SMALL as f32),
+                    text_primary(),
+                );
+                if resp.clicked() {
+                    editor.set_eraser_width(w);
+                    mutated = true;
+                }
                 x += 32.0;
             }
         }
@@ -1646,7 +1764,7 @@ fn draw_text_controls(
                 sr,
                 RADIUS_PILL,
                 active,
-                resp.hovered(),
+                hot_t(&resp),
                 true,
                 false,
             );
@@ -1720,7 +1838,7 @@ fn draw_text_controls(
                 sr,
                 RADIUS_PILL,
                 active,
-                resp.hovered(),
+                hot_t(&resp),
                 true,
                 false,
             );
@@ -1806,12 +1924,12 @@ fn text_toggle(
             r,
             RADIUS_PILL,
             true,
-            resp.hovered(),
+            hot_t(&resp),
             true,
             false,
         );
     } else {
-        paint_secondary_button(ui.painter(), r, RADIUS_PILL, resp.hovered(), true, false);
+        paint_secondary_button(ui.painter(), r, RADIUS_PILL, hot_t(&resp), true, false);
     }
     ui.painter().text(
         r.center(),

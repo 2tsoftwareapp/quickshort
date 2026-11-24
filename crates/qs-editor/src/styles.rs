@@ -118,6 +118,10 @@ pub fn tool_key(tool: Tool) -> &'static str {
         Tool::Arrow => "arrow",
         Tool::Line => "line",
         Tool::Rect => "rect",
+        Tool::Triangle => "triangle",
+        Tool::Diamond => "diamond",
+        Tool::Star => "star",
+        Tool::Hexagon => "hexagon",
         Tool::Ellipse => "ellipse",
         Tool::Text => "text",
         Tool::Callout => "callout",
@@ -174,7 +178,7 @@ pub fn defaults_for(tool: Tool) -> Vec<QuickStyle> {
         Tool::Pen | Tool::Highlighter | Tool::Line | Tool::Arrow | Tool::Fill => colours(),
         // Smart Move carries no style knobs, so it has no presets to offer.
         Tool::SmartMove => Vec::new(),
-        Tool::Rect | Tool::Ellipse => colours()
+        Tool::Rect | Tool::Ellipse | Tool::Triangle | Tool::Diamond | Tool::Star | Tool::Hexagon => colours()
             .into_iter()
             .enumerate()
             .map(|(i, mut q)| {
@@ -431,6 +435,10 @@ pub fn tool_label(tool: Tool) -> &'static str {
         Tool::Arrow => "Arrow",
         Tool::Line => "Line",
         Tool::Rect => "Rect",
+        Tool::Triangle => "Triangle",
+        Tool::Diamond => "Diamond",
+        Tool::Star => "Star",
+        Tool::Hexagon => "Hexagon",
         Tool::Ellipse => "Ellipse",
         Tool::Text => "Text",
         Tool::Callout => "Callout",

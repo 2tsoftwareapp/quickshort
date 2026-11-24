@@ -142,6 +142,9 @@ pub struct EditorApp {
     combine_layout: CombineLayout,
     tray_selected: Vec<PathBuf>,
     show_layers: bool,
+    /// Last painted width of the resizable layers panel, so the open/close
+    /// animation returns to the user's own width rather than the default.
+    layers_w: f32,
     show_inspector: bool,
     show_filmstrip: bool,
     /// Keyboard cursor over the filmstrip (arrows move it, Space marks).
@@ -150,7 +153,6 @@ pub struct EditorApp {
     filmstrip: Filmstrip,
     session_cache: std::collections::HashMap<PathBuf, SavedDocSession>,
     canvas_anchor: (usize, usize),
-    layer_drag_id: Option<ObjectId>,
     prefs: crate::prefs::AppPrefs,
     next_prefs_poll: Instant,
     /// Quick Styles: built-in presets + the user's saved ones.
@@ -244,13 +246,13 @@ impl EditorApp {
             tray_selected: Vec::new(),
             canvas_anchor: (1, 1),
             show_layers,
+            layers_w: 236.0,
             show_inspector: true,
             show_filmstrip: false,
             filmstrip_focus: None,
             last_cursor_doc: None,
             filmstrip,
             session_cache: std::collections::HashMap::new(),
-            layer_drag_id: None,
             prefs,
             next_prefs_poll: Instant::now(),
             styles: styles::Library::load(),
@@ -441,6 +443,7 @@ impl EditorApp {
             fit_memo: None,
             saw_drag_press: false,
             show_layers: true,
+            layers_w: 236.0,
             show_inspector: true,
             show_filmstrip: false,
             filmstrip_focus: None,
@@ -459,7 +462,6 @@ impl EditorApp {
             combine_layout: CombineLayout::SideBySide,
             tray_selected: Vec::new(),
             canvas_anchor: (1, 1),
-            layer_drag_id: None,
             prefs: crate::prefs::AppPrefs::default(),
             next_prefs_poll: Instant::now(),
             styles: styles::Library::default(),
@@ -1163,8 +1165,8 @@ impl EditorApp {
         });
         let is_dark = qs_theme::pal().dark;
         let has_region = self.editor.region().is_some();
-        let (mut capture, mut library, mut copy_text, mut settings, mut flip_theme, mut close) =
-            (false, false, false, false, false, false);
+        let (mut capture, mut library, mut copy_text, mut canvas, mut settings, mut flip_theme, mut close) =
+            (false, false, false, false, false, false, false);
         let area = egui::Area::new(egui::Id::unique("app_menu"))
             .order(egui::Order::Foreground)
             .fixed_pos(anchor.left_bottom() + Vec2::new(0.0, qs_theme::space::XS as f32))
@@ -1172,58 +1174,66 @@ impl EditorApp {
                 theme::popover_frame().show(ui, |ui| {
                     ui.set_width(224.0);
                     ui.spacing_mut().item_spacing.y = 2.0;
-                    capture = crate::components::menu_item(
+                    capture = crate::components::menu_item_with_icon(
                         ui,
+                        qs_icons::PLUS,
                         "New capture",
                         Some("Ctrl+N"),
-                        false,
                         true,
                         false,
                     );
-                    library = crate::components::menu_item(
+                    library = crate::components::menu_item_with_icon(
                         ui,
+                        qs_icons::GRID_2X2,
                         "Library",
                         Some("Ctrl+L"),
-                        false,
                         true,
                         false,
                     );
-                    copy_text = crate::components::menu_item(
+                    copy_text = crate::components::menu_item_with_icon(
                         ui,
+                        qs_icons::SCAN_LINE,
                         "Copy text in selection",
                         None,
-                        false,
                         has_region,
                         false,
                     );
-                    ui.separator();
-                    settings = crate::components::menu_item(
+                    canvas = crate::components::menu_item_with_icon(
                         ui,
-                        "Settings\u{2026}",
-                        Some("Ctrl+,"),
-                        false,
+                        qs_icons::PROPORTIONS,
+                        "Canvas & Resize\u{2026}",
+                        Some("Ctrl+Shift+C"),
                         true,
                         false,
                     );
+                    ui.separator();
                     let theme_label = if is_dark {
                         "Switch to Light theme"
                     } else {
                         "Switch to Dark theme"
                     };
-                    flip_theme = crate::components::menu_item(
+                    flip_theme = crate::components::menu_item_with_icon(
                         ui,
+                        qs_icons::SUN,
                         theme_label,
                         None,
+                        true,
                         false,
+                    );
+                    settings = crate::components::menu_item_with_icon(
+                        ui,
+                        qs_icons::SETTINGS,
+                        "Settings\u{2026}",
+                        Some("Ctrl+,"),
                         true,
                         false,
                     );
                     ui.separator();
-                    close = crate::components::menu_item(
+                    close = crate::components::menu_item_with_icon(
                         ui,
+                        qs_icons::X,
                         "Close",
                         Some("Ctrl+W"),
-                        false,
                         true,
                         true,
                     );
@@ -1237,7 +1247,7 @@ impl EditorApp {
                     .interact_pos()
                     .is_some_and(|p| !menu_rect.contains(p) && !anchor.contains(p))
         });
-        if capture || library || copy_text || settings || flip_theme || close || clicked_outside {
+        if capture || library || copy_text || canvas || settings || flip_theme || close || clicked_outside {
             self.dialogs.app_menu_open = false;
         }
         if close {
@@ -1251,6 +1261,13 @@ impl EditorApp {
         }
         if copy_text {
             self.copy_text_in_region();
+        }
+        if canvas {
+            self.dialogs.canvas_dialog_open = true;
+            self.show_inspector = true;
+            self.canvas_background = self.editor.doc().background;
+            self.resize_w = self.base.width().max(1);
+            self.resize_h = self.base.height().max(1);
         }
         if settings {
             spawn_app("--settings");
@@ -1533,6 +1550,7 @@ impl EditorApp {
                         ui.separator();
                         if crate::components::menu_item(ui, "Delete", Some("Del"), false, true, true) {
                             if self.editor.delete_selected() {
+                                self.show_toast("Deleted");
                                 self.touch();
                             }
                             close = true;
@@ -1593,7 +1611,7 @@ impl EditorApp {
                     (
                         "Editing",
                         &[
-                            ("Undo / Redo", "Ctrl+Z / Ctrl+Y"),
+                            ("Undo / Redo", "Ctrl+Z / Ctrl+Shift+Z"),
                             ("Select all", "Ctrl+A"),
                             ("Duplicate / Delete", "Ctrl+D / Del"),
                             ("Group / Ungroup", "Ctrl+G / Ctrl+Shift+G"),
@@ -1631,7 +1649,7 @@ impl EditorApp {
                             );
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 ui.label(
-                                    egui::RichText::new(keys)
+                                    egui::RichText::new(crate::components::platform_shortcut(keys))
                                         .size(qs_theme::font::CAPTION as f32 + 0.5)
                                         .monospace()
                                         .color(theme::text_primary()),
@@ -2099,49 +2117,12 @@ impl EditorApp {
             }
 
             if !typing && i.modifiers.is_none() {
-                let pressed_tool = if i.key_pressed(Key::V) {
-                    Some(Tool::Select)
-                } else if i.key_pressed(Key::A) {
-                    Some(Tool::Arrow)
-                } else if i.key_pressed(Key::C) {
-                    Some(Tool::Callout)
-                } else if i.key_pressed(Key::T) {
-                    Some(Tool::Text)
-                } else if i.key_pressed(Key::S) {
-                    Some(Tool::Step)
-                } else if i.key_pressed(Key::R) {
-                    Some(Tool::Rect)
-                } else if i.key_pressed(Key::O) {
-                    Some(Tool::Ellipse)
-                } else if i.key_pressed(Key::L) {
-                    Some(Tool::Line)
-                } else if i.key_pressed(Key::P) {
-                    Some(Tool::Pen)
-                } else if i.key_pressed(Key::H) {
-                    Some(Tool::Highlighter)
-                } else if i.key_pressed(Key::B) {
-                    Some(Tool::Blur)
-                } else if i.key_pressed(Key::I) {
-                    Some(Tool::Magnify)
-                } else if i.key_pressed(Key::F) {
-                    Some(Tool::Spotlight)
-                } else if i.key_pressed(Key::G) {
-                    Some(Tool::Stamp)
-                } else if i.key_pressed(Key::E) {
-                    Some(Tool::Eraser)
-                } else if i.key_pressed(Key::K) {
-                    Some(Tool::Crop)
-                } else if i.key_pressed(Key::X) {
-                    Some(Tool::Cutout)
-                } else if i.key_pressed(Key::U) {
-                    Some(Tool::Fill)
-                } else if i.key_pressed(Key::Y) {
-                    Some(Tool::SmartMove)
-                } else if i.key_pressed(Key::M) {
-                    Some(Tool::SelectRegion)
-                } else {
-                    None
-                };
+                // `Tool::key()` is the single source of truth — the palette
+                // subscript reads the same letter this dispatches on.
+                let pressed_tool = Tool::ALL.iter().copied().find(|t| {
+                    egui::Key::from_name(&t.key().to_ascii_uppercase().to_string())
+                        .is_some_and(|k| i.key_pressed(k))
+                });
                 if let Some(t) = pressed_tool {
                     tool = Some(t);
                 }
@@ -2218,6 +2199,7 @@ impl EditorApp {
             self.apply_zoom_cmd(zoom_cmd);
         }
         if del && self.editor.delete_selected() {
+            self.show_toast("Deleted");
             self.touch();
         }
         if dup && self.editor.duplicate_selected().is_some() {
@@ -2409,6 +2391,12 @@ impl eframe::App for EditorApp {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.render_ui(ui);
+    }
+}
+
+impl EditorApp {
+    fn render_ui(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         self.refresh_preferences(&ctx);
 
@@ -2430,6 +2418,12 @@ impl eframe::App for EditorApp {
                 )
             })
             .inner;
+
+        egui::Panel::top("tool_palette")
+            .frame(egui::Frame::NONE)
+            .show(ui, |ui| {
+                toolbar::render_tool_palette(ui, &mut self.editor)
+            });
 
         let prop_mutated = egui::Panel::top("properties_bar")
             .frame(egui::Frame::NONE)
@@ -2520,21 +2514,20 @@ impl eframe::App for EditorApp {
         self.canvas_context_menu(&ctx);
         self.shortcuts_dialog(&ctx);
 
-        // Bottom Studio Status Bar (32px = 4px + 24px hit target + 4px, single top hairline)
+        // Bottom status bar (30px, `--panel` surface, single top hairline).
         let status_resp = egui::Panel::bottom("status_bar")
-            // 26 px controls + 4 px padding top and bottom.
-            .exact_size(crate::components::CONTROL_H + 2.0 * qs_theme::space::XS as f32)
+            .exact_size(30.0)
             .frame(
                 egui::Frame::NONE
-                    .fill(theme::bg_workspace_top())
+                    .fill(theme::bg_status())
                     .inner_margin(egui::Margin::symmetric(
                         qs_theme::space::MD as i8,
-                        qs_theme::space::XS as i8,
+                        5,
                     )),
             )
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = qs_theme::space::XS as f32;
+                    ui.spacing_mut().item_spacing.x = 6.0;
                     if crate::components::status_pill(
                         ui,
                         "Layers",
@@ -2559,8 +2552,8 @@ impl eframe::App for EditorApp {
                     ) {
                         self.show_filmstrip = !self.show_filmstrip;
                     }
-                    status_divider(ui);
-
+                    // `.dims` — extra margin-left like the mockup, no divider.
+                    ui.add_space(8.0);
                     let view_r = self.view.display_rect();
                     let dim_resp = ui
                         .add(
@@ -2575,7 +2568,7 @@ impl eframe::App for EditorApp {
                             )
                             .sense(egui::Sense::click()),
                         )
-                        .on_hover_text("Click to open Canvas & Resize (Ctrl+Shift+C)");
+                        .on_hover_text(crate::components::platform_shortcut("Click to open Canvas & Resize (Ctrl+Shift+C)"));
                     if dim_resp.hovered() {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                     }
@@ -2589,39 +2582,38 @@ impl eframe::App for EditorApp {
                         self.resize_h = self.base.height().max(1);
                     }
 
-                    if let Some(p) = self.last_cursor_doc {
-                        status_divider(ui);
-                        ui.label(
-                            egui::RichText::new(format!(
-                                "X: {}  Y: {}",
-                                p.x.round() as i32,
-                                p.y.round() as i32
-                            ))
-                            .size(qs_theme::font::SMALL as f32)
-                            .color(theme::text_tertiary()),
-                        );
-                    }
-
-                    if let Some(b) = self.editor.selection_bounds() {
-                        status_divider(ui);
-                        let count = self.editor.selection().len();
-                        let label = if count > 1 {
-                            format!(
-                                "Sel ({count}): {}×{}",
-                                b.w.round() as i32,
-                                b.h.round() as i32
-                            )
-                        } else {
-                            format!("Sel: {}×{}", b.w.round() as i32, b.h.round() as i32)
-                        };
-                        ui.label(
-                            egui::RichText::new(label)
-                                .size(qs_theme::font::SMALL as f32)
-                                .color(theme::accent_blue_soft()),
-                        );
-                    }
-
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        // Mockup `.right`: selInfo at the edge, cursorPos before it.
+                        if let Some(b) = self.editor.selection_bounds() {
+                            let count = self.editor.selection().len();
+                            let label = if count > 1 {
+                                format!(
+                                    "Sel ({count}): {}×{}",
+                                    b.w.round() as i32,
+                                    b.h.round() as i32
+                                )
+                            } else {
+                                format!("Sel: {}×{}", b.w.round() as i32, b.h.round() as i32)
+                            };
+                            ui.label(
+                                egui::RichText::new(label)
+                                    .size(qs_theme::font::SMALL as f32)
+                                    .color(theme::text_tertiary()),
+                            );
+                            ui.add_space(14.0 - 6.0);
+                        }
+                        if let Some(p) = self.last_cursor_doc {
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "X: {}  Y: {}",
+                                    p.x.round() as i32,
+                                    p.y.round() as i32
+                                ))
+                                .size(qs_theme::font::SMALL as f32)
+                                .color(theme::text_tertiary()),
+                            );
+                            ui.add_space(14.0 - 6.0);
+                        }
                         if crate::components::status_pill(
                             ui,
                             "?",
@@ -2656,14 +2648,19 @@ impl eframe::App for EditorApp {
         );
 
         // Collapsible Recent Captures Filmstrip (sits cleanly above Status Bar)
-        if self.show_filmstrip {
+        let film_t = ctx.animate_bool_with_time(
+            egui::Id::unique("filmstrip_panel_t"),
+            self.show_filmstrip,
+            0.18,
+        );
+        if film_t > 0.01 {
             let mut switch_target: Option<PathBuf> = None;
             let mut copy_target: Option<(PathBuf, String)> = None;
             let mut refresh_tray = false;
             // Tall enough for the RECENT column (label + three pill buttons);
             // at 94 the thumbnails were clipped by the panel edge.
             egui::Panel::bottom("filmstrip_panel")
-                .exact_size(124.0)
+                .exact_size(124.0 * film_t)
                 .frame(
                     egui::Frame::NONE
                         .fill(theme::bg_inspector_bot())
@@ -2947,33 +2944,62 @@ impl eframe::App for EditorApp {
             }
         }
 
-        let layers_mutated = if self.show_layers && !self.library.open {
-            let layers_resp = egui::Panel::left("layers_panel")
-            .resizable(true)
-            .default_size(220.0)
-            .size_range(192.0..=316.0)
-            .frame(theme::panel_gutter())
-            .show(ui, |ui| {
+        let layers_open = self.show_layers && !self.library.open;
+        let layers_t = ctx.animate_bool_with_time(
+            egui::Id::unique("layers_panel_t"),
+            layers_open,
+            0.18,
+        );
+        let layers_mutated = if layers_t > 0.01 {
+            let mut panel = egui::Panel::left("layers_panel").frame(theme::panel_gutter(true));
+            panel = if layers_t >= 0.999 {
+                panel
+                    .resizable(true)
+                    .default_size(236.0)
+                    .size_range(192.0..=316.0)
+            } else {
+                panel.resizable(false).exact_size(self.layers_w * layers_t)
+            };
+            let layers_resp = panel.show(ui, |ui| {
                 theme::glass_panel(ui, |ui| {
                 ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 7.0;
+                    let (icon_r, _) = ui.allocate_exact_size(
+                        egui::Vec2::splat(13.0),
+                        egui::Sense::hover(),
+                    );
+                    crate::icons::draw_paths(
+                        ui.painter(),
+                        icon_r.center(),
+                        qs_icons::LAYERS,
+                        theme::text_tertiary(),
+                    );
                     ui.label(
                         egui::RichText::new("LAYERS")
                             .size(qs_theme::font::CAPTION as f32)
                             .strong()
+                            .extra_letter_spacing(0.55)
                             .color(theme::text_tertiary()),
                     );
-                    egui::Frame::NONE
-                        .fill(theme::bg_pill_track())
-                        .corner_radius(egui::CornerRadius::same(255))
-                        .inner_margin(egui::Margin::symmetric(6, 1))
-                        .show(ui, |ui| {
-                            ui.label(
-                                egui::RichText::new(format!("{}", self.editor.doc().objects.len()))
-                                    .size(qs_theme::font::CAPTION as f32)
-                                    .monospace()
-                                    .color(theme::text_secondary()),
-                            );
-                        });
+                    // `.count` — flat horizontal capsule (`padding:0 7px`,
+                    // mono numerals) drawn manually so its height can't
+                    // inflate the header row.
+                    let count_g = ui.painter().layout_no_wrap(
+                        format!("{}", self.editor.doc().objects.len()),
+                        egui::FontId::monospace(qs_theme::font::CAPTION as f32 - 1.0),
+                        theme::text_tertiary(),
+                    );
+                    let badge_size = egui::Vec2::new(
+                        (count_g.size().x + 14.0).ceil(),
+                        (count_g.size().y + 4.0).ceil(),
+                    );
+                    let (badge_r, _) = ui.allocate_exact_size(badge_size, egui::Sense::hover());
+                    ui.painter().rect_filled(
+                        badge_r,
+                        badge_size.y * 0.5,
+                        theme::bg_btn_secondary_top(),
+                    );
+                    ui.painter().galley(badge_r.center() - count_g.size() * 0.5, count_g, theme::text_tertiary());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if self.editor.selection().len() >= 2
                             && crate::components::pill_button(
@@ -3000,8 +3026,14 @@ impl eframe::App for EditorApp {
                         }
                     });
                 });
-                ui.add_space(qs_theme::space::SM as f32);
-                ui.separator();
+                // `.side-h` hairline bleeds to both panel edges (mockup).
+                let bleed = ui.max_rect().expand(qs_theme::space::SM as f32);
+                ui.painter().hline(
+                    bleed.left()..=bleed.right(),
+                    ui.cursor().top().round() + 0.5,
+                    Stroke::new(1.0, theme::border_dark_hairline()),
+                );
+                ui.add_space(4.0);
                 let mut changed = false;
                 let rows: Vec<_> = self
                     .editor
@@ -3028,11 +3060,12 @@ impl eframe::App for EditorApp {
                         (
                             index,
                             o.id,
+                            crate::icons::kind_tool(&o.kind),
                             preview,
                             o.visible,
                             o.locked,
                             o.group.is_some(),
-                            o.id == self.editor.selected().unwrap_or(ObjectId(0)),
+                            self.editor.selection().contains(&o.id),
                         )
                     })
                     .collect();
@@ -3047,176 +3080,166 @@ impl eframe::App for EditorApp {
                     }
                 } else {
                     egui::ScrollArea::vertical().show(ui, |ui| {
-                    for (index, id, label, visible, locked, grouped, selected) in rows {
-                        // Padded row like the Library list: selection is a wash,
-                        // hover a hairline, and every control has a fixed box.
+                    ui.spacing_mut().item_spacing.y = 1.0;
+                    let mut released_layer = None;
+                    let mut drop_target = None;
+                    for (index, id, icon_tool, label, visible, locked, grouped, selected) in rows {
+                        // Mockup anatomy: 28px row, type icon + label left,
+                        // eye/lock trailing — revealed on hover, persisted only
+                        // while active (hidden keeps eye-off, locked keeps lock).
+                        const ROW_H: f32 = 28.0;
+                        let avail = ui.available_rect_before_wrap();
+                        let row_rect =
+                            Rect::from_min_size(avail.min, Vec2::new(avail.width(), ROW_H));
+                        let row_hovered = ui.rect_contains_pointer(row_rect);
+                        if row_hovered {
+                            drop_target = Some((id, index));
+                        }
                         let row_fill = if selected {
                             theme::accent_alpha(if qs_theme::pal().dark { 72 } else { 36 })
+                        } else if row_hovered {
+                            theme::bg_pill_hover()
                         } else {
                             Color32::TRANSPARENT
                         };
-                        let response = egui::Frame::NONE
+                        let response = ui.interact(
+                            row_rect,
+                            ui.scope_id().with(("layer_row", id)),
+                            egui::Sense::click_and_drag(),
+                        );
+                        egui::Frame::NONE
                             .inner_margin(egui::Margin::symmetric(
                                 qs_theme::space::SM as i8,
-                                qs_theme::space::XS as i8,
+                                1,
                             ))
-                            .corner_radius(egui::CornerRadius::same(6))
+                            .corner_radius(egui::CornerRadius::same(
+                                qs_theme::radius::SM as u8
+                            ))
                             .fill(row_fill)
                             .show(ui, |ui| {
                                 ui.spacing_mut().item_spacing.x = qs_theme::space::XS as f32;
-                                // Same row rhythm as the Library list.
-                                ui.set_min_height(crate::components::CONTROL_H);
+                                ui.set_min_height(ROW_H - 2.0);
                                 ui.horizontal(|ui| {
-                                    // Vector icons, not glyphs: the bundled
-                                    // fonts have no ◉/○/🔒, so the controls
-                                    // rendered as invisible buttons.
-                                    let (eye_rect, eye_resp) = ui.allocate_exact_size(
-                                        egui::Vec2::splat(20.0),
-                                        egui::Sense::click(),
+                                    let dim = if visible { 1.0 } else { 0.45 };
+                                    let (ic_rect, _) = ui.allocate_exact_size(
+                                        egui::Vec2::splat(16.0),
+                                        egui::Sense::hover(),
                                     );
-                                    crate::icons::draw_action_icon(
+                                    crate::icons::draw_tool_icon(
                                         ui.painter(),
-                                        eye_rect.center(),
-                                        if visible {
-                                            crate::icons::ActionIcon::Eye
-                                        } else {
-                                            crate::icons::ActionIcon::EyeOff
-                                        },
-                                        if visible {
-                                            theme::text_secondary()
-                                        } else {
-                                            theme::text_disabled()
-                                        },
+                                        ic_rect.center(),
+                                        icon_tool,
+                                        theme::text_tertiary().gamma_multiply(dim),
                                     );
-                                    if eye_resp
-                                        .on_hover_text(if visible {
-                                            "Hide layer"
-                                        } else {
-                                            "Show layer"
-                                        })
-                                        .clicked()
-                                    {
-                                        changed |= self.editor.set_visible(id, !visible);
-                                    }
-                                    let (lock_rect, lock_resp) = ui.allocate_exact_size(
-                                        egui::Vec2::splat(20.0),
-                                        egui::Sense::click(),
-                                    );
-                                    crate::icons::draw_action_icon(
-                                        ui.painter(),
-                                        lock_rect.center(),
-                                        if locked {
-                                            crate::icons::ActionIcon::Lock
-                                        } else {
-                                            crate::icons::ActionIcon::Unlock
-                                        },
-                                        if locked {
-                                            theme::text_primary()
-                                        } else {
-                                            theme::text_tertiary()
-                                        },
-                                    );
-                                    if lock_resp
-                                        .on_hover_text(if locked {
-                                            "Unlock layer"
-                                        } else {
-                                            "Lock layer"
-                                        })
-                                        .clicked()
-                                    {
-                                        self.editor.set_locked(id, !locked);
-                                    }
                                     let text = if grouped {
                                         format!("▦ {label}")
                                     } else {
                                         label
                                     };
-                                    if ui
+                                    ui
                                         .add(
                                             egui::Label::new(
-                                                egui::RichText::new(text).size(
-                                                    qs_theme::font::SMALL as f32,
-                                                ),
+                                                egui::RichText::new(text)
+                                                    .size(qs_theme::font::SMALL as f32)
+                                                    .color(
+                                                        if selected {
+                                                            theme::text_primary()
+                                                        } else {
+                                                            theme::text_secondary()
+                                                        }
+                                                        .gamma_multiply(dim),
+                                                    ),
                                             )
                                             .truncate()
-                                            .sense(egui::Sense::click()),
+                                            .selectable(false),
                                         )
                                         .on_hover_text(format!(
                                             "Drag to reorder · index {}",
                                             index + 1
-                                        ))
-                                        .clicked()
-                                    {
-                                        self.editor.select(Some(id));
-                                    }
+                                        ));
                                     ui.with_layout(
                                         egui::Layout::right_to_left(egui::Align::Center),
                                         |ui| {
-                                            let (del_r, del_resp) = ui.allocate_exact_size(
-                                                egui::Vec2::splat(18.0),
-                                                egui::Sense::click(),
-                                            );
-                                            if del_resp.hovered() || selected {
+                                            if locked || row_hovered {
+                                                let (lock_rect, lock_resp) = ui
+                                                    .allocate_exact_size(
+                                                        egui::Vec2::splat(18.0),
+                                                        egui::Sense::click(),
+                                                    );
                                                 crate::icons::draw_action_icon(
                                                     ui.painter(),
-                                                    del_r.center(),
-                                                    ActionIcon::Trash,
-                                                    if del_resp.hovered() {
-                                                        theme::danger_red()
+                                                    lock_rect.center(),
+                                                    if locked {
+                                                        crate::icons::ActionIcon::Lock
                                                     } else {
-                                                        theme::text_tertiary()
+                                                        crate::icons::ActionIcon::Unlock
                                                     },
-                                                );
-                                            }
-                                            if del_resp.on_hover_text("Delete layer").clicked() {
-                                                self.editor.select(Some(id));
-                                                changed |= self.editor.delete_selected();
-                                            }
-                                            let (dup_r, dup_resp) = ui.allocate_exact_size(
-                                                egui::Vec2::splat(18.0),
-                                                egui::Sense::click(),
-                                            );
-                                            if dup_resp.hovered() || selected {
-                                                crate::icons::draw_action_icon(
-                                                    ui.painter(),
-                                                    dup_r.center(),
-                                                    ActionIcon::Duplicate,
-                                                    if dup_resp.hovered() {
+                                                    if lock_resp.hovered() {
                                                         theme::text_primary()
                                                     } else {
                                                         theme::text_tertiary()
                                                     },
                                                 );
+                                                if lock_resp
+                                                    .on_hover_text(if locked {
+                                                        "Unlock layer"
+                                                    } else {
+                                                        "Lock layer"
+                                                    })
+                                                    .clicked()
+                                                {
+                                                    changed |= self.editor.set_locked(id, !locked);
+                                                }
                                             }
-                                            if dup_resp.on_hover_text("Duplicate layer").clicked() {
-                                                self.editor.select(Some(id));
-                                                changed |= self.editor.duplicate_selected().is_some();
+                                            if !visible || row_hovered {
+                                                let (eye_rect, eye_resp) = ui
+                                                    .allocate_exact_size(
+                                                        egui::Vec2::splat(18.0),
+                                                        egui::Sense::click(),
+                                                    );
+                                                crate::icons::draw_action_icon(
+                                                    ui.painter(),
+                                                    eye_rect.center(),
+                                                    if visible {
+                                                        crate::icons::ActionIcon::Eye
+                                                    } else {
+                                                        crate::icons::ActionIcon::EyeOff
+                                                    },
+                                                    if eye_resp.hovered() {
+                                                        theme::text_primary()
+                                                    } else {
+                                                        theme::text_tertiary()
+                                                    },
+                                                );
+                                                if eye_resp
+                                                    .on_hover_text(if visible {
+                                                        "Hide layer"
+                                                    } else {
+                                                        "Show layer"
+                                                    })
+                                                    .clicked()
+                                                {
+                                                    changed |=
+                                                        self.editor.set_visible(id, !visible);
+                                                }
                                             }
                                         },
                                     );
                                 });
-                            })
-                            .response;
-                        if response.hovered() {
-                            ui.painter().rect_stroke(
-                                response.rect,
-                                egui::CornerRadius::same(6),
-                                egui::Stroke::new(1.0, theme::border_subtle()),
-                                egui::StrokeKind::Inside,
-                            );
-                        }
-                        if response.drag_started() {
-                            self.layer_drag_id = Some(id);
+                            });
+                        if response.clicked() && !locked {
+                            self.editor.select(Some(id));
                         }
                         if response.dragged() {
                             ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
                         }
                         if response.drag_stopped() {
-                            if let Some(drag_id) = self.layer_drag_id.take() {
-                                if drag_id != id {
-                                    changed |= self.editor.move_layer(drag_id, index);
-                                }
-                            }
+                            released_layer = Some(id);
+                        }
+                    }
+                    if let (Some(source), Some((target, index))) = (released_layer, drop_target) {
+                        if source != target {
+                            changed |= self.editor.move_layer(source, index);
                         }
                     }
                     });
@@ -3224,6 +3247,9 @@ impl eframe::App for EditorApp {
                 changed
             })
             });
+            if layers_t >= 0.999 {
+                self.layers_w = layers_resp.response.rect.width();
+            }
             layers_resp.inner
         } else {
             false
@@ -3232,15 +3258,22 @@ impl eframe::App for EditorApp {
             self.touch();
         }
 
-        let panel_mutated = if self.show_inspector && !self.library.open {
+        let insp_open = self.show_inspector && !self.library.open;
+        let insp_t = ctx.animate_bool_with_time(
+            egui::Id::unique("image_panel_t"),
+            insp_open,
+            0.18,
+        );
+        let panel_mutated = if insp_t > 0.01 {
             let panel_resp = egui::Panel::right("image_panel")
                 .resizable(false)
-                .exact_size(272.0)
-                .frame(theme::panel_gutter())
+                .exact_size(272.0 * insp_t)
+                .frame(theme::panel_gutter(false))
                 .show(ui, |ui| {
                 theme::glass_panel(ui, |ui| {
                     egui::ScrollArea::vertical()
                         .show(ui, |ui| {
+                            ui.spacing_mut().item_spacing.y = qs_theme::space::XS as f32;
                             if self.dialogs.canvas_dialog_open {
                                 crate::components::card(ui, |ui| {
                                     if inspector_card_header(ui, "CANVAS", true) {
@@ -3248,7 +3281,7 @@ impl eframe::App for EditorApp {
                                     }
                                     self.canvas_section(ui);
                                 });
-                                ui.add_space(qs_theme::space::MD as f32);
+                                ui.add_space(qs_theme::space::SM as f32);
                             }
                             let selected = self.editor.selection().len();
                             if selected >= 2 || self.dialogs.alignment_open {
@@ -3266,19 +3299,77 @@ impl eframe::App for EditorApp {
                                         );
                                     }
                                 });
-                                ui.add_space(qs_theme::space::MD as f32);
+                                ui.add_space(qs_theme::space::SM as f32);
                             }
                             let changed = image_panel::render(ui, &mut self.editor, &mut self.prefs);
-                            ui.add_space(qs_theme::space::MD as f32);
+                            ui.add_space(qs_theme::space::SM as f32);
                             crate::components::card(ui, |ui| {
                                 crate::components::section_header(ui, "Quick Actions");
-                                if crate::components::button(
+                                // `.tbtn` with a leading icon — icon+label
+                                // group stays centred like the mockup.
+                                let qa_button = |ui: &mut egui::Ui,
+                                                 icon: crate::icons::ActionIcon,
+                                                 label: &str,
+                                                 accent_text: bool,
+                                                 tip: &str|
+                                 -> bool {
+                                    let w = ui.available_width();
+                                    let (rect, resp) = ui.allocate_exact_size(
+                                        Vec2::new(w, 28.0),
+                                        egui::Sense::click(),
+                                    );
+                                    let ht = theme::hot_t(&resp);
+                                    theme::paint_secondary_button(
+                                        ui.painter(),
+                                        rect,
+                                        6.0,
+                                        ht,
+                                        true,
+                                        false,
+                                    );
+                                    let fg = if accent_text {
+                                        theme::accent_hi()
+                                    } else {
+                                        theme::text_primary()
+                                    };
+                                    let font = egui::FontId::proportional(
+                                        qs_theme::font::SMALL as f32,
+                                    );
+                                    let g = ui.painter().layout_no_wrap(
+                                        label.to_owned(),
+                                        font,
+                                        fg,
+                                    );
+                                    let total = 13.0 + 6.0 + g.size().x;
+                                    let ix = rect.center().x - total * 0.5;
+                                    crate::icons::draw_action_icon(
+                                        ui.painter(),
+                                        Pos2::new(ix + 6.5, rect.center().y),
+                                        icon,
+                                        fg,
+                                    );
+                                    ui.painter().galley(
+                                        Pos2::new(
+                                            ix + 19.0,
+                                            rect.center().y - g.size().y * 0.5,
+                                        ),
+                                        g,
+                                        fg,
+                                    );
+                                    if resp.hovered() {
+                                        ui.ctx().set_cursor_icon(
+                                            egui::CursorIcon::PointingHand,
+                                        );
+                                    }
+                                    resp.on_hover_text(crate::components::platform_shortcut(tip)).clicked()
+                                };
+                                if qa_button(
                                     ui,
+                                    crate::icons::ActionIcon::ScanLine,
                                     "Auto-Redact (OCR)",
-                                    crate::components::ButtonVariant::Tonal,
+                                    true,
                                     "Scan text with OCR and blackout emails, IPs, tokens, and phone numbers",
                                 )
-                                .clicked()
                                 {
                                     self.ocr_hints.ensure(
                                         self.editor.doc(),
@@ -3299,14 +3390,14 @@ impl eframe::App for EditorApp {
                                         }
                                     }
                                 }
-                                ui.add_space(qs_theme::space::SM as f32);
-                                if crate::components::button(
+                                ui.add_space(6.0);
+                                if qa_button(
                                     ui,
+                                    crate::icons::ActionIcon::Sparkles,
                                     "Simplify UI",
-                                    crate::components::ButtonVariant::Secondary,
+                                    false,
                                     "Convert UI text/controls into clean editable wireframe blocks (uses OCR if scanned)",
                                 )
-                                .clicked()
                                 {
                                     let ocr_rects: Vec<RectF> = self
                                         .ocr_hints
@@ -3326,14 +3417,14 @@ impl eframe::App for EditorApp {
                                         self.show_toast("No UI blocks detected");
                                     }
                                 }
-                                ui.add_space(qs_theme::space::SM as f32);
-                                if crate::components::button(
+                                ui.add_space(6.0);
+                                if qa_button(
                                     ui,
+                                    crate::icons::ActionIcon::LayerFront,
                                     "Flatten all",
-                                    crate::components::ButtonVariant::Secondary,
+                                    false,
                                     "Bake every annotation into the image (undo with Ctrl+Z)",
                                 )
-                                .clicked()
                                 {
                                     if let Err(e) = self.flatten_all() {
                                         self.show_toast(format!("Flatten failed: {e}"));
@@ -3513,10 +3604,16 @@ impl eframe::App for EditorApp {
                 } else if response.drag_started() {
                     self.saw_drag_press = true;
                     if let Some(pos) = response.interact_pointer_pos() {
-                        let doc_p = self.view.screen_to_doc(pos, screen_rect);
+                        // egui recognizes a drag only after crossing the click threshold.
+                        let origin = ui.input(|i| i.pointer.press_origin()).unwrap_or(pos);
+                        let start = self.view.screen_to_doc(origin, screen_rect);
                         let rev_before = self.editor.revision();
-                        self.editor.pointer_down_mod(doc_p, shift_held);
-                        if self.editor.revision() != rev_before {
+                        self.editor.pointer_down_mod(start, shift_held);
+                        if pos != origin {
+                            let point = self.view.screen_to_doc(pos, screen_rect);
+                            self.editor.pointer_move(point, shift_held);
+                        }
+                        if self.editor.revision() != rev_before || pos != origin {
                             self.touch();
                         }
                     }
@@ -3544,6 +3641,7 @@ impl eframe::App for EditorApp {
                     if let Some(pos) = response.interact_pointer_pos() {
                         let doc_p = self.view.screen_to_doc(pos, screen_rect);
                         let was_marquee = self.editor.marquee_rect().is_some();
+                        self.editor.pointer_move(doc_p, shift_held);
                         self.editor.pointer_up(doc_p);
                         if !was_marquee {
                             self.touch();
@@ -4159,6 +4257,78 @@ mod tests {
         assert_eq!(app.editor.doc().effects, qs_doc::Effects::default());
         assert!(!app.editor.undo());
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn editor_drag_uses_the_original_press_and_destination() {
+        let ctx = egui::Context::default();
+        let mut doc = Document::new(640, 400, 1.0);
+        for x in [10.0, 40.0, 70.0] {
+            doc.push(qs_doc::ObjectKind::Rect {
+                r: RectF::new(x, 10.0, 20.0, 20.0),
+                stroke: qs_doc::Stroke::new(0, 2.0),
+                fill: qs_doc::Fill::None,
+                radius: 0.0,
+            });
+        }
+        let mut app = EditorApp::for_tests(doc, RgbaImage::new(640, 400));
+        app.next_prefs_poll = Instant::now() + Duration::from_secs(60);
+        let frame = |app: &mut EditorApp, events| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1180.0, 720.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| app.render_ui(ui),
+            );
+            output.textures_delta.clear();
+            output
+        };
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            pressed,
+            button: egui::PointerButton::Primary,
+            modifiers: Modifiers::NONE,
+        };
+        let drag = |app: &mut EditorApp, from: Pos2, threshold: Pos2, to: Pos2| {
+            frame(app, vec![egui::Event::PointerMoved(from), button(from, true)]);
+            frame(app, vec![egui::Event::PointerMoved(threshold)]);
+            frame(app, vec![egui::Event::PointerMoved(to), button(to, false)]);
+        };
+
+        frame(&mut app, vec![]);
+        let output = frame(&mut app, vec![]);
+        let row_label = |name: &str| {
+            output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.job.text == name => {
+                        Some(text.pos + Vec2::new(5.0, text.galley.size().y / 2.0))
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("layer row missing: {name}"))
+        };
+        let first = row_label("Rectangle #3");
+        let last = row_label("Rectangle #1");
+        drag(&mut app, first, first.lerp(last, 0.5), last);
+        assert_eq!(app.document().objects[0].id, ObjectId(3));
+
+        app.editor.set_tool(Tool::Rect);
+        frame(&mut app, vec![]);
+        let canvas = app.last_canvas_rect.unwrap();
+        let start = app.view.doc_to_screen(PointF::new(200.0, 100.0), canvas);
+        let end = app.view.doc_to_screen(PointF::new(310.0, 180.0), canvas);
+        drag(&mut app, start, start.lerp(end, 0.7), end);
+
+        let qs_doc::ObjectKind::Rect { r, .. } = app.document().objects.last().unwrap().kind else {
+            panic!("expected a rectangle");
+        };
+        for (actual, expected) in [(r.x, 200.0), (r.y, 100.0), (r.w, 110.0), (r.h, 80.0)] {
+            assert!((actual - expected).abs() < 0.1, "{r:?}");
+        }
     }
 
     #[test]

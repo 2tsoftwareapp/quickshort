@@ -1,7 +1,40 @@
-//! Crisp geometric vector icons (Apple SF Symbols / CleanShot X style) painted via `egui::Painter`.
+//! Toolbar and action icons — Lucide geometry via `qs_icons` (vendored SVGs,
+//! ISC licence) painted with `egui::Painter`. One geometry source shared with
+//! the overlay's SDF renderer, so the same tool looks identical everywhere.
 
-use eframe::egui::{epaint::PathShape, Color32, CornerRadius, Painter, Pos2, Rect, Stroke, StrokeKind, Vec2};
+use eframe::egui::{epaint::PathShape, Color32, Painter, Pos2, Stroke};
+use qs_doc::ObjectKind;
 use qs_edit::Tool;
+use qs_icons::StrokePath;
+
+/// The tool whose icon represents a document object in the Layers list.
+/// Every `ObjectKind` was created by a tool, so the mapping is total.
+pub fn kind_tool(kind: &ObjectKind) -> Tool {
+    match kind {
+        ObjectKind::Pen { .. } => Tool::Pen,
+        ObjectKind::Highlighter { .. } => Tool::Highlighter,
+        ObjectKind::Arrow { .. } => Tool::Arrow,
+        ObjectKind::Line { .. } => Tool::Line,
+        ObjectKind::Rect { .. } => Tool::Rect,
+        ObjectKind::Ellipse { .. } => Tool::Ellipse,
+        ObjectKind::Text { .. } => Tool::Text,
+        ObjectKind::Callout { .. } => Tool::Callout,
+        ObjectKind::Step { .. } => Tool::Step,
+        ObjectKind::Blur { .. } => Tool::Blur,
+        ObjectKind::Magnify { .. } => Tool::Magnify,
+        ObjectKind::Stamp { .. } => Tool::Stamp,
+        ObjectKind::Eraser { .. } => Tool::Eraser,
+        ObjectKind::Spotlight { .. } => Tool::Spotlight,
+        ObjectKind::Fill { .. } => Tool::Fill,
+        ObjectKind::SmartMove { .. } => Tool::SmartMove,
+        ObjectKind::Polygon { kind, .. } => match kind {
+            qs_doc::PolyKind::Triangle => Tool::Triangle,
+            qs_doc::PolyKind::Diamond => Tool::Diamond,
+            qs_doc::PolyKind::Star => Tool::Star,
+            qs_doc::PolyKind::Hexagon => Tool::Hexagon,
+        },
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ActionIcon {
@@ -41,6 +74,34 @@ pub enum ActionIcon {
     Unlock,
     /// Window close: crisp ×.
     Close,
+    /// Document tab glyph (panel with a top strip) for the docbar name.
+    DocTab,
+    /// Corner brackets + text lines — Auto-Redact in Quick Actions.
+    ScanLine,
+    /// Four-point star — Simplify UI in Quick Actions.
+    Sparkles,
+}
+
+/// Logical box each icon is drawn into, centred on `c`.
+const BOX: f32 = 12.5;
+const STROKE_W: f32 = 1.5;
+
+/// Paint Lucide `paths` centred on `c` — shared by the tool icons, the
+/// action icons and the transform/star glyphs elsewhere in the editor.
+pub fn draw_paths(painter: &Painter, c: Pos2, paths: &[StrokePath], color: Color32) {
+    let k = BOX / qs_icons::VIEWBOX;
+    let st = Stroke::new(STROKE_W, color);
+    let fill = |p: &(f32, f32)| Pos2::new(c.x + (p.0 - 12.0) * k, c.y + (p.1 - 12.0) * k);
+    for sp in paths {
+        let pts: Vec<Pos2> = sp.pts.iter().map(fill).collect();
+        if sp.fill {
+            painter.add(PathShape::convex_polygon(pts, color, Stroke::NONE));
+        } else if sp.closed {
+            painter.add(PathShape::closed_line(pts, st));
+        } else {
+            painter.add(PathShape::line(pts, st));
+        }
+    }
 }
 
 #[inline]
@@ -48,532 +109,151 @@ fn p(c: Pos2, dx: f32, dy: f32) -> Pos2 {
     Pos2::new(c.x + dx, c.y + dy)
 }
 
-pub fn draw_tool_icon(painter: &Painter, c: Pos2, tool: Tool, color: Color32) {
-    let st = Stroke::new(1.45, color);
-    let thin = Stroke::new(1.25, color);
-
+fn tool_paths(tool: Tool) -> &'static [StrokePath] {
     match tool {
-        Tool::Select => {
-            // Classic crisp macOS pointer cursor
-            let pts = vec![
-                p(c, -3.5, -5.8),
-                p(c, -3.5, 4.2),
-                p(c, -0.9, 1.8),
-                p(c, 1.3, 5.5),
-                p(c, 2.9, 4.7),
-                p(c, 0.8, 1.1),
-                p(c, 4.3, 1.1),
-            ];
-            let fill = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 35);
-            painter.add(PathShape::convex_polygon(pts.clone(), fill, Stroke::NONE));
-            painter.add(PathShape::closed_line(pts, Stroke::new(1.35, color)));
-        }
-        Tool::Pen => {
-            // Diagonal pencil body + nib + collar
-            painter.line_segment([p(c, -4.6, 4.6), p(c, 2.6, -2.6)], Stroke::new(2.2, color));
-            painter.line_segment([p(c, 2.6, -2.6), p(c, 4.8, -4.8)], Stroke::new(1.3, color));
-            // Tiny tip dot and nib separation
-            painter.line_segment([p(c, -5.1, 5.1), p(c, -3.6, 3.6)], Stroke::new(1.2, color));
-            let eraser_col = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 150);
-            painter.line_segment(
-                [p(c, 1.6, -3.6), p(c, 3.6, -1.6)],
-                Stroke::new(1.1, eraser_col),
-            );
-        }
-        Tool::Fill => {
-            // Tilted bucket outline with a filled body and a falling drop.
-            let body = vec![p(c, -4.4, -1.2), p(c, 0.8, -4.6), p(c, 4.4, 0.8), p(c, -0.8, 4.4)];
-            painter.add(PathShape::convex_polygon(
-                body.clone(),
-                Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 70),
-                Stroke::NONE,
-            ));
-            painter.add(PathShape::closed_line(body, thin));
-            painter.circle_filled(p(c, 4.6, -4.4), 1.5, color);
-        }
-        Tool::SmartMove => {
-            // Four-way move cross over a small content box.
-            let s = 2.4;
-            painter.add(PathShape::closed_line(
-                vec![p(c, -s, -s), p(c, s, -s), p(c, s, s), p(c, -s, s)],
-                thin,
-            ));
-            painter.line_segment([p(c, -6.2, 0.0), p(c, 6.2, 0.0)], thin);
-            painter.line_segment([p(c, 0.0, -6.2), p(c, 0.0, 6.2)], thin);
-        }
-        Tool::Highlighter => {
-            // Broad angled marker + chisel tip + bottom highlight bar
-            painter.line_segment([p(c, -4.2, 2.2), p(c, 1.8, -3.8)], Stroke::new(3.4, color));
-            painter.line_segment([p(c, 1.8, -3.8), p(c, 4.4, -5.0)], Stroke::new(1.4, color));
-            let bar = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 145);
-            painter.line_segment([p(c, -5.0, 5.2), p(c, 5.0, 5.2)], Stroke::new(2.0, bar));
-        }
-        Tool::Arrow => {
-            // Diagonal shaft bottom-left -> top-right + open wings
-            let tip = p(c, 4.6, -4.6);
-            painter.line_segment([p(c, -4.8, 4.8), tip], st);
-            painter.line_segment([tip, p(c, -0.4, -4.6)], st);
-            painter.line_segment([tip, p(c, 4.6, 0.4)], st);
-        }
-        Tool::Line => {
-            painter.line_segment([p(c, -4.8, 4.4), p(c, 4.8, -4.4)], st);
-            painter.circle_filled(p(c, -4.8, 4.4), 1.4, color);
-            painter.circle_filled(p(c, 4.8, -4.4), 1.4, color);
-        }
-        Tool::Rect => {
-            let r = Rect::from_center_size(c, Vec2::new(11.6, 9.0));
-            painter.rect_stroke(
-                r,
-                CornerRadius::same(2),
-                st,
-                eframe::egui::StrokeKind::Middle,
-            );
-        }
-        Tool::Ellipse => {
-            let n = 28;
-            let pts: Vec<Pos2> = (0..n)
-                .map(|i| {
-                    let a = (i as f32 / n as f32) * std::f32::consts::TAU;
-                    p(c, a.cos() * 5.8, a.sin() * 4.3)
-                })
-                .collect();
+        Tool::Select => qs_icons::MOUSE_POINTER_2,
+        Tool::Pen => qs_icons::PENCIL,
+        Tool::Fill => qs_icons::PAINT_BUCKET,
+        Tool::SmartMove => qs_icons::MOVE,
+        Tool::Highlighter => qs_icons::HIGHLIGHTER,
+        Tool::Arrow => qs_icons::ARROW_UP_RIGHT,
+        Tool::Line => qs_icons::LINE,
+        Tool::Rect => qs_icons::SQUARE,
+        Tool::Ellipse => qs_icons::CIRCLE,
+        Tool::Eraser => qs_icons::ERASER,
+        Tool::Stamp => qs_icons::STAMP,
+        Tool::Spotlight => qs_icons::SUN,
+        Tool::Magnify => qs_icons::ZOOM_IN,
+        Tool::Text => qs_icons::TYPE,
+        Tool::Callout => qs_icons::MESSAGE_SQUARE,
+        // Step is a numbered badge — the digit is painted, not an icon path.
+        Tool::Step => &[],
+        Tool::Blur => qs_icons::PLUS,
+        Tool::Crop => qs_icons::CROP,
+        Tool::Cutout => qs_icons::SCISSORS,
+        Tool::SelectRegion => qs_icons::SQUARE_DASHED,
+        Tool::Triangle => qs_icons::TRIANGLE,
+        Tool::Diamond => qs_icons::DIAMOND,
+        Tool::Star => qs_icons::STAR,
+        Tool::Hexagon => qs_icons::HEXAGON,
+    }
+}
+
+fn action_paths(icon: ActionIcon) -> &'static [StrokePath] {
+    match icon {
+        ActionIcon::Undo => qs_icons::UNDO_2,
+        ActionIcon::Redo => qs_icons::REDO_2,
+        ActionIcon::Copy => qs_icons::COPY,
+        ActionIcon::Save => qs_icons::SAVE,
+        ActionIcon::Export => qs_icons::IMAGE_DOWN,
+        ActionIcon::ZoomOut => qs_icons::ZOOM_OUT,
+        ActionIcon::ZoomIn => qs_icons::ZOOM_IN,
+        ActionIcon::Fill => qs_icons::PAINT_BUCKET,
+        ActionIcon::AlignLeft => qs_icons::ALIGN_START_VERTICAL,
+        ActionIcon::AlignCenter => qs_icons::ALIGN_CENTER_VERTICAL,
+        ActionIcon::AlignRight => qs_icons::ALIGN_END_VERTICAL,
+        ActionIcon::CalloutRoundRect => qs_icons::SQUARE,
+        ActionIcon::CalloutEllipse => qs_icons::CIRCLE,
+        ActionIcon::CalloutPill => qs_icons::PILL,
+        ActionIcon::ArrowOpen => qs_icons::ARROW_UP_RIGHT,
+        ActionIcon::ArrowFilled => qs_icons::ARROW_FILLED,
+        ActionIcon::BlurPixelate => qs_icons::GRID_2X2,
+        ActionIcon::BlurSmooth => qs_icons::BLEND,
+        ActionIcon::LayerFront => qs_icons::BRING_TO_FRONT,
+        ActionIcon::LayerBack => qs_icons::SEND_TO_BACK,
+        ActionIcon::Duplicate => qs_icons::COPY_PLUS,
+        ActionIcon::Trash => qs_icons::TRASH,
+        ActionIcon::CheckCircle => qs_icons::CIRCLE_CHECK,
+        ActionIcon::Open => qs_icons::FOLDER_OPEN,
+        ActionIcon::SaveAs => qs_icons::SAVE_ALL,
+        ActionIcon::Canvas => qs_icons::PROPORTIONS,
+        ActionIcon::Menu => qs_icons::MENU,
+        ActionIcon::Eye => qs_icons::EYE,
+        ActionIcon::EyeOff => qs_icons::EYE_OFF,
+        ActionIcon::Lock => qs_icons::LOCK,
+        ActionIcon::Unlock => qs_icons::LOCK_OPEN,
+        ActionIcon::Close => qs_icons::X,
+        ActionIcon::DocTab => qs_icons::PANEL_TOP,
+        ActionIcon::ScanLine => qs_icons::SCAN_LINE,
+        ActionIcon::Sparkles => qs_icons::SPARKLES,
+    }
+}
+
+/// Same as `draw_tool_icon` but scales the logical box — palette glyphs read
+/// bigger than layer-row glyphs (17px vs 13px in the mockup).
+pub fn draw_tool_icon_sz(painter: &Painter, c: Pos2, tool: Tool, color: Color32, box_px: f32) {
+    if tool == Tool::Step {
+        // Circle badge + geometric '1', scaled to the caller's box.
+        let s = box_px / 12.5;
+        let st = Stroke::new(1.3, color);
+        let thin = Stroke::new(1.1, color);
+        painter.circle_stroke(c, 5.5 * s, st);
+        painter.line_segment(
+            [p(c, -1.2 * s, -1.5 * s), p(c, 0.3 * s, -2.8 * s)],
+            thin,
+        );
+        painter.line_segment(
+            [p(c, 0.3 * s, -2.8 * s), p(c, 0.3 * s, 2.8 * s)],
+            Stroke::new(1.2, color),
+        );
+        painter.line_segment(
+            [p(c, -1.5 * s, 2.8 * s), p(c, 1.9 * s, 2.8 * s)],
+            thin,
+        );
+        return;
+    }
+    let k = box_px / qs_icons::VIEWBOX;
+    let st = Stroke::new(STROKE_W, color);
+    let fill = |p: &(f32, f32)| Pos2::new(c.x + (p.0 - 12.0) * k, c.y + (p.1 - 12.0) * k);
+    for sp in tool_paths(tool) {
+        let pts: Vec<Pos2> = sp.pts.iter().map(fill).collect();
+        if sp.fill {
+            painter.add(PathShape::convex_polygon(pts, color, Stroke::NONE));
+        } else if sp.closed {
             painter.add(PathShape::closed_line(pts, st));
-        }
-        Tool::Eraser => {
-            painter.line_segment([p(c, -5.0, -1.5), p(c, -1.0, 3.0)], Stroke::new(1.8, color));
-            painter.line_segment([p(c, -1.0, 3.0), p(c, 5.5, -4.0)], Stroke::new(1.8, color));
-        }
-        Tool::Stamp => {
-            painter.line_segment([p(c, -4.5, 3.0), p(c, -1.5, 6.5)], Stroke::new(1.8, color));
-            painter.line_segment([p(c, -1.5, 6.5), p(c, 3.0, -4.5)], Stroke::new(1.8, color));
-            painter.line_segment([p(c, 2.0, -1.0), p(c, 6.5, -1.0)], Stroke::new(1.8, color));
-            painter.line_segment([p(c, 6.5, -1.0), p(c, 6.5, -5.5)], Stroke::new(1.8, color));
-        }
-        Tool::Spotlight => {
-            painter.rect_stroke(Rect::from_center_size(c, Vec2::splat(13.0)), 2.0, thin, StrokeKind::Inside);
-            painter.circle_filled(c, 3.0, color);
-        }
-        Tool::Magnify => {
-            painter.circle_stroke(c, 4.0, st);
-            painter.line_segment([p(c, 2.8, 2.8), p(c, 5.8, 5.8)], Stroke::new(2.0, color));
-            painter.circle_stroke(c, 1.7, thin);
-        }
-        Tool::Text => {
-            // Geometric serif-hinted T (SF Symbol textbox aesthetic)
-            painter.line_segment([p(c, -5.0, -4.6), p(c, 5.0, -4.6)], Stroke::new(1.6, color));
-            painter.line_segment([p(c, -5.0, -4.6), p(c, -5.0, -2.8)], thin);
-            painter.line_segment([p(c, 5.0, -4.6), p(c, 5.0, -2.8)], thin);
-            painter.line_segment([p(c, 0.0, -4.6), p(c, 0.0, 5.0)], Stroke::new(1.6, color));
-            painter.line_segment([p(c, -2.2, 5.0), p(c, 2.2, 5.0)], thin);
-        }
-        Tool::Callout => {
-            // Rounded speech bubble with bottom-left pointer tail
-            let pts = vec![
-                p(c, -4.0, -5.0),
-                p(c, 4.0, -5.0),
-                p(c, 5.6, -3.4),
-                p(c, 5.6, 1.4),
-                p(c, 4.0, 3.0),
-                p(c, -0.6, 3.0),
-                p(c, -4.0, 5.6),
-                p(c, -3.2, 3.0),
-                p(c, -4.0, 3.0),
-                p(c, -5.6, 1.4),
-                p(c, -5.6, -3.4),
-            ];
-            painter.add(PathShape::closed_line(pts, st));
-        }
-        Tool::Step => {
-            // Circle badge + crisp geometric '1'
-            painter.circle_stroke(c, 5.8, st);
-            painter.line_segment([p(c, -1.2, -1.5), p(c, 0.3, -2.8)], thin);
-            painter.line_segment([p(c, 0.3, -2.8), p(c, 0.3, 2.8)], Stroke::new(1.4, color));
-            painter.line_segment([p(c, -1.5, 2.8), p(c, 1.9, 2.8)], thin);
-        }
-        Tool::Blur => {
-            // 2x2 mosaic squares with alternating opacity
-            let hi = color;
-            let lo = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 95);
-            let s = 4.2;
-            let gap = 1.4;
-            let tl = Rect::from_min_size(p(c, -s - gap * 0.5, -s - gap * 0.5), Vec2::splat(s));
-            let tr = Rect::from_min_size(p(c, gap * 0.5, -s - gap * 0.5), Vec2::splat(s));
-            let bl = Rect::from_min_size(p(c, -s - gap * 0.5, gap * 0.5), Vec2::splat(s));
-            let br = Rect::from_min_size(p(c, gap * 0.5, gap * 0.5), Vec2::splat(s));
-            painter.rect_filled(tl, CornerRadius::same(1), hi);
-            painter.rect_filled(tr, CornerRadius::same(1), lo);
-            painter.rect_filled(bl, CornerRadius::same(1), lo);
-            painter.rect_filled(br, CornerRadius::same(1), hi);
-        }
-        Tool::Crop => {
-            // Snagit-style frame outline (crop = inset frame + corner tick)
-            let size = 9.6;
-            painter.rect_stroke(
-                Rect::from_min_size(p(c, -size / 2.0, -size / 2.0), Vec2::splat(size)),
-                0.0,
-                st,
-                StrokeKind::Outside,
-            );
-            painter.circle_stroke(p(c, 0.0, 0.0), 1.2, thin);
-        }
-        Tool::Cutout => {
-            // Split-strip cutout icon: top/bottom bars + dashed cut line
-            painter.line_segment([p(c, -5.5, -4.0), p(c, 5.5, -4.0)], st);
-            painter.line_segment([p(c, -5.5, 4.0), p(c, 5.5, 4.0)], st);
-            painter.line_segment([p(c, -5.5, 0.0), p(c, -1.5, 0.0)], thin);
-            painter.line_segment([p(c, 1.5, 0.0), p(c, 5.5, 0.0)], thin);
-        }
-        Tool::SelectRegion => {
-            // Dashed-style selection region: white core + black halo
-            let size = 9.6;
-            let r = Rect::from_min_size(p(c, -size / 2.0, -size / 2.0), Vec2::splat(size));
-            painter.rect_stroke(r, 0.0, Stroke::new(1.5, Color32::WHITE), StrokeKind::Outside);
-            painter.rect_stroke(r.shrink(1.5), 0.0, Stroke::new(1.5, Color32::BLACK), StrokeKind::Inside);
+        } else {
+            painter.add(PathShape::line(pts, st));
         }
     }
 }
 
-pub fn draw_action_icon(painter: &Painter, c: Pos2, icon: ActionIcon, color: Color32) {
-    let st = Stroke::new(1.45, color);
-    let thin = Stroke::new(1.25, color);
-
-    match icon {
-        ActionIcon::Undo | ActionIcon::Redo => {
-            let m = if icon == ActionIcon::Undo { 1.0 } else { -1.0 };
-            let tip = p(c, -4.6 * m, -1.4);
-            painter.line_segment([tip, p(c, tip.x - c.x + 2.8 * m, -4.0)], st);
-            painter.line_segment([tip, p(c, tip.x - c.x + 2.8 * m, 1.2)], st);
-            painter.line_segment([tip, p(c, 1.8 * m, -1.4)], st);
-            // U-turn arc
-            let (ccx, ccy, rr) = (1.8, 1.7, 3.1);
-            let mut pts = Vec::with_capacity(11);
-            for i in 0..=10 {
-                let a = (-90.0 + 180.0 * i as f32 / 10.0).to_radians();
-                pts.push(p(c, m * (ccx + rr * a.cos()), ccy + rr * a.sin()));
-            }
-            pts.push(p(c, m * (ccx - 2.4), ccy + rr));
+/// Scaled variant of `draw_action_icon` for chrome that wants a larger glyph.
+pub fn draw_action_icon_sz(
+    painter: &Painter,
+    c: Pos2,
+    icon: ActionIcon,
+    color: Color32,
+    box_px: f32,
+) {
+    let k = box_px / qs_icons::VIEWBOX;
+    let st = Stroke::new(STROKE_W, color);
+    let fill = |p: &(f32, f32)| Pos2::new(c.x + (p.0 - 12.0) * k, c.y + (p.1 - 12.0) * k);
+    for sp in action_paths(icon) {
+        let pts: Vec<Pos2> = sp.pts.iter().map(fill).collect();
+        if sp.fill {
+            painter.add(PathShape::convex_polygon(pts, color, Stroke::NONE));
+        } else if sp.closed {
+            painter.add(PathShape::closed_line(pts, st));
+        } else {
             painter.add(PathShape::line(pts, st));
         }
-        ActionIcon::Copy => {
-            // Overlapping front/back docs (SF Symbol doc.on.doc)
-            let back = Rect::from_center_size(p(c, -1.8, -1.8), Vec2::new(7.4, 8.6));
-            let front = Rect::from_center_size(p(c, 1.8, 1.8), Vec2::new(7.4, 8.6));
-            painter.rect_stroke(
-                back,
-                CornerRadius::same(1),
-                thin,
-                eframe::egui::StrokeKind::Middle,
-            );
-            painter.rect_filled(
-                front.shrink(0.5),
-                CornerRadius::same(1),
-                Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 30),
-            );
-            painter.rect_stroke(
-                front,
-                CornerRadius::same(1),
-                st,
-                eframe::egui::StrokeKind::Middle,
-            );
-        }
-        ActionIcon::Save => {
-            // Clean disk / document save silhouette
-            let pts = vec![
-                p(c, -5.0, -5.0),
-                p(c, 2.8, -5.0),
-                p(c, 5.0, -2.8),
-                p(c, 5.0, 5.0),
-                p(c, -5.0, 5.0),
-            ];
-            painter.add(PathShape::closed_line(pts, st));
-            // Top slot & bottom label
-            let top_slot = Rect::from_min_max(p(c, -2.4, -5.0), p(c, 1.6, -2.0));
-            painter.rect_stroke(
-                top_slot,
-                CornerRadius::ZERO,
-                thin,
-                eframe::egui::StrokeKind::Middle,
-            );
-            let bot_lbl = Rect::from_min_max(p(c, -2.6, 0.8), p(c, 2.6, 5.0));
-            painter.rect_stroke(
-                bot_lbl,
-                CornerRadius::ZERO,
-                thin,
-                eframe::egui::StrokeKind::Middle,
-            );
-        }
-        ActionIcon::Export => {
-            // Open tray + upward arrow (SF Symbol square.and.arrow.up)
-            painter.line_segment([p(c, -4.6, -0.5), p(c, -4.6, 4.8)], st);
-            painter.line_segment([p(c, -4.6, 4.8), p(c, 4.6, 4.8)], st);
-            painter.line_segment([p(c, 4.6, 4.8), p(c, 4.6, -0.5)], st);
-            painter.line_segment([p(c, 0.0, 1.8), p(c, 0.0, -5.4)], st);
-            painter.line_segment([p(c, 0.0, -5.4), p(c, -2.8, -2.6)], st);
-            painter.line_segment([p(c, 0.0, -5.4), p(c, 2.8, -2.6)], st);
-        }
-        ActionIcon::Open => {
-            // Folder silhouette (SF Symbol folder)
-            let pts = vec![
-                p(c, -5.2, -3.2),
-                p(c, -1.7, -3.2),
-                p(c, -0.5, -1.7),
-                p(c, 5.2, -1.7),
-                p(c, 5.2, 4.2),
-                p(c, -5.2, 4.2),
-            ];
-            painter.add(PathShape::closed_line(pts, st));
-        }
-        ActionIcon::SaveAs => {
-            // Save disk shrunk into the corner, plus a "new" badge
-            let (dx, dy, k) = (-1.5, -1.5, 0.68);
-            let q = |x: f32, y: f32| p(c, x * k + dx, y * k + dy);
-            let pts = vec![
-                q(-5.0, -5.0),
-                q(2.8, -5.0),
-                q(5.0, -2.8),
-                q(5.0, 5.0),
-                q(-5.0, 5.0),
-            ];
-            painter.add(PathShape::closed_line(pts, thin));
-            painter.rect_stroke(
-                Rect::from_min_max(q(-2.6, 1.0), q(2.6, 5.0)),
-                CornerRadius::ZERO,
-                thin,
-                eframe::egui::StrokeKind::Middle,
-            );
-            painter.line_segment([p(c, 3.3, 3.6), p(c, 6.3, 3.6)], st);
-            painter.line_segment([p(c, 4.8, 2.1), p(c, 4.8, 5.1)], st);
-        }
-        ActionIcon::Eye | ActionIcon::EyeOff => {
-            painter.add(PathShape::closed_line(
-                vec![
-                    p(c, -6.0, 0.0),
-                    p(c, 0.0, -3.6),
-                    p(c, 6.0, 0.0),
-                    p(c, 0.0, 3.6),
-                ],
-                Stroke::new(1.25, color),
-            ));
-            painter.circle_filled(c, 1.9, color);
-            if matches!(icon, ActionIcon::EyeOff) {
-                painter.line_segment(
-                    [p(c, -5.2, 3.8), p(c, 5.2, -3.8)],
-                    Stroke::new(1.3, color),
-                );
-            }
-        }
-        ActionIcon::Lock | ActionIcon::Unlock => {
-            let body = Rect::from_center_size(p(c, 0.0, 1.6), Vec2::new(9.0, 7.0));
-            painter.rect_stroke(
-                body,
-                CornerRadius::same(1),
-                Stroke::new(1.25, color),
-                StrokeKind::Inside,
-            );
-            let shackle_top = if matches!(icon, ActionIcon::Lock) {
-                -2.2
-            } else {
-                -3.0
-            };
-            let right = if matches!(icon, ActionIcon::Lock) { 2.8 } else { 4.2 };
-            painter.add(PathShape::closed_line(
-                vec![
-                    p(c, -2.8, -2.2),
-                    p(c, -2.8, shackle_top - 2.0),
-                    p(c, right, shackle_top - 2.0),
-                    p(c, right, -2.2),
-                ],
-                Stroke::new(1.25, color),
-            ));
-        }
-        ActionIcon::Canvas => {
-            painter.rect_stroke(
-                Rect::from_center_size(c, Vec2::splat(9.0)),
-                CornerRadius::ZERO,
-                thin,
-                StrokeKind::Middle,
-            );
-            painter.line_segment([p(c, -6.5, -2.0), p(c, 6.5, -2.0)], thin);
-            painter.line_segment([p(c, -6.5, 2.0), p(c, 6.5, 2.0)], thin);
-        }
-        ActionIcon::Menu => {
-            for dy in [-4.0, 0.0, 4.0] {
-                painter.line_segment([p(c, -6.0, dy), p(c, 6.0, dy)], st);
-            }
-        }
-        ActionIcon::ZoomOut => {
-            painter.line_segment([p(c, -4.0, 0.0), p(c, 4.0, 0.0)], Stroke::new(1.5, color));
-        }
-        ActionIcon::ZoomIn => {
-            painter.line_segment([p(c, -4.0, 0.0), p(c, 4.0, 0.0)], Stroke::new(1.5, color));
-            painter.line_segment([p(c, 0.0, -4.0), p(c, 0.0, 4.0)], Stroke::new(1.5, color));
-        }
-        ActionIcon::Fill => {
-            // Diagonal half-filled rounded square
-            let r = Rect::from_center_size(c, Vec2::splat(10.0));
-            let tri = vec![r.left_top(), r.right_top(), r.left_bottom()];
-            painter.add(PathShape::convex_polygon(tri, color, Stroke::NONE));
-            painter.rect_stroke(
-                r,
-                CornerRadius::same(2),
-                st,
-                eframe::egui::StrokeKind::Middle,
-            );
-        }
-        ActionIcon::AlignLeft => {
-            painter.line_segment([p(c, -5.0, -3.5), p(c, 5.0, -3.5)], st);
-            painter.line_segment([p(c, -5.0, 0.0), p(c, 1.8, 0.0)], st);
-            painter.line_segment([p(c, -5.0, 3.5), p(c, 3.6, 3.5)], st);
-        }
-        ActionIcon::AlignCenter => {
-            painter.line_segment([p(c, -5.0, -3.5), p(c, 5.0, -3.5)], st);
-            painter.line_segment([p(c, -2.8, 0.0), p(c, 2.8, 0.0)], st);
-            painter.line_segment([p(c, -4.0, 3.5), p(c, 4.0, 3.5)], st);
-        }
-        ActionIcon::AlignRight => {
-            painter.line_segment([p(c, -5.0, -3.5), p(c, 5.0, -3.5)], st);
-            painter.line_segment([p(c, -1.8, 0.0), p(c, 5.0, 0.0)], st);
-            painter.line_segment([p(c, -3.6, 3.5), p(c, 5.0, 3.5)], st);
-        }
-        ActionIcon::CalloutRoundRect => {
-            let r = Rect::from_center_size(c, Vec2::new(11.0, 7.6));
-            painter.rect_stroke(
-                r,
-                CornerRadius::same(2),
-                st,
-                eframe::egui::StrokeKind::Middle,
-            );
-        }
-        ActionIcon::CalloutEllipse => {
-            let n = 20;
-            let pts: Vec<Pos2> = (0..n)
-                .map(|i| {
-                    let a = (i as f32 / n as f32) * std::f32::consts::TAU;
-                    p(c, a.cos() * 5.6, a.sin() * 3.8)
-                })
-                .collect();
-            painter.add(PathShape::closed_line(pts, st));
-        }
-        ActionIcon::CalloutPill => {
-            let r = Rect::from_center_size(c, Vec2::new(11.6, 6.8));
-            painter.rect_stroke(
-                r,
-                CornerRadius::same(4),
-                st,
-                eframe::egui::StrokeKind::Middle,
-            );
-        }
-        ActionIcon::ArrowOpen => {
-            painter.line_segment([p(c, -5.2, 0.0), p(c, 4.5, 0.0)], st);
-            painter.line_segment([p(c, 4.5, 0.0), p(c, 1.0, -3.2)], st);
-            painter.line_segment([p(c, 4.5, 0.0), p(c, 1.0, 3.2)], st);
-        }
-        ActionIcon::ArrowFilled => {
-            painter.line_segment([p(c, -5.2, 0.0), p(c, 1.5, 0.0)], st);
-            let tri = vec![p(c, 5.2, 0.0), p(c, 0.5, -3.4), p(c, 0.5, 3.4)];
-            painter.add(PathShape::convex_polygon(tri, color, Stroke::NONE));
-        }
-        ActionIcon::BlurPixelate => {
-            let s = 3.6;
-            let g = 1.2;
-            let a = color;
-            let b = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 90);
-            painter.rect_filled(
-                Rect::from_min_size(p(c, -s - g * 0.5, -s - g * 0.5), Vec2::splat(s)),
-                CornerRadius::same(1),
-                a,
-            );
-            painter.rect_filled(
-                Rect::from_min_size(p(c, g * 0.5, -s - g * 0.5), Vec2::splat(s)),
-                CornerRadius::same(1),
-                b,
-            );
-            painter.rect_filled(
-                Rect::from_min_size(p(c, -s - g * 0.5, g * 0.5), Vec2::splat(s)),
-                CornerRadius::same(1),
-                b,
-            );
-            painter.rect_filled(
-                Rect::from_min_size(p(c, g * 0.5, g * 0.5), Vec2::splat(s)),
-                CornerRadius::same(1),
-                a,
-            );
-        }
-        ActionIcon::BlurSmooth => {
-            painter.circle_stroke(c, 5.0, thin);
-            painter.circle_filled(
-                c,
-                2.5,
-                Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 150),
-            );
-        }
-        ActionIcon::LayerFront => {
-            let back = Rect::from_center_size(p(c, 1.8, 1.8), Vec2::splat(7.0));
-            let front = Rect::from_center_size(p(c, -1.8, -1.8), Vec2::splat(7.0));
-            painter.rect_stroke(
-                back,
-                CornerRadius::same(1),
-                thin,
-                eframe::egui::StrokeKind::Middle,
-            );
-            painter.rect_filled(front, CornerRadius::same(1), color);
-        }
-        ActionIcon::LayerBack => {
-            let back = Rect::from_center_size(p(c, 1.8, 1.8), Vec2::splat(7.0));
-            let front = Rect::from_center_size(p(c, -1.8, -1.8), Vec2::splat(7.0));
-            painter.rect_filled(
-                back,
-                CornerRadius::same(1),
-                Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 180),
-            );
-            painter.rect_stroke(
-                front,
-                CornerRadius::same(1),
-                st,
-                eframe::egui::StrokeKind::Middle,
-            );
-        }
-        ActionIcon::Duplicate => {
-            let back = Rect::from_center_size(p(c, -1.8, -1.8), Vec2::splat(7.2));
-            let front = Rect::from_center_size(p(c, 1.8, 1.8), Vec2::splat(7.2));
-            painter.rect_stroke(
-                back,
-                CornerRadius::same(1),
-                thin,
-                eframe::egui::StrokeKind::Middle,
-            );
-            painter.rect_stroke(
-                front,
-                CornerRadius::same(1),
-                st,
-                eframe::egui::StrokeKind::Middle,
-            );
-            painter.line_segment([p(c, 1.8, -0.3), p(c, 1.8, 3.9)], thin);
-            painter.line_segment([p(c, -0.3, 1.8), p(c, 3.9, 1.8)], thin);
-        }
-        ActionIcon::Trash => {
-            painter.line_segment([p(c, -4.6, -3.2), p(c, 4.6, -3.2)], st);
-            painter.line_segment([p(c, -1.6, -5.0), p(c, 1.6, -5.0)], st);
-            let body = vec![
-                p(c, -3.6, -3.0),
-                p(c, -2.8, 5.0),
-                p(c, 2.8, 5.0),
-                p(c, 3.6, -3.0),
-            ];
-            painter.add(PathShape::line(body, st));
-            painter.line_segment([p(c, -1.1, -0.8), p(c, -0.9, 3.0)], thin);
-            painter.line_segment([p(c, 1.1, -0.8), p(c, 0.9, 3.0)], thin);
-        }
-        ActionIcon::CheckCircle => {
-            painter.circle_filled(c, 7.5, color);
-            let chk = Stroke::new(1.7, crate::theme::on_success());
-            painter.line_segment([p(c, -3.2, 0.2), p(c, -0.8, 2.6)], chk);
-            painter.line_segment([p(c, -0.8, 2.6), p(c, 3.6, -2.4)], chk);
-        }
-        ActionIcon::Close => {
-            let xst = Stroke::new(1.6, color);
-            painter.line_segment([p(c, -4.0, -4.0), p(c, 4.0, 4.0)], xst);
-            painter.line_segment([p(c, -4.0, 4.0), p(c, 4.0, -4.0)], xst);
-        }
     }
+}
+
+pub fn draw_tool_icon(painter: &Painter, c: Pos2, tool: Tool, color: Color32) {
+    if tool == Tool::Step {
+        // Circle badge + crisp geometric '1' — composed, not a Lucide icon.
+        let st = Stroke::new(1.3, color);
+        let thin = Stroke::new(1.1, color);
+        painter.circle_stroke(c, 5.5, st);
+        painter.line_segment([p(c, -1.2, -1.5), p(c, 0.3, -2.8)], thin);
+        painter.line_segment([p(c, 0.3, -2.8), p(c, 0.3, 2.8)], Stroke::new(1.2, color));
+        painter.line_segment([p(c, -1.5, 2.8), p(c, 1.9, 2.8)], thin);
+        return;
+    }
+    draw_paths(painter, c, tool_paths(tool), color);
+}
+
+pub fn draw_action_icon(painter: &Painter, c: Pos2, icon: ActionIcon, color: Color32) {
+    draw_paths(painter, c, action_paths(icon), color);
 }
