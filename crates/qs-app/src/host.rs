@@ -1053,12 +1053,8 @@ impl ApplicationHandler<HostEvent> for Host {
         {
             let builder = tray_icon::TrayIcon::builder()
                 .with_tooltip("Quickshort — region screenshot")
-                .with_menu(Box::new(tray::build_menu(&self.cfg, &recents, None, None)));
-            // template icon = auto dark/light menu-bar tinting (macOS only)
-            #[cfg(target_os = "macos")]
-            let builder = builder.with_icon_templated(tray::tray_icon(44));
-            #[cfg(not(target_os = "macos"))]
-            let builder = builder.with_icon(tray::tray_icon(44));
+                .with_menu(Box::new(tray::build_menu(&self.cfg, &recents, None, None)))
+                .with_icon(tray::tray_icon(44));
             match builder.build() {
                 Ok(t) => self.tray = Some(t),
                 Err(e) => eprintln!("tray icon failed: {e:#}"),

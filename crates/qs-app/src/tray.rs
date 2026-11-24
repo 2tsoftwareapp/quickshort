@@ -1,4 +1,4 @@
-//! Tray icon + menu plumbing: generated RGBA icon, menu construction,
+//! Tray icon + menu plumbing: Quickshort branding, menu construction,
 //! launch-at-login toggling per OS.
 
 use anyhow::{Context, Result};
@@ -123,55 +123,13 @@ pub fn build_menu(
     menu
 }
 
-/// Crop-corners tray glyph, drawn directly into RGBA — same SDF coverage math
-/// as the overlay icons, no asset files. `size` in px (44 = 22pt @2x).
+/// Resize the same Quickshort logo used by the editor and the app bundle.
 pub fn tray_icon(size: u32) -> Icon {
-    let s = size as f64;
-    let mut rgba = vec![0u8; (size * size * 4) as usize];
-    let put = |rgba: &mut Vec<u8>, x: i32, y: i32, a: f64| {
-        if x < 0 || y < 0 || x >= size as i32 || y >= size as i32 {
-            return;
-        }
-        let i = ((y * size as i32 + x) * 4) as usize;
-        rgba[i] = (255.0 * a) as u8;
-        rgba[i + 1] = rgba[i];
-        rgba[i + 2] = rgba[i];
-        rgba[i + 3] = rgba[i];
-    };
-    // corner brackets ⌜ ⌝ ⌞ ⌟ — keep them short; adjacent ends must leave a
-    // visible gap or the glyph reads as a plain square at menu-bar size
-    let st = s * 0.115;
-    let ins = s * 0.20;
-    let len = s * 0.15;
-    let (x0, y0, x1, y1) = (ins, ins, s - ins, s - ins);
-    let segs = [
-        (x0, y0 + len, x0, y0),
-        (x0, y0, x0 + len, y0), // top-left
-        (x1 - len, y0, x1, y0),
-        (x1, y0, x1, y0 + len), // top-right
-        (x0, y1 - len, x0, y1),
-        (x0, y1, x0 + len, y1), // bottom-left
-        (x1 - len, y1, x1, y1),
-        (x1, y1 - len, x1, y1), // bottom-right
-    ];
-    for y in 0..size as i32 {
-        for x in 0..size as i32 {
-            let (px, py) = (x as f64 + 0.5, y as f64 + 0.5);
-            let mut d = f64::INFINITY;
-            for &(ax, ay, bx, by) in &segs {
-                // point-segment distance
-                let (vx, vy) = (bx - ax, by - ay);
-                let t = (((px - ax) * vx + (py - ay) * vy) / (vx * vx + vy * vy)).clamp(0.0, 1.0);
-                let (dx, dy) = (px - (ax + t * vx), py - (ay + t * vy));
-                d = d.min((dx * dx + dy * dy).sqrt());
-            }
-            let a = (st / 2.0 + 0.75 - d).clamp(0.0, 1.0);
-            if a > 0.0 {
-                put(&mut rgba, x, y, a);
-            }
-        }
-    }
-    Icon::from_rgba(rgba, size, size).expect("tray icon rgba")
+    let logo = image::load_from_memory(include_bytes!("../../../assets/icon.png"))
+        .expect("embedded Quickshort app icon must be a valid PNG")
+        .resize_exact(size, size, image::imageops::FilterType::Lanczos3)
+        .into_rgba8();
+    Icon::from_rgba(logo.into_raw(), size, size).expect("valid Quickshort tray icon")
 }
 
 // ---------- Linux: the tray lives on a dedicated gtk thread ----------

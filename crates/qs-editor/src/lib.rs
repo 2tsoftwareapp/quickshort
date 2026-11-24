@@ -25,6 +25,20 @@ use image::RgbaImage;
 use qs_doc::Document;
 use std::path::{Path, PathBuf};
 
+fn editor_viewport(title: impl Into<String>) -> eframe::egui::ViewportBuilder {
+    let icon = eframe::icon_data::from_png_bytes(include_bytes!("../../../assets/icon.png"))
+        .expect("embedded Quickshort app icon must be a valid PNG");
+    eframe::egui::ViewportBuilder::default()
+        .with_title(title)
+        .with_icon(icon)
+        .with_inner_size([1180.0, 720.0])
+        .with_min_inner_size([640.0, 480.0])
+        // The docbar doubles as the title row beneath the macOS traffic lights.
+        .with_fullsize_content_view(true)
+        .with_title_shown(false)
+        .with_titlebar_shown(false)
+}
+
 /// Launch the standalone editor window.
 pub fn run_editor(
     doc: Document,
@@ -32,15 +46,7 @@ pub fn run_editor(
     doc_path: Option<PathBuf>,
 ) -> eframe::Result<()> {
     let native_options = eframe::NativeOptions {
-        viewport: eframe::egui::ViewportBuilder::default()
-            .with_title("Quickshort Editor")
-            .with_inner_size([1180.0, 720.0])
-            .with_min_inner_size([640.0, 480.0])
-            // Content spans the titlebar area (macOS): the docbar doubles as
-            // the title row and the traffic lights float over it.
-            .with_fullsize_content_view(true)
-            .with_title_shown(false)
-            .with_titlebar_shown(false),
+        viewport: editor_viewport("Quickshort Editor"),
         ..Default::default()
     };
 
@@ -55,13 +61,7 @@ pub fn run_editor(
 pub fn open_file(path: impl AsRef<Path>) -> anyhow::Result<()> {
     let p = path.as_ref().to_path_buf();
     let native_options = eframe::NativeOptions {
-        viewport: eframe::egui::ViewportBuilder::default()
-            .with_title(format!("Quickshort Editor — {}", p.display()))
-            .with_inner_size([1180.0, 720.0])
-            .with_min_inner_size([640.0, 480.0])
-            .with_fullsize_content_view(true)
-            .with_title_shown(false)
-            .with_titlebar_shown(false),
+        viewport: editor_viewport(format!("Quickshort Editor — {}", p.display())),
         ..Default::default()
     };
 
@@ -73,4 +73,18 @@ pub fn open_file(path: impl AsRef<Path>) -> anyhow::Result<()> {
             Ok(Box::new(app))
         }),
     ).map_err(|e| anyhow::anyhow!("Editor run error: {e:?}"))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn editor_viewport_uses_the_quickshort_app_icon() {
+        let viewport = super::editor_viewport("Quickshort Editor");
+        let icon = viewport.icon.unwrap();
+        let source = image::load_from_memory(include_bytes!("../../../assets/icon.png"))
+            .unwrap()
+            .into_rgba8();
+        assert_eq!((icon.width, icon.height), source.dimensions());
+        assert_eq!(&icon.rgba, source.as_raw());
+    }
 }
