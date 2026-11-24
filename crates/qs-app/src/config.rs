@@ -110,7 +110,7 @@ pub struct Config {
     /// Overlay key that hands the selection to the editor.
     pub key_edit: String,
     /// What the overlay's Save (and the fullscreen grab) leads to — a key
-    /// from `AFTER_CAPTURE`: "shelf" (corner thumbnail), "editor" (open
+    /// from `AFTER_CAPTURE`: "shelf" (platform capture feedback), "editor" (open
     /// Quickshort Editor, Snagit-style) or "copy" (clipboard + toast).
     pub after_capture: String,
     /// Colour theme — a key from `qs_theme::THEMES`.
@@ -256,6 +256,9 @@ impl Config {
 /// Post-capture behaviours offered by the Appearance page — (key, label).
 /// Unknown keys fall back to the first entry.
 pub const AFTER_CAPTURE: &[(&str, &str)] = &[
+    #[cfg(target_os = "macos")]
+    ("shelf", "Show toast"),
+    #[cfg(not(target_os = "macos"))]
     ("shelf", "Show thumbnail"),
     ("editor", "Open in editor"),
     ("copy", "Copy to clipboard"),

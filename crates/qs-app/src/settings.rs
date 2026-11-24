@@ -1605,6 +1605,9 @@ fn draw_appearance(p: &Painter, cv: &mut Canvas, v: &View, hits: &mut Vec<(LRect
         (c.0, c.1, c.2, ROW),
         Glyph::Crop,
         "Then",
+        #[cfg(target_os = "macos")]
+        "Show a toast, open Quickshort Editor, or copy",
+        #[cfg(not(target_os = "macos"))]
         "Thumbnail, open Quickshort Editor, or copy",
     );
     let ab = slot(c.1, 160.0);

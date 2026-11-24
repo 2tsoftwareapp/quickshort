@@ -12,8 +12,17 @@
 !ifndef BIN
   !define BIN "..\..\target\release\quickshort.exe"
 !endif
+!ifndef EDITOR_BIN
+  !define EDITOR_BIN "..\..\target\release\qs-editor.exe"
+!endif
 
 !include "MUI2.nsh"
+!define MUI_ICON "quickshort.ico"
+!define MUI_UNICON "quickshort.ico"
+!define MUI_HEADERIMAGE
+!define MUI_HEADERIMAGE_RIGHT
+!define MUI_HEADERIMAGE_BITMAP "setup-header.bmp"
+!define MUI_WELCOMEFINISHPAGE_BITMAP "setup-welcome.bmp"
 
 Name "${APPNAME}"
 OutFile "${OUT}"
@@ -23,13 +32,15 @@ InstallDirRegKey HKCU "Software\${APPNAME}" "InstallDir"
 RequestExecutionLevel admin
 SetCompressor /SOLID lzma
 
-!define MUI_WELCOMEPAGE_TITLE "Welcome to the ${APPNAME} Setup"
-!define MUI_WELCOMEPAGE_TEXT "This will install ${APPNAME} ${VERSION} on your computer.$\r$\n$\r$\nA lightweight region screenshot tool that lives in the system tray."
+!define MUI_WELCOMEPAGE_TITLE "Welcome to Quickshort"
+!define MUI_WELCOMEPAGE_TEXT "Capture your screen, annotate screenshots, and share them from the system tray.$\r$\n$\r$\nSetup installs Quickshort ${VERSION} and its editor."
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
 !define MUI_FINISHPAGE_RUN "$INSTDIR\quickshort.exe"
-!define MUI_FINISHPAGE_RUN_TEXT "Launch ${APPNAME}"
+!define MUI_FINISHPAGE_RUN_TEXT "Open Quickshort"
+!define MUI_FINISHPAGE_TITLE "Quickshort is ready"
+!define MUI_FINISHPAGE_TEXT "Open Quickshort from the Start menu or the system tray. Press Print Screen to start a capture."
 !insertmacro MUI_PAGE_FINISH
 
 !insertmacro MUI_UNPAGE_CONFIRM
@@ -40,6 +51,7 @@ SetCompressor /SOLID lzma
 Section "Install"
   SetOutPath "$INSTDIR"
   File "${BIN}"
+  File "${EDITOR_BIN}"
   WriteUninstaller "$INSTDIR\uninstall.exe"
 
   CreateDirectory "$SMPROGRAMS\${APPNAME}"
@@ -60,19 +72,13 @@ Section "Install"
   WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}" \
     "NoRepair" 1
 
-  ; screen recording pipes frames into ffmpeg — warn now if it isn't on
-  ; PATH so the Record button doesn't fail silently later
-  SearchPath $0 "ffmpeg.exe"
-  StrCmp $0 "" 0 ffmpeg_found
-    MessageBox MB_ICONINFORMATION "Screen recording (the Record action) uses ffmpeg, \
-which wasn't found on PATH.$\r$\n$\r$\nInstall it to enable recording:$\r$\n  winget install ffmpeg"
-  ffmpeg_found:
 SectionEnd
 
 Section "Uninstall"
   ; launch-at-login entry the app writes from its settings
   DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${APPNAME}"
   Delete "$INSTDIR\quickshort.exe"
+  Delete "$INSTDIR\qs-editor.exe"
   Delete "$INSTDIR\uninstall.exe"
   RMDir "$INSTDIR"
   Delete "$SMPROGRAMS\${APPNAME}\${APPNAME}.lnk"

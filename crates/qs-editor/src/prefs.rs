@@ -4,6 +4,9 @@ use serde::Deserialize;
 use std::path::PathBuf;
 
 pub const AFTER_CAPTURE_OPTIONS: &[(&str, &str)] = &[
+    #[cfg(target_os = "macos")]
+    ("shelf", "Show toast"),
+    #[cfg(not(target_os = "macos"))]
     ("shelf", "Show Shelf"),
     ("editor", "Open Editor"),
     ("copy", "Copy to Clipboard"),

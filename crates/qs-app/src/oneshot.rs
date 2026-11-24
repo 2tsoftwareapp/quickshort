@@ -135,16 +135,27 @@ impl ApplicationHandler<Ev> for Run {
                                 Some(p)
                             }
                             Err(e) => {
-                                eprintln!("scroll save: {e:#}");
-                                None
+                                #[cfg(target_os = "macos")]
+                                {
+                                    self.notify(el, &format!("Could not save scrolling capture: {e}"), false);
+                                    return;
+                                }
+                                #[cfg(not(target_os = "macos"))]
+                                {
+                                    eprintln!("scroll save: {e:#}");
+                                    None
+                                }
                             }
                         };
+                        #[cfg(target_os = "macos")]
+                        let msg = "Scrolling capture saved";
+                        #[cfg(not(target_os = "macos"))]
                         let msg = if saved.is_some() {
                             "Saved — pick an action"
                         } else {
                             "Captured — pick an action"
                         };
-                        self.open_card(el, img, msg, saved)
+                        self.show_capture_feedback(el, img, msg, saved)
                     }
                     Err(e) => self.notify(el, &format!("Scroll failed: {e}"), false),
                 }
@@ -153,7 +164,7 @@ impl ApplicationHandler<Ev> for Run {
                 self.workers -= 1;
                 self.rec = None;
                 match res {
-                    Ok((img, path, _dur)) => self.open_card(el, img, "Recording saved", Some(path)),
+                    Ok((img, path, _dur)) => self.show_capture_feedback(el, img, "Recording saved", Some(path)),
                     Err(e) => self.notify(el, &format!("Recording failed: {e}"), false),
                 }
             }
@@ -387,16 +398,22 @@ impl Run {
             return;
         }
         #[cfg(not(target_os = "linux"))]
-        self.open_card(el, d.img, &msg, saved);
+        self.show_capture_feedback(el, d.img, &msg, saved);
     }
 
-    fn open_card(
+    fn show_capture_feedback(
         &mut self,
         el: &ActiveEventLoop,
         img: RgbaImage,
         msg: &str,
         saved: Option<PathBuf>,
     ) {
+        #[cfg(target_os = "macos")]
+        {
+            let _ = (img, saved);
+            self.notify(el, msg, true);
+        }
+        #[cfg(not(target_os = "macos"))]
         match QuickAccess::open(el, img, msg, saved, self.accent, false, &self.popup_pos) {
             Ok(c) => self.card = Some(c),
             Err(e) => {

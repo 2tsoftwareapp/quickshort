@@ -6,11 +6,11 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 TARGET="${1:-$ROOT/target/release}"
 APP="$ROOT/quickshort.app"
 
-cargo build --release --manifest-path "$ROOT/Cargo.toml"
+cargo build --locked --release --manifest-path "$ROOT/Cargo.toml" -p qs-app -p qs-editor
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$TARGET/quickshort" "$APP/Contents/MacOS/quickshort"
+cp "$TARGET/quickshort" "$TARGET/qs-editor" "$APP/Contents/MacOS/"
 VER="$(sed -n 's/^version = "\(.*\)"/\1/p' "$ROOT/crates/qs-app/Cargo.toml" | head -1)"
 sed "s/__VERSION__/$VER/g" "$ROOT/packaging/macos/Info.plist" > "$APP/Contents/Info.plist"
 cp "$ROOT/packaging/macos/Quickshort.icns" "$APP/Contents/Resources/Quickshort.icns"
@@ -25,8 +25,8 @@ if [ -z "$IDENT" ]; then
         ~/Library/Keychains/login.keychain-db 2>/dev/null \
         | awk '/SHA-1/ {print $3; exit}')
 fi
-codesign --force --sign "${IDENT:--}" "$APP" 2>/dev/null \
-  || codesign --force --sign - "$APP" 2>/dev/null || true
+codesign --force --deep --sign "${IDENT:--}" "$APP" 2>/dev/null \
+  || codesign --force --deep --sign - "$APP"
 # the LaunchAgent runs the raw release binary — same cert AND identifier
 # as the .app or the TCC designated requirement splits into two grants
 codesign --force --sign "${IDENT:--}" --identifier ai.quickshort \

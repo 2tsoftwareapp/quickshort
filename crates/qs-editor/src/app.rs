@@ -1830,28 +1830,29 @@ impl EditorApp {
                 close_requested = true;
             }
             // Escape closes whichever dialog or popup is on top.
-            if i.consume_key(Modifiers::NONE, Key::Escape) {
+            if i.modifiers.is_none() && i.key_pressed(Key::Escape) {
                 if self.dialogs.context_menu.is_some() {
                     self.dialogs.context_menu = None;
-                } else if self.dialogs.shortcuts_open {
-                    self.dialogs.shortcuts_open = false;
-                } else if self.dialogs.confirm_close {
-                    self.dialogs.confirm_close = false;
-                } else if self.dialogs.app_menu_open {
-                    self.dialogs.app_menu_open = false;
-                } else if self.dialogs.export_menu_open {
-                    self.dialogs.export_menu_open = false;
-                } else if self.dialogs.canvas_dialog_open {
-                    self.dialogs.canvas_dialog_open = false;
-                } else if self.dialogs.combine_dialog_open {
-                    self.dialogs.combine_dialog_open = false;
-                } else if self.dialogs.alignment_open {
-                    self.dialogs.alignment_open = false;
-                } else if self.library.open {
-                    self.library.open = false;
+                    i.consume_key(Modifiers::NONE, Key::Escape);
+                } else if let Some(open) = [
+                    &mut self.dialogs.shortcuts_open,
+                    &mut self.dialogs.confirm_close,
+                    &mut self.dialogs.app_menu_open,
+                    &mut self.dialogs.export_menu_open,
+                    &mut self.dialogs.canvas_dialog_open,
+                    &mut self.dialogs.combine_dialog_open,
+                    &mut self.dialogs.alignment_open,
+                    &mut self.library.open,
+                ]
+                .into_iter()
+                .find(|open| **open)
+                {
+                    *open = false;
+                    i.consume_key(Modifiers::NONE, Key::Escape);
                 } else if self.find.open {
                     self.find.open = false;
                     self.last_find_focus = None;
+                    i.consume_key(Modifiers::NONE, Key::Escape);
                 }
             }
             // Settings has the standard macOS shortcut; Align needs a panel that
@@ -2268,7 +2269,7 @@ impl EditorApp {
                         Key::Home => self.editor.text_move(Motion::Home, extend),
                         Key::End => self.editor.text_move(Motion::End, extend),
                         Key::Escape => {
-                            self.editor.end_text_edit();
+                            self.editor.escape();
                             self.touch();
                         }
                         Key::A if modifiers.command || modifiers.ctrl => {
@@ -2403,8 +2404,8 @@ impl EditorApp {
         self.recovery_guard(&ctx);
         self.close_guard(&ctx);
         self.filmstrip.poll(&ctx);
-        self.handle_text_events(&ctx);
         self.handle_dialog_keys(&ctx);
+        self.handle_text_events(&ctx);
         self.handle_shortcuts(&ctx);
 
         let top_res = egui::Panel::top("top_bar")
@@ -3228,6 +3229,7 @@ impl EditorApp {
                                 });
                             });
                         if response.clicked() && !locked {
+                            self.editor.set_tool(Tool::Select);
                             self.editor.select(Some(id));
                         }
                         if response.dragged() {
@@ -3564,6 +3566,9 @@ impl EditorApp {
                         let doc_p = self.view.screen_to_doc(pos, screen_rect);
                         let picked = self.editor.pick(doc_p);
                         if let Some(id) = picked {
+                            if self.editor.tool() != Tool::Select {
+                                self.editor.set_tool(Tool::Select);
+                            }
                             if !self.editor.selection().contains(&id) {
                                 self.editor.select(Some(id));
                             }
@@ -3594,7 +3599,7 @@ impl EditorApp {
                             self.show_toast(format!("Sampled color #{rgb:06X}"));
                         }
                     }
-                } else if response.double_clicked() {
+                } else if response.double_clicked() && self.editor.tool() == Tool::Select {
                     self.saw_drag_press = false;
                     if let Some(pos) = response.interact_pointer_pos() {
                         let doc_p = self.view.screen_to_doc(pos, screen_rect);
@@ -4329,6 +4334,60 @@ mod tests {
         for (actual, expected) in [(r.x, 200.0), (r.y, 100.0), (r.w, 110.0), (r.h, 80.0)] {
             assert!((actual - expected).abs() < 0.1, "{r:?}");
         }
+    }
+
+    #[test]
+    fn step_tool_places_a_number_on_each_rapid_canvas_click() {
+        let ctx = egui::Context::default();
+        let doc = Document::new(640, 400, 1.0);
+        let mut app = EditorApp::for_tests(doc, RgbaImage::new(640, 400));
+        app.next_prefs_poll = Instant::now() + Duration::from_secs(60);
+        let frame = |app: &mut EditorApp, events| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1180.0, 720.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| app.render_ui(ui),
+            );
+            output.textures_delta.clear();
+        };
+        let key = |key| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        };
+        frame(&mut app, vec![key(Key::S)]);
+        assert_eq!(app.editor.tool(), Tool::Step);
+        let canvas = app.last_canvas_rect.unwrap();
+        let pos = app.view.doc_to_screen(PointF::new(200.0, 100.0), canvas);
+        frame(&mut app, vec![egui::Event::PointerMoved(pos)]);
+        for number in 1..=2 {
+            for pressed in [true, false] {
+                frame(
+                    &mut app,
+                    vec![egui::Event::PointerButton {
+                        pos,
+                        pressed,
+                        button: egui::PointerButton::Primary,
+                        modifiers: Modifiers::NONE,
+                    }],
+                );
+            }
+            assert_eq!(app.editor.tool(), Tool::Step);
+            assert_eq!(app.document().objects.len(), number as usize);
+            let id = app.document().objects.last().unwrap().id;
+            assert_eq!(app.document().step_number(id), Some(number));
+        }
+        frame(&mut app, vec![key(Key::V)]);
+        assert_eq!(app.editor.tool(), Tool::Select);
+        frame(&mut app, vec![key(Key::R)]);
+        assert_eq!(app.editor.tool(), Tool::Rect);
+        frame(&mut app, vec![key(Key::Escape)]);
+        assert_eq!(app.editor.tool(), Tool::Select);
     }
 
     #[test]

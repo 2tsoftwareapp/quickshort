@@ -21,23 +21,24 @@ for T in aarch64-apple-darwin x86_64-apple-darwin; do
   fi
 done
 if [ "$(echo "$ARCHES" | wc -w)" -ge 2 ]; then
-  BINS=""
   for T in $ARCHES; do
-    cargo build --release -p qs-app --target "$T"
-    BINS="$BINS target/$T/release/quickshort"
+    cargo build --locked --release -p qs-app -p qs-editor --target "$T"
   done
-  mkdir -p target/universal-release
-  lipo -create $BINS -output target/universal-release/quickshort
-  BIN=target/universal-release/quickshort
+  BIN_DIR=target/universal-release
+  mkdir -p "$BIN_DIR"
+  for BIN in quickshort qs-editor; do
+    lipo -create "target/aarch64-apple-darwin/release/$BIN" \
+      "target/x86_64-apple-darwin/release/$BIN" -output "$BIN_DIR/$BIN"
+  done
 else
-  cargo build --release -p qs-app
-  BIN=target/release/quickshort
+  cargo build --locked --release -p qs-app -p qs-editor
+  BIN_DIR=target/release
 fi
 
 # --- bundle ----------------------------------------------------------------
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$BIN" "$APP/Contents/MacOS/quickshort"
+cp "$BIN_DIR/quickshort" "$BIN_DIR/qs-editor" "$APP/Contents/MacOS/"
 sed "s/__VERSION__/$VER/g" packaging/macos/Info.plist > "$APP/Contents/Info.plist"
 cp packaging/macos/Quickshort.icns "$APP/Contents/Resources/Quickshort.icns"
 
@@ -48,7 +49,8 @@ else
   echo "identity '$IDENT' unavailable — ad-hoc signing"
   codesign --force --deep --sign - "$APP"
 fi
-codesign --verify --deep --strict "$APP" && echo "signature verified"
+codesign --verify --deep --strict "$APP"
+echo "signature verified"
 
 # --- archive + dmg ----------------------------------------------------------
 ZIP="$DIST/Quickshort-v$VER-macos.zip"

@@ -76,6 +76,7 @@ pub enum ShotKind {
     Saved,
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     Copied,
+    #[cfg(not(target_os = "macos"))]
     Ocr,
     Shared,
     Scroll,
@@ -1650,6 +1651,7 @@ impl Stack {
                 let (bg, glyph) = match shot.kind {
                     ShotKind::Saved => (qs_theme::pal().success, "✓"),
                     ShotKind::Copied => (qs_theme::pal().success, "⧉"),
+                    #[cfg(not(target_os = "macos"))]
                     ShotKind::Ocr => (qs_theme::pal().success, "T"),
                     ShotKind::Scroll => (qs_theme::pal().success, "↕"),
                     ShotKind::Shared => (accent, "↗"),

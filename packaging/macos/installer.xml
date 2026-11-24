@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<installer-gui-script minSpecVersion="2">
+  <title>Quickshort</title>
+  <background file="quickshort.png" alignment="bottomleft" scaling="none"/>
+  <welcome file="welcome.rtf"/>
+  <conclusion file="conclusion.rtf"/>
+  <options customize="never" require-scripts="false" hostArchitectures="@HOST_ARCHS@"/>
+  <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>
+  <volume-check><allowed-os-versions><os-version min="@MIN_OS@"/></allowed-os-versions></volume-check>
+  <choices-outline><line choice="quickshort"/></choices-outline>
+  <choice id="quickshort" visible="false"><pkg-ref id="ai.quickshort.installer"/></choice>
+  <pkg-ref id="ai.quickshort.installer">QuickshortPayload.pkg</pkg-ref>
+</installer-gui-script>

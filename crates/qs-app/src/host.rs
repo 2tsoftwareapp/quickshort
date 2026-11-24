@@ -598,10 +598,14 @@ impl Host {
         self.rebuild_menu();
     }
 
-    /// Fly the shot into the corner album (macOS/Windows). Linux uses the
-    /// status toast only — GNOME/Wayland album chrome is too brittle here.
+    /// Show the platform's capture feedback. macOS confirms with a toast.
     fn land_shot(&mut self, el: &ActiveEventLoop, l: Land, msg: &str) {
         self.toast = None;
+        #[cfg(target_os = "macos")]
+        {
+            let _ = l;
+            self.toast_done(el, msg.to_owned(), true);
+        }
         #[cfg(target_os = "linux")]
         {
             let _ = (l.sel, &l.img, l.dur_s, &l.shared);
@@ -619,7 +623,7 @@ impl Host {
             self.toast_done(el, msg.to_string(), ok);
             return;
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
             if l.sel.is_none() {
                 self.open_card(el, l.img, msg, l.path);
@@ -813,6 +817,7 @@ impl Host {
     /// Open the post-capture thumbnail card; falls back to the plain toast
     /// when the window can't be created.
     #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     fn open_card(
         &mut self,
         el: &ActiveEventLoop,
@@ -1022,12 +1027,8 @@ impl ApplicationHandler<HostEvent> for Host {
         let try_manager = true;
 
         let recents = actions::recent_captures(&self.cfg.save_dir(), self.cfg.recent_max as usize);
-        // rehydrate the album from disk — recents are newest-first, so
-        // land the tail five oldest→newest to end with the newest on top;
-        // `instant` skips the fly-in. On Linux defer until the first
-        // capture: opening fullscreen chrome surfaces at tray startup
-        // reads as a black-screen flash on GNOME/Wayland.
-        #[cfg(not(target_os = "linux"))]
+        // Rehydrate the album only where the capture UI uses it by default.
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         for p in recents.iter().take(5).rev() {
             if let Ok(img) = image::open(p) {
                 let _ = self.chrome.land(
@@ -1242,6 +1243,7 @@ impl ApplicationHandler<HostEvent> for Host {
                             let e = crate::share::entry(path.clone(), &link);
                             self.shares.put(e.clone());
                             self.shares.save();
+                            #[cfg(not(target_os = "macos"))]
                             self.land_shot(
                                 el,
                                 Land {
@@ -1262,6 +1264,7 @@ impl ApplicationHandler<HostEvent> for Host {
                             );
                         }
                         Outcome::TextCopied(n) => {
+                            #[cfg(not(target_os = "macos"))]
                             self.land_shot(
                                 el,
                                 Land {
@@ -1278,6 +1281,7 @@ impl ApplicationHandler<HostEvent> for Host {
                             self.toast_done(el, format!("Copied {n} chars"), true);
                         }
                         Outcome::NoText => {
+                            #[cfg(not(target_os = "macos"))]
                             self.land_shot(
                                 el,
                                 Land {
@@ -1311,8 +1315,16 @@ impl ApplicationHandler<HostEvent> for Host {
                             (Some(p), msg)
                         }
                         Err(e) => {
-                            eprintln!("scroll save: {e:#}");
-                            (None, "Captured — pick an action".to_string())
+                            #[cfg(target_os = "macos")]
+                            {
+                                self.toast_done(el, format!("Could not save scrolling capture: {e}"), false);
+                                return;
+                            }
+                            #[cfg(not(target_os = "macos"))]
+                            {
+                                eprintln!("scroll save: {e:#}");
+                                (None, "Captured — pick an action".to_string())
+                            }
                         }
                     };
                     self.land_shot(

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Installer>
+  <Name>Quickshort</Name>
+  <Version>@VERSION@</Version>
+  <Title>Quickshort @VERSION@ Setup</Title>
+  <InstallerWindowIcon>window-icon.png</InstallerWindowIcon>
+  <Logo>logo.png</Logo>
+  <WizardStyle>Modern</WizardStyle>
+  <TargetDir>@HomeDir@/.local/share/quickshort</TargetDir>
+  <RemoveTargetDir>false</RemoveTargetDir>
+  <MaintenanceToolName>QuickshortMaintenance</MaintenanceToolName>
+  <RunProgram>/usr/bin/env</RunProgram>
+  <RunProgramArguments>
+    <Argument>APPIMAGE_EXTRACT_AND_RUN=1</Argument>
+    <Argument>@TargetDir@/Quickshort.AppImage</Argument>
+  </RunProgramArguments>
+  <RunProgramDescription>Open Quickshort</RunProgramDescription>
+</Installer>

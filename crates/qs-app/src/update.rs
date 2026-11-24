@@ -1,16 +1,14 @@
 //! Self-update against GitHub Releases — unsigned build.
 //!
-//! Check hits `releases/latest`; a newer semver downloads the asset for this
-//! platform and swaps it over the running binary:
+//! Check hits `releases/latest`; a newer semver downloads and installs the
+//! asset for this platform:
 //!
 //! - macOS: a zipped `.app` swapped over the bundle, then relaunched via
 //!   `open`. Downloads go through `ureq`/plain HTTP so no quarantine xattr is
 //!   set, and releases are signed with a stable self-signed identity
 //!   (`packaging/macos/gen_signing_cert.sh`) so TCC grants survive the swap.
-//! - Linux: the `.deb` asset is unpacked with `ar`/`tar` (or `dpkg-deb`) and
-//!   the binary atomically renamed over `current_exe` — `pkexec install`
-//!   when the install dir isn't writable. Running as an AppImage replaces
-//!   `$APPIMAGE` instead.
+//! - Linux: APT upgrades the installed Debian package, including its editor
+//!   and dependencies. Running as an AppImage replaces `$APPIMAGE` instead.
 //! - Windows: the NSIS `*-Setup.exe` is launched and the app exits; the
 //!   installer performs the upgrade.
 //!
@@ -174,8 +172,10 @@ pub fn install(rel: &Release) -> Result<PathBuf> {
     }
 
     let new_app = tmp.join("Quickshort.app");
-    if !new_app.join("Contents/MacOS/quickshort").exists() {
-        bail!("update archive is missing Quickshort.app");
+    for bin in ["quickshort", "qs-editor"] {
+        if !new_app.join("Contents/MacOS").join(bin).is_file() {
+            bail!("update archive is missing Quickshort.app/Contents/MacOS/{bin}");
+        }
     }
 
     // swap: move the old bundle aside, drop the new one in place
@@ -193,21 +193,19 @@ pub fn install(rel: &Release) -> Result<PathBuf> {
     Ok(app)
 }
 
-/// Download the `.deb`, pull out `usr/bin/quickshort`, swap it over the
-/// running binary. AppImage runs replace `$APPIMAGE` instead.
+/// Upgrade the Debian package or replace the whole AppImage.
 #[cfg(target_os = "linux")]
 pub fn install(rel: &Release) -> Result<PathBuf> {
-    let exe = std::env::current_exe().context("can't locate current exe")?;
-    let tmp = std::env::temp_dir().join("quickshort-update");
-    let _ = std::fs::remove_dir_all(&tmp);
-    std::fs::create_dir_all(&tmp)?;
+    let tmp = tempfile::Builder::new()
+        .prefix("quickshort-update-")
+        .tempdir()?;
 
     // AppImage: the whole app is one file — download and replace it
     if let Ok(appimage) = std::env::var("APPIMAGE") {
         let (name, url) = rel
             .asset(|n| n.ends_with(".AppImage"))
             .context("release has no AppImage asset")?;
-        let f = tmp.join(name);
+        let f = tmp.path().join(name);
         download(url, &f)?;
         verify(rel, &f, name)?;
         set_exec(&f)?;
@@ -218,68 +216,26 @@ pub fn install(rel: &Release) -> Result<PathBuf> {
         return Ok(PathBuf::from(appimage));
     }
 
+    let exe = std::env::current_exe().context("can't locate current exe")?;
+    if exe != Path::new("/usr/bin/quickshort") {
+        bail!("Debian package upgrades require /usr/bin/quickshort; install the .deb manually");
+    }
     let (name, url) = rel
         .asset(|n| n == "quickshort_amd64.deb")
         .context("release has no linux .deb asset")?;
-    let deb = tmp.join(name);
+    let deb = tmp.path().join(name);
     download(url, &deb)?;
-    verify(rel, &deb, name)?;
-
-    // extract data.tar payload — dpkg-deb when present, ar+tar otherwise
-    let ok = std::process::Command::new("dpkg-deb")
-        .args(["-x"])
+    let want = expected_sha(rel, name)?.context("missing checksum for the Debian package")?;
+    if sha256(&deb)? != want {
+        bail!("checksum mismatch for {name}");
+    }
+    let status = std::process::Command::new("/usr/bin/pkexec")
+        .args(["/usr/bin/apt-get", "--yes", "--no-remove", "install"])
         .arg(&deb)
-        .arg(&tmp)
         .status()
-        .is_ok_and(|s| s.success());
-    if !ok {
-        std::process::Command::new("ar")
-            .arg("x")
-            .arg(&deb)
-            .current_dir(&tmp)
-            .status()
-            .context("deb unpack failed (ar)")?;
-        let data = std::fs::read_dir(&tmp)?
-            .filter_map(|e| e.ok())
-            .map(|e| e.path())
-            .find(|p| {
-                p.file_name()
-                    .is_some_and(|n| n.to_string_lossy().starts_with("data.tar"))
-            })
-            .context("deb has no data.tar")?;
-        if !std::process::Command::new("tar")
-            .arg("xf")
-            .arg(&data)
-            .current_dir(&tmp)
-            .status()
-            .context("deb unpack failed (tar)")?
-            .success()
-        {
-            bail!("deb unpack failed (tar)");
-        }
-    }
-    let new_bin = tmp.join("usr/bin/quickshort");
-    if !new_bin.exists() {
-        bail!("update archive is missing usr/bin/quickshort");
-    }
-    set_exec(&new_bin)?;
-
-    // swap atomically when the install dir is writable; elevated copy
-    // (pkexec → polkit prompt) when it isn't, e.g. /usr/bin from a .deb
-    let staged = exe.with_extension("new");
-    let swapped = std::fs::copy(&new_bin, &staged)
-        .and_then(|_| std::fs::rename(&staged, &exe))
-        .is_ok();
-    if !swapped {
-        let s = std::process::Command::new("pkexec")
-            .args(["install", "-m", "755"])
-            .arg(&new_bin)
-            .arg(&exe)
-            .status()
-            .context("can't replace binary — run the update manually")?;
-        if !s.success() {
-            bail!("pkexec install failed ({s}) — run the update manually");
-        }
+        .context("could not start the Debian package upgrade; install the .deb manually")?;
+    if !status.success() {
+        bail!("Debian package upgrade failed ({status}); install the .deb manually");
     }
     Ok(exe)
 }

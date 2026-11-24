@@ -8,16 +8,17 @@ cd "$ROOT"
 
 VER="${1:-$(sed -n 's/^version = "\(.*\)"/\1/p' crates/qs-app/Cargo.toml | head -1)}"
 BIN="target/release/quickshort"
+EDITOR_BIN="target/release/qs-editor"
 DIST="$ROOT/dist"
 mkdir -p "$DIST"
 
-cargo build --release -p qs-app
+cargo build --locked --release -p qs-app -p qs-editor
 
 # --- .deb ------------------------------------------------------------------
 PKGDIR="$(mktemp -d)/quickshort_${VER}_amd64"
 mkdir -p "$PKGDIR/DEBIAN" "$PKGDIR/usr/bin" \
   "$PKGDIR/usr/share/applications" "$PKGDIR/usr/share/icons/hicolor/1024x1024/apps"
-cp "$BIN" "$PKGDIR/usr/bin/quickshort"
+cp "$BIN" "$EDITOR_BIN" "$PKGDIR/usr/bin/"
 cp packaging/linux/quickshort.desktop "$PKGDIR/usr/share/applications/quickshort.desktop"
 cp docs/assets/icon.png "$PKGDIR/usr/share/icons/hicolor/1024x1024/apps/quickshort.png"
 # ffmpeg is a Recommends not a Depends: recording (⌘R) needs it, everything
@@ -29,7 +30,7 @@ Section: utils
 Priority: optional
 Architecture: amd64
 Maintainer: truongnat <noreply@github.com>
-Depends: libgtk-3-0, libayatana-appindicator3-1, libpipewire-0.3-0, libxkbcommon-x11-0, tesseract-ocr, tesseract-ocr-eng, wl-clipboard, libnotify-bin, openssh-client
+Depends: libgtk-3-0, libgtk-layer-shell0, libayatana-appindicator3-1, libpipewire-0.3-0, libxkbcommon-x11-0, libegl1, libgl1, tesseract-ocr, tesseract-ocr-eng, wl-clipboard, libnotify-bin, openssh-client
 Recommends: tesseract-ocr-jpn, tesseract-ocr-vie, ffmpeg
 Description: Region screenshot tool with annotations and native OCR
  A pure-Rust desktop utility: multi-monitor region capture, annotation
@@ -51,7 +52,6 @@ export PATH="$TOOLS:$PATH"
 APPDIR="$(mktemp -d)/AppDir"
 mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications" \
   "$APPDIR/usr/share/icons/hicolor/1024x1024/apps"
-cp "$BIN" "$APPDIR/usr/bin/quickshort"
 cp packaging/linux/quickshort.desktop "$APPDIR/usr/share/applications/quickshort.desktop"
 cp docs/assets/icon.png "$APPDIR/usr/share/icons/hicolor/1024x1024/apps/quickshort.png"
 # linuxdeploy wants the desktop file + icon at the appdir root too
@@ -68,16 +68,22 @@ LIBXKB="$(ldconfig -p | awk '/libxkbcommon-x11\.so\.0/ {print $NF; exit}')"
 export APPIMAGE_EXTRACT_AND_RUN=1
 export LDAI_OUTPUT="$DIST/Quickshort-Linux.AppImage"
 export OUTPUT="$DIST/Quickshort-Linux.AppImage"
+rm -f "$OUTPUT" "$OUTPUT.zsync"
 # embed gh-releases-zsync update info — AppImageUpdate can then self-update
 # from GitHub Releases (the .zsync it generates lands in dist/ alongside)
 export UPDATE_INFORMATION="gh-releases-zsync|truongnat|quickshort|latest|Quickshort-Linux.AppImage.zsync"
 # newer linuxdeploy builds dropped the -u flag — UPDATE_INFORMATION env var
 # alone is what appimagetool reads for the embedded update info
 if ! "$TOOLS/linuxdeploy.AppImage" \
+  --executable "$BIN" --executable "$EDITOR_BIN" \
   --appdir "$APPDIR" --plugin gtk \
   --output appimage > "$TOOLS/linuxdeploy.log" 2>&1; then
-    echo "linuxdeploy failed; shipping .deb only"
+    echo "linuxdeploy failed to build the AppImage" >&2
     tail -60 "$TOOLS/linuxdeploy.log" >&2 || true
+    exit 1
 fi
+test -x "$APPDIR/usr/bin/quickshort"
+test -x "$APPDIR/usr/bin/qs-editor"
+test -f "$DIST/Quickshort-Linux.AppImage"
 ls -lh "$DIST"/* 2>/dev/null || true
 echo "linux artifacts ready in $DIST"

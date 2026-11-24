@@ -1,0 +1,121 @@
+name: publish release
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_run_id:
+        description: "Successful release build run whose artifacts passed installation testing"
+        type: string
+        required: true
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  draft:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BUILD_RUN_ID: ${{ inputs.build_run_id }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: verify successful release build
+        id: build
+        run: |
+          [[ "$BUILD_RUN_ID" =~ ^[0-9]+$ ]] || { echo "Invalid build run ID."; exit 1; }
+          SHA="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN_ID" |
+            jq -er --arg repo "$GITHUB_REPOSITORY" '
+              select(.path == ".github/workflows/release.yml" and
+                     .head_repository.full_name == $repo and
+                     .event == "workflow_dispatch" and .conclusion == "success")
+              | .head_sha | select(test("^[0-9a-f]{40}$"))
+            ')"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-context
+          path: release-context
+          run-id: ${{ inputs.build_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: verify version, tag and test run
+        id: candidate
+        env:
+          BUILD_SHA: ${{ steps.build.outputs.sha }}
+        run: |
+          VER="$(jq -er --arg sha "$BUILD_SHA" '
+            select(.sha == $sha and .installer_preview == false)
+            | .version | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))
+          ' release-context/release-context.json)"
+          TAG="v$VER"
+          git fetch --no-tags origin "refs/tags/$TAG"
+          if [[ "$(git rev-parse 'FETCH_HEAD^{commit}')" != "$BUILD_SHA" ]]; then
+            echo "Tag $TAG does not point to the tested build commit ($BUILD_SHA)."
+            exit 1
+          fi
+          COUNT="$(gh api --method GET "repos/$GITHUB_REPOSITORY/actions/workflows/verify.yml/runs" \
+            -f head_sha="$BUILD_SHA" -f status=success --jq '.total_count')"
+          [[ "$COUNT" -gt 0 ]] || { echo "No successful verify run for $BUILD_SHA."; exit 1; }
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          path: artifacts
+          merge-multiple: true
+          run-id: ${{ inputs.build_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: check artifacts and create draft
+        env:
+          TAG: ${{ steps.candidate.outputs.tag }}
+        working-directory: artifacts
+        run: |
+          for asset in "Quickshort-$TAG-macos.zip" "Quickshort-$TAG-macos.dmg" \
+              Quickshort-Windows-Setup.exe Quickshort-Linux.AppImage quickshort_amd64.deb; do
+            test -s "$asset"
+          done
+          sha256sum --strict -c "Quickshort-$TAG-macos.zip.sha256"
+          sha256sum --strict -c "Quickshort-$TAG-macos.dmg.sha256"
+          sha256sum --strict -c Quickshort-Windows-Setup.exe.sha256
+          sha256sum --strict -c linux.sha256
+          gh release create "$TAG" ./* --repo "$GITHUB_REPOSITORY" \
+            --draft --verify-tag --title "Quickshort $TAG" --generate-notes
+
+  homebrew:
+    if: github.event_name == 'release' && !github.event.release.prerelease
+    runs-on: ubuntu-latest
+    env:
+      TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.event.release.tag_name }}
+    steps:
+      - name: update Homebrew cask after publication
+        run: |
+          [ -n "$TAP_TOKEN" ] || { echo "No TAP_TOKEN. Skipping cask update."; exit 0; }
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 0
+          VER="${TAG#v}"
+          CHECKSUM="Quickshort-$TAG-macos.zip.sha256"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$CHECKSUM"
+          SHA="$(cut -d' ' -f1 "$CHECKSUM")"
+          [[ "$SHA" =~ ^[0-9a-f]{64}$ ]]
+          GH_TOKEN="$TAP_TOKEN" gh auth setup-git --hostname github.com
+          GH_TOKEN="$TAP_TOKEN" git clone https://github.com/truongnat/homebrew-tap "$RUNNER_TEMP/tap"
+          cd "$RUNNER_TEMP/tap"
+          sed -i -e "s/version \".*\"/version \"$VER\"/" -e "s/sha256 \".*\"/sha256 \"$SHA\"/" Casks/quickshort.rb
+          if ! git diff --quiet -- Casks/quickshort.rb; then
+            git -c user.name=github-actions -c user.email=github-actions@github.com commit \
+              -am "quickshort $VER"
+            GH_TOKEN="$TAP_TOKEN" git push
+          fi

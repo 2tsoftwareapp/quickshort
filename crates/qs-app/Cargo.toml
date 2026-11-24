@@ -1,6 +1,6 @@
 [package]
 name = "qs-app"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2021"
 license.workspace = true
 
@@ -35,6 +35,7 @@ webp = "0.3.1"
 sha2 = "0.10"
 
 [target.'cfg(target_os = "linux")'.dependencies]
+tempfile = "3"
 muda = "0.21.0"
 tray-icon = "0.26.0"
 # tray-icon/muda call gtk; linux runs them on a dedicated gtk::main() thread

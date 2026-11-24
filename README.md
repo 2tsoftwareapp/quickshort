@@ -122,8 +122,11 @@ run. Bundles the tray dependencies (gtk plugin).
 `.desktop` entry and icon:
 
 ```bash
-sudo dpkg -i quickshort_amd64.deb
+sudo apt install ./quickshort_amd64.deb
 ```
+
+When upgrading from the v0.4.0 Debian package, install the new `.deb` with
+that command so APT installs the editor and its runtime dependencies.
 
 The deb pulls `ffmpeg` via Recommends (screen recording); AppImage users
 need it on PATH themselves — `sudo apt install ffmpeg`.
@@ -146,11 +149,10 @@ settings (position, timeout, Do Not Disturb).
 `Quickshort-Windows-Setup.exe` under
 [Releases](https://github.com/truongnat/quickshort/releases) — NSIS
 installer: Program Files install, Start Menu shortcut, uninstaller entry.
-Unsigned, so SmartScreen warns once (**More info → Run anyway**). Runs as a
-tray app, no console window. Or build from source
-(`cargo build --release -p qs-app`). The installer warns if `ffmpeg.exe`
-isn't on PATH (`winget install ffmpeg`) — it's only needed for `⌘R`
-screen recording.
+Unsigned, so SmartScreen may warn (**More info → Run anyway**). Runs as a
+tray app, no console window. Or build the app and editor from source
+(`cargo build --release -p qs-app -p qs-editor`). For screen recording,
+install FFmpeg with `winget install ffmpeg`.
 
 ## Usage
 

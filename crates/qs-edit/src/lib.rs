@@ -145,11 +145,6 @@ impl Tool {
             Tool::Hexagon => "Hexagon",
         }
     }
-
-    /// Freehand tools stay active after each stroke.
-    fn keeps_tool(self) -> bool {
-        matches!(self, Tool::Pen | Tool::Highlighter)
-    }
 }
 
 /// Style applied to newly created objects (and mirrored by the UI palette).
@@ -334,7 +329,7 @@ pub struct Editor {
     /// against the value they last wrote to disk to know whether the document
     /// still has unsaved edits.
     rev: u64,
-    /// Keep the drawing tool active after creating an object.
+    /// Keep Crop, Cutout and SelectRegion active after committing.
     pub sticky_tools: bool,
     /// Crop rectangle being previewed by the Crop tool (transient, logical px).
     crop_rect: Option<RectF>,
@@ -866,7 +861,7 @@ impl Editor {
         }
     }
 
-    /// Esc: leave text edit, else deselect, else back to Select / clear region.
+    /// Esc ends text editing and exits the current tool, or deselects in Select.
     pub fn escape(&mut self) {
         if matches!(self.drag, Drag::Crop { .. }) {
             self.drag = Drag::None;
@@ -894,16 +889,22 @@ impl Editor {
         }
         if self.edit.is_some() {
             self.end_text_edit();
+            if matches!(self.tool, Tool::Text | Tool::Callout) {
+                self.tool = Tool::Select;
+            }
+        } else if self.tool != Tool::Select {
+            self.selection.clear();
+            self.cancel_smart_move();
+            self.tool = Tool::Select;
         } else if !self.selection.is_empty() {
             self.selection.clear();
-        } else if self.tool == Tool::SelectRegion || self.region_rect.is_none() {
+        } else {
             self.set_region(None);
-            self.tool = Tool::Select;
         }
     }
 
     fn reset_tool(&mut self) {
-        if !self.sticky_tools && !self.tool.keeps_tool() {
+        if !self.sticky_tools {
             self.tool = Tool::Select;
         }
     }
@@ -961,6 +962,7 @@ impl Editor {
         }
         if self.tool == Tool::Fill {
             self.fill_at(p);
+            self.selection.clear();
             return;
         }
         if self.tool == Tool::SmartMove {
@@ -1197,20 +1199,18 @@ impl Editor {
             fill: Fill::None,
         });
         self.begin_text_edit_with(id, pre);
-        self.reset_tool();
     }
 
     fn step_down(&mut self, p: PointF) {
         let pre = self.snap();
-        let id = self.doc.push(ObjectKind::Step {
+        self.doc.push(ObjectKind::Step {
             center: p,
             radius: self.style.step_radius,
             rgb: self.style.rgb,
             text_rgb: contrast(self.style.rgb),
         });
-        self.selection = vec![id];
+        self.selection.clear();
         self.push_undo(pre);
-        self.reset_tool();
     }
 
     pub fn pointer_move(&mut self, p: PointF, shift: bool) {
@@ -1392,8 +1392,7 @@ impl Editor {
             self.selection.retain(|i| *i != id);
             return;
         }
-        let freehand = self.tool.keeps_tool();
-        self.selection = if freehand { Vec::new() } else { vec![id] };
+        self.selection.clear();
         let pre = pre.unwrap_or_else(|| self.snap());
         if is_callout {
             if pre != self.snap() {
@@ -1403,7 +1402,6 @@ impl Editor {
         } else if pre != self.snap() {
             self.push_undo(pre);
         }
-        self.reset_tool();
     }
 
     // ---- text editing --------------------------------------------------------
@@ -1446,6 +1444,8 @@ impl Editor {
         });
         if empty_text {
             self.doc.remove(te.id);
+        }
+        if empty_text || matches!(self.tool, Tool::Text | Tool::Callout) {
             self.selection.retain(|i| *i != te.id);
         }
         if let Some(pre) = pre {
@@ -2755,21 +2755,28 @@ mod tests {
         let mut e = editor();
         e.set_tool(Tool::Rect);
         drag(&mut e, pt(10.0, 10.0), pt(60.0, 40.0));
+        e.set_tool(Tool::Select);
+        e.select(Some(e.doc().objects[0].id));
         e
     }
 
     #[test]
-    fn draw_rect_selects_it_returns_to_select_and_undoes() {
-        let mut e = drawn_rect();
-        assert_eq!(e.doc().objects.len(), 1);
+    fn rectangles_keep_the_tool_and_undo_individually() {
+        let mut e = editor();
+        e.set_tool(Tool::Rect);
+        drag(&mut e, pt(10.0, 10.0), pt(60.0, 40.0));
+        drag(&mut e, pt(70.0, 10.0), pt(120.0, 40.0));
+        assert_eq!(e.doc().objects.len(), 2);
         assert_eq!(rect_of(&e, 0), RectF::new(10.0, 10.0, 50.0, 30.0));
-        assert_eq!(e.selected(), Some(e.doc().objects[0].id));
-        assert_eq!(e.tool(), Tool::Select);
-        assert!(e.undo());
-        assert!(e.doc().objects.is_empty());
         assert_eq!(e.selected(), None);
-        assert!(e.redo());
+        assert_eq!(e.tool(), Tool::Rect);
+        assert!(e.undo());
         assert_eq!(e.doc().objects.len(), 1);
+        assert_eq!(e.tool(), Tool::Rect);
+        e.escape();
+        assert_eq!(e.tool(), Tool::Select);
+        assert!(e.redo());
+        assert_eq!(e.doc().objects.len(), 2);
     }
 
     #[test]
@@ -2882,6 +2889,24 @@ mod tests {
     }
 
     #[test]
+    fn text_and_callout_keep_the_tool_between_annotations() {
+        for tool in [Tool::Text, Tool::Callout] {
+            let mut e = editor();
+            e.set_tool(tool);
+            drag(&mut e, pt(20.0, 20.0), pt(20.0, 20.0));
+            e.text_insert("First");
+            drag(&mut e, pt(250.0, 150.0), pt(250.0, 150.0));
+            e.text_insert("Second");
+            assert_eq!(e.tool(), tool);
+            e.escape();
+            assert_eq!(e.tool(), Tool::Select);
+            assert_eq!(e.selected(), None);
+            assert_eq!(e.doc().objects[0].kind.text(), Some("First"));
+            assert_eq!(e.doc().objects[1].kind.text(), Some("Second"));
+        }
+    }
+
+    #[test]
     fn caret_motion_vietnamese_and_lines() {
         let mut e = editor();
         e.set_tool(Tool::Text);
@@ -2941,6 +2966,7 @@ mod tests {
         }
         e.text_insert("hello");
         e.end_text_edit();
+        e.set_tool(Tool::Select);
         e.double_click(pt(100.0, 70.0));
         assert!(e.edit().is_some());
         e.text_insert("!");
@@ -2954,6 +2980,7 @@ mod tests {
         e.set_tool(Tool::Callout);
         drag(&mut e, pt(100.0, 100.0), pt(220.0, 150.0));
         e.end_text_edit();
+        e.set_tool(Tool::Select);
         e.select(Some(e.doc().objects[0].id));
         let tail = e
             .selection_handles()
@@ -2977,6 +3004,7 @@ mod tests {
         e.pointer_down(pt(10.0, 10.0));
         e.text_insert("hello wide world of words");
         e.end_text_edit();
+        e.set_tool(Tool::Select);
         e.select(Some(e.doc().objects[0].id));
         let east = e
             .selection_handles()
@@ -3007,14 +3035,28 @@ mod tests {
     #[test]
     fn steps_number_and_renumber() {
         let mut e = editor();
-        e.sticky_tools = true;
         e.set_tool(Tool::Step);
+        e.set_color(0xFF0000);
         e.pointer_down(pt(20.0, 20.0));
         e.pointer_up(pt(20.0, 20.0));
+        e.set_color(0x0000FF);
         e.pointer_down(pt(60.0, 20.0));
         e.pointer_up(pt(60.0, 20.0));
+        assert!(e.undo());
+        assert_eq!(e.tool(), Tool::Step);
+        e.pointer_down(pt(70.0, 30.0));
+        e.pointer_up(pt(70.0, 30.0));
         let (a, b) = (e.doc().objects[0].id, e.doc().objects[1].id);
+        assert_eq!(e.doc().step_number(a), Some(1));
         assert_eq!(e.doc().step_number(b), Some(2));
+        assert!(matches!(
+            e.doc().objects[0].kind,
+            ObjectKind::Step { rgb: 0xFF0000, .. }
+        ));
+        assert!(matches!(
+            e.doc().objects[1].kind,
+            ObjectKind::Step { rgb: 0x0000FF, .. }
+        ));
         e.set_tool(Tool::Select);
         e.select(Some(a));
         assert!(e.delete_selected());
@@ -3050,10 +3092,11 @@ mod tests {
 
     fn three_rects() -> Editor {
         let mut e = editor();
+        e.set_tool(Tool::Rect);
         for (x, y) in [(10.0, 10.0), (50.0, 35.0), (120.0, 80.0)] {
-            e.set_tool(Tool::Rect);
             drag(&mut e, pt(x, y), pt(x + 20.0, y + 10.0));
         }
+        e.set_tool(Tool::Select);
         let ids = e.doc().objects.iter().map(|o| o.id).collect::<Vec<_>>();
         e.select_many(ids);
         e
@@ -3142,7 +3185,6 @@ mod tests {
     #[test]
     fn z_order_duplicate_delete() {
         let mut e = editor();
-        e.sticky_tools = true;
         e.set_tool(Tool::Rect);
         for i in 0..3 {
             let x = 10.0 + 70.0 * i as f32;
@@ -3314,6 +3356,8 @@ mod tests {
         let mut e = editor();
         e.set_tool(Tool::Arrow);
         drag(&mut e, pt(10.0, 10.0), pt(80.0, 10.0));
+        e.set_tool(Tool::Select);
+        e.select(Some(e.doc().objects[0].id));
         e.set_arrow_head(ArrowHead::Filled);
         assert!(matches!(
             e.doc().objects[0].kind,
@@ -3354,6 +3398,8 @@ mod tests {
 
         e.set_tool(Tool::Blur);
         drag(&mut e, pt(20.0, 120.0), pt(100.0, 160.0));
+        e.set_tool(Tool::Select);
+        e.select(Some(e.doc().objects[2].id));
         e.set_blur_mode(BlurMode::Gaussian);
         e.set_blur_strength(18.0);
         match &e.doc().objects[2].kind {
@@ -3444,8 +3490,8 @@ mod tests {
         let mut e = editor();
         e.set_tool(Tool::Rect);
         drag(&mut e, pt(10.0, 10.0), pt(60.0, 40.0));
-        e.set_tool(Tool::Rect);
         drag(&mut e, pt(100.0, 100.0), pt(150.0, 140.0));
+        e.set_tool(Tool::Select);
         e
     }
 
@@ -3874,7 +3920,8 @@ mod tests {
             }
             k => panic!("{k:?}"),
         }
-        assert_eq!(e.selection().len(), 1, "the new fill is selected");
+        assert!(e.selection().is_empty());
+        assert_eq!(e.tool(), Tool::Fill);
 
         assert!(e.undo());
         assert!(e.doc().objects.is_empty(), "one undo removes the fill");

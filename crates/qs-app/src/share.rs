@@ -9,7 +9,7 @@
 use anyhow::{Context, Result};
 use image::RgbaImage;
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 const ENDPOINT: &str = "https://share.2tsoftware.app";
@@ -170,7 +170,8 @@ impl ShareStore {
     }
 
     /// Entry for an on-disk shot, if a live link exists for it.
-    pub fn get(&self, path: &Path) -> Option<&ShareEntry> {
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    pub fn get(&self, path: &std::path::Path) -> Option<&ShareEntry> {
         self.entries
             .iter()
             .find(|e| e.path == path && e.expires_at > unix_now())

@@ -726,6 +726,8 @@ mod tests {
         e.pointer_down(qs_doc::PointF::new(10.0, 10.0));
         e.pointer_move(qs_doc::PointF::new(40.0, 30.0), false);
         e.pointer_up(qs_doc::PointF::new(40.0, 30.0));
+        e.set_tool(Tool::Select);
+        e.select(Some(e.doc().objects[0].id));
 
         let solid = defaults_for(Tool::Rect)
             .into_iter()

@@ -1,20 +1,49 @@
 name: release
 
-# CI disabled on GitHub as requested
 on:
-  # push:
-  #   tags: ["v*"]
   workflow_dispatch:
     inputs:
       version:
-        description: "version to build (e.g. 0.2.0)"
+        description: "Optional check against the app version in Cargo.toml"
         required: false
+      installer_preview:
+        description: "Build setup previews as workflow artifacts"
+        type: boolean
+        default: false
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
+  metadata:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: record build version and commit
+        id: version
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+          INSTALLER_PREVIEW: ${{ inputs.installer_preview }}
+        run: |
+          VER="$(sed -n 's/^version = "\(.*\)"/\1/p' crates/qs-app/Cargo.toml | head -1)"
+          [[ "$VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid app version: $VER"; exit 1; }
+          if [[ -n "$REQUESTED_VERSION" && "${REQUESTED_VERSION#v}" != "$VER" ]]; then
+            echo "Requested version must match the app version ($VER)."
+            exit 1
+          fi
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          jq -n --arg version "$VER" --arg sha "$GITHUB_SHA" --argjson preview "$INSTALLER_PREVIEW" \
+            '{version: $version, sha: $sha, installer_preview: $preview}' > release-context.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-context
+          path: release-context.json
+          if-no-files-found: error
+
   macos:
+    needs: metadata
     runs-on: macos-latest
     env:
       SIGNING_P12_B64: ${{ secrets.QS_SIGN_P12 }}
@@ -51,11 +80,12 @@ jobs:
 
       - name: build + package
         env:
-          QS_VERSION: ${{ github.event.inputs.version || github.ref_name }}
-        run: |
-          VER="${QS_VERSION#v}"
-          case "$VER" in master|main) VER="" ;; esac
-          packaging/macos/release.sh $VER
+          QS_VERSION: ${{ needs.metadata.outputs.version }}
+        run: packaging/macos/release.sh "$QS_VERSION"
+
+      - name: build macOS setup preview
+        if: inputs.installer_preview
+        run: packaging/macos/installer.sh
 
       - uses: actions/upload-artifact@v4
         with:
@@ -64,30 +94,29 @@ jobs:
           if-no-files-found: error
 
   windows:
+    needs: metadata
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
 
       - name: build
-        run: cargo build --release -p qs-app
+        run: cargo build --locked --release -p qs-app -p qs-editor
 
       - name: nsis installer
         shell: bash
+        env:
+          QS_VERSION: ${{ needs.metadata.outputs.version }}
         run: |
           command -v makensis >/dev/null || choco install nsis -y --no-progress
           export PATH="$PATH:/c/Program Files (x86)/NSIS:/c/Program Files/NSIS"
-          VER="${{ github.event.inputs.version || github.ref_name }}"
-          VER="${VER#v}"
-          case "$VER" in
-            master|main) VER=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/qs-app/Cargo.toml | head -1) ;;
-          esac
           mkdir -p dist
           # -D not /D: git-bash mangles /DFOO into a C:/Program Files/Git path.
           # NSIS resolves relative paths against the script dir, so pass
           # absolute Windows paths via cygpath.
-          makensis "-DVERSION=$VER" \
+          makensis "-DVERSION=$QS_VERSION" \
             "-DBIN=$(cygpath -w "$PWD/target/release/quickshort.exe")" \
+            "-DEDITOR_BIN=$(cygpath -w "$PWD/target/release/qs-editor.exe")" \
             "-DOUT=$(cygpath -w "$PWD/dist/Quickshort-Windows-Setup.exe")" \
             packaging/windows/installer.nsi
           cd dist && sha256sum Quickshort-Windows-Setup.exe \
@@ -100,6 +129,7 @@ jobs:
           if-no-files-found: error
 
   linux:
+    needs: metadata
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -110,66 +140,40 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             libgtk-3-dev libayatana-appindicator3-dev \
-            libpipewire-0.3-dev libclang-dev pkg-config
+            libgtk-layer-shell-dev libpipewire-0.3-dev libclang-dev pkg-config \
+            libxkbcommon-x11-0
 
       - name: build + package
         env:
-          QS_VERSION: ${{ github.event.inputs.version || github.ref_name }}
+          QS_VERSION: ${{ needs.metadata.outputs.version }}
+        run: packaging/linux/package.sh "$QS_VERSION"
+
+      - name: build Linux setup preview
+        if: inputs.installer_preview
+        env:
+          QS_VERSION: ${{ needs.metadata.outputs.version }}
         run: |
-          VER="${QS_VERSION#v}"
-          case "$VER" in master|main) VER="" ;; esac
-          packaging/linux/package.sh $VER
+          sudo apt-get install -y p7zip-full libgl1 libdbus-1-3 libfontconfig1 \
+            libxkbcommon0 libx11-xcb1 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+            libxcb-randr0 libxcb-render-util0 libxcb-sync1 libxcb-xfixes0 libxcb-shape0
+          QT_IFW="$RUNNER_TEMP/quickshort-ifw"
+          mkdir -p "$QT_IFW"
+          ARCHIVE="$QT_IFW/qt-ifw.7z"
+          curl -fLsS --retry 3 -o "$ARCHIVE" \
+            'https://download.qt.io/online/qtsdkrepository/linux_x64/desktop/tools_ifw/qt.tools.ifw.47/4.7.0-0-202402150941ifw-linux-x64.7z'
+          echo "dd86e6098e88baf0aad28a03334b505f8767eb45294b74d118d16a4a1d64f035  $ARCHIVE" | sha256sum -c -
+          7z x -y "-o$QT_IFW" "$ARCHIVE" >/dev/null
+          QT_IFW_BIN="$QT_IFW/Tools/QtInstallerFramework/4.7/bin" \
+            packaging/linux/build-installer.sh "$QS_VERSION"
 
       - name: checksums
         run: |
           cd dist
           sha256sum Quickshort-Linux.AppImage* quickshort_amd64.deb \
-            > linux.sha256 2>/dev/null || sha256sum quickshort_amd64.deb > linux.sha256
+            > linux.sha256
 
       - uses: actions/upload-artifact@v4
         with:
           name: dist-linux
           path: dist/*
           if-no-files-found: error
-
-  publish:
-    runs-on: ubuntu-latest
-    needs: [macos, windows, linux]
-    env:
-      TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-          merge-multiple: true
-
-      - name: publish github release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VER: ${{ github.event.inputs.version || github.ref_name }}
-        run: |
-          TAG="${VER#v}"
-          case "$TAG" in
-            master|main)
-              echo "no version — push a v* tag or pass workflow_dispatch version"
-              exit 1 ;;
-          esac
-          gh release create "v$TAG" artifacts/* -R "${{ github.repository }}" \
-            --title "Quickshort v$TAG" --generate-notes
-
-      # optional: bump the homebrew-tap cask (needs TAP_TOKEN secret and a
-      # truongnat/homebrew-tap repo containing Casks/quickshort.rb)
-      - name: bump homebrew cask
-        env:
-          GH_TOKEN: ${{ secrets.TAP_TOKEN }}
-        run: |
-          [ -n "$TAP_TOKEN" ] || { echo "no TAP_TOKEN — skipping tap bump"; exit 0; }
-          VER="$(ls artifacts | sed -n 's/Quickshort-v\(.*\)-macos.zip/\1/p' | head -1)"
-          SHA="$(cut -d' ' -f1 artifacts/Quickshort-v$VER-macos.zip.sha256)"
-          git clone "https://x-access-token:${TAP_TOKEN}@github.com/truongnat/homebrew-tap" /tmp/tap
-          cd /tmp/tap
-          sed -i "s/version \".*\"/version \"$VER\"/; s/sha256 \".*\"/sha256 \"$SHA\"/" \
-            Casks/quickshort.rb
-          git -c user.name=devin -c user.email=devin@localhost commit \
-            -am "quickshort $VER" || exit 0
-          git push
