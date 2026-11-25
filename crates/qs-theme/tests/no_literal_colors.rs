@@ -56,10 +56,12 @@ fn has_hex(line: &str) -> bool {
     })
 }
 
-fn has_rgb_call(line: &str) -> bool {
+/// `from_line` is the file text starting at `line`, so a call whose first
+/// argument sits on the next line (rustfmt splits long calls) is still seen.
+fn has_rgb_call(line: &str, from_line: &str) -> bool {
     const PAT: &str = "Color32::from_rgb(";
     line.match_indices(PAT).any(|(idx, _)| {
-        line[idx + PAT.len()..]
+        from_line[idx + PAT.len()..]
             .trim_start()
             .as_bytes()
             .first()
@@ -75,8 +77,12 @@ fn no_hex_colour_literals_in_migrated_files() {
         let src = fs::read_to_string(crates.join(f))
             .unwrap_or_else(|e| panic!("MIGRATED entry {f} unreadable: {e}"));
         let body = src.split("#[cfg(test)]").next().unwrap();
-        for (n, l) in body.lines().enumerate() {
-            if (has_hex(l) || has_rgb_call(l))
+        let mut off = 0;
+        for (n, raw) in body.split_inclusive('\n').enumerate() {
+            let from_line = &body[off..];
+            off += raw.len();
+            let l = raw.trim_end_matches(['\n', '\r']);
+            if (has_hex(l) || has_rgb_call(l, from_line))
                 && !l.contains(ALLOW)
                 && !l.trim_start().starts_with("//")
             {
@@ -85,4 +91,13 @@ fn no_hex_colour_literals_in_migrated_files() {
         }
     }
     assert!(bad.is_empty(), "use qs_theme::pal() instead:\n{}", bad.join("\n"));
+}
+
+#[test]
+fn rgb_call_split_across_lines_is_caught() {
+    let src = "let c = Color32::from_rgb(\n    12, 34, 56,\n);\n";
+    let line = src.lines().next().unwrap();
+    assert!(has_rgb_call(line, src));
+    let computed = "Color32::from_rgb(\n    (rgb >> 16) as u8, 0, 0)";
+    assert!(!has_rgb_call(computed.lines().next().unwrap(), computed));
 }
