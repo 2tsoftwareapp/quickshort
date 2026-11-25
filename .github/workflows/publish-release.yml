@@ -92,17 +92,19 @@ jobs:
           sha256sum --strict -c Quickshort-Windows-Setup.exe.sha256
           sha256sum --strict -c linux.sha256
           # ed25519 detached signatures — the app verifies these over the
-          # embedded public key (qs-app/src/update.rs). Skipped until the
-          # QS_ED25519_KEY secret (PKCS8 PEM) is provisioned.
-          if [ -n "$QS_ED25519_KEY" ]; then
-            printf '%s\n' "$QS_ED25519_KEY" > "$RUNNER_TEMP/relkey.pem"
-            for asset in "Quickshort-$TAG-macos.zip" "Quickshort-$TAG-macos.dmg" \
-                Quickshort-Windows-Setup.exe Quickshort-Linux.AppImage quickshort_amd64.deb; do
-              openssl pkeyutl -sign -rawin -inkey "$RUNNER_TEMP/relkey.pem" -in "$asset" \
-                | base64 -w0 > "$asset.sig"
-            done
-            rm -f "$RUNNER_TEMP/relkey.pem"
+          # embedded public key (qs-app/src/update.rs) and refuses any update
+          # without one, so an unsigned release must never be published.
+          if [ -z "$QS_ED25519_KEY" ]; then
+            echo "QS_ED25519_KEY secret is missing; refusing to publish unsigned assets" >&2
+            exit 1
           fi
+          printf '%s\n' "$QS_ED25519_KEY" > "$RUNNER_TEMP/relkey.pem"
+          for asset in "Quickshort-$TAG-macos.zip" "Quickshort-$TAG-macos.dmg" \
+              Quickshort-Windows-Setup.exe Quickshort-Linux.AppImage quickshort_amd64.deb; do
+            openssl pkeyutl -sign -rawin -inkey "$RUNNER_TEMP/relkey.pem" -in "$asset" \
+              | base64 -w0 > "$asset.sig"
+          done
+          rm -f "$RUNNER_TEMP/relkey.pem"
           gh release create "$TAG" ./* --repo "$GITHUB_REPOSITORY" \
             --draft --verify-tag --title "Quickshort $TAG" --generate-notes
 

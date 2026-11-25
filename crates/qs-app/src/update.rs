@@ -114,37 +114,15 @@ fn download(url: &str, dest: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Sha256 the release claims for `asset_name`, pulled from its `.sha256`
-/// asset (`linux.sha256` is a multi-line file covering every linux asset).
-fn expected_sha(rel: &Release, asset_name: &str) -> Result<Option<String>> {
-    let sha_name = if cfg!(target_os = "linux") {
-        "linux.sha256".to_string()
-    } else {
-        format!("{asset_name}.sha256")
-    };
-    let Some((_, url)) = rel.asset(|n| n == sha_name) else {
-        return Ok(None);
-    };
-    let body: String = ureq::get(url)
-        .call()
-        .and_then(|mut r| r.body_mut().read_to_string())
-        .context("sha256 asset fetch failed")?;
-    Ok(body
-        .lines()
-        .find(|l| l.contains(asset_name))
-        .and_then(|l| l.split_whitespace().next())
-        .map(str::to_string))
-}
-
 /// Ed25519 public key the release workflow signs every asset with
 /// (`<asset>.sig` sidecars, base64 detached signature over the file).
 /// A compromised release can't forge a matching signature — unlike the
 /// `.sha256` sidecars, which travel the same channel as the payload and
-/// only catch corruption. Empty disables signature checking.
+/// only catch corruption.
 const SIGNING_PUB_B64: &str = "f/ixPPD/EcyCrWSTGr8iTiaNT56p7+4UWffiYt6eg54=";
 
 /// Base64 detached ed25519 signature for `asset_name`, from its `.sig`
-/// asset. `None` when the release predates asset signing.
+/// asset. `None` when the release ships no signature for it.
 fn expected_sig(rel: &Release, asset_name: &str) -> Result<Option<String>> {
     let sig_name = format!("{asset_name}.sig");
     let Some((_, url)) = rel.asset(|n| n == sig_name) else {
@@ -177,24 +155,13 @@ fn verify_sig_with(pub_b64: &str, file: &Path, sig_b64: &str) -> Result<()> {
         .context("signature verification failed")
 }
 
-/// Check `file` against the release's proofs: the ed25519 `.sig` asset
-/// when present, else the `.sha256` sidecar. Returns whether any proof
-/// was checked — callers that require one bail on `false`.
-fn verify(rel: &Release, file: &Path, asset_name: &str) -> Result<bool> {
-    if !SIGNING_PUB_B64.is_empty() {
-        if let Some(sig) = expected_sig(rel, asset_name)? {
-            verify_sig_with(SIGNING_PUB_B64, file, &sig)?;
-            return Ok(true);
-        }
-    }
-    if let Some(want) = expected_sha(rel, asset_name)? {
-        let got = sha256(file)?;
-        if !want.is_empty() && want != got {
-            bail!("checksum mismatch: got {got}, want {want}");
-        }
-        return Ok(true);
-    }
-    Ok(false)
+/// Check `file` against the release's ed25519 `.sig` asset. A release
+/// without one is refused: the `.sha256` sidecars ship through the same
+/// channel as the payload, so whoever can swap the payload can swap them.
+fn verify(rel: &Release, file: &Path, asset_name: &str) -> Result<()> {
+    let sig = expected_sig(rel, asset_name)?
+        .with_context(|| format!("release has no signature for {asset_name}"))?;
+    verify_sig_with(SIGNING_PUB_B64, file, &sig)
 }
 
 /// Download the release, swap it over the running `.app`, relaunch.
@@ -278,9 +245,7 @@ pub fn install(rel: &Release) -> Result<PathBuf> {
         .context("release has no linux .deb asset")?;
     let deb = tmp.path().join(name);
     download(url, &deb)?;
-    if !verify(rel, &deb, name)? {
-        bail!("release has no signature or checksum for {name}");
-    }
+    verify(rel, &deb, name)?;
     let status = std::process::Command::new("/usr/bin/pkexec")
         .args(["/usr/bin/apt-get", "--yes", "--no-remove", "install"])
         .arg(&deb)
@@ -350,46 +315,6 @@ fn current_bundle() -> Option<PathBuf> {
 }
 
 #[cfg(target_os = "macos")]
-fn sha256(p: &Path) -> Result<String> {
-    let out = std::process::Command::new("/usr/bin/shasum")
-        .arg("-a")
-        .arg("256")
-        .arg(p)
-        .output()?;
-    first_word(&out.stdout)
-}
-
-#[cfg(target_os = "linux")]
-fn sha256(p: &Path) -> Result<String> {
-    let out = std::process::Command::new("sha256sum").arg(p).output()?;
-    first_word(&out.stdout)
-}
-
-#[cfg(target_os = "windows")]
-fn sha256(p: &Path) -> Result<String> {
-    // certutil prints "<hex>" on its second output line
-    let out = std::process::Command::new("certutil")
-        .args(["-hashfile"])
-        .arg(p)
-        .arg("SHA256")
-        .output()?;
-    let text = String::from_utf8(out.stdout)?;
-    text.lines()
-        .nth(1)
-        .map(|l| l.replace(' ', "").to_lowercase())
-        .context("certutil gave no hash")
-}
-
-#[cfg(unix)]
-fn first_word(stdout: &[u8]) -> Result<String> {
-    String::from_utf8(stdout.to_vec())?
-        .split_whitespace()
-        .next()
-        .map(str::to_string)
-        .context("sha256 gave no output")
-}
-
-#[cfg(target_os = "macos")]
 fn unix_ts() -> Result<u64> {
     Ok(std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
@@ -436,6 +361,22 @@ mod tests {
         verify_sig_with(&pub_b64, &f, &sig_b64).unwrap();
         std::fs::write(&f, b"tampered payload").unwrap();
         assert!(verify_sig_with(&pub_b64, &f, &sig_b64).is_err());
+    }
+
+    #[test]
+    fn release_without_signature_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("quickshort_amd64.deb");
+        std::fs::write(&f, b"payload").unwrap();
+        let rel = Release {
+            version: "9.9.9".into(),
+            assets: vec![
+                ("quickshort_amd64.deb".into(), "https://invalid/deb".into()),
+                ("linux.sha256".into(), "https://invalid/sha".into()),
+            ],
+        };
+        let err = verify(&rel, &f, "quickshort_amd64.deb").unwrap_err();
+        assert!(err.to_string().contains("no signature"), "{err:#}");
     }
 
     /// Live check — `cargo test -p qs-app -- --ignored`
