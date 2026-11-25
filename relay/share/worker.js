@@ -148,25 +148,13 @@ function touch(env, ctx, id, meta) {
   ctx.waitUntil(env.SHARE.put(metaKey(id), JSON.stringify(meta), { expirationTtl: META_TTL_S }));
 }
 
-/// Raw bytes for og:image, embeds and the download button. R2 first;
-/// legacy KV images (pre-R2 uploads, `{ext}:{id}`) drain via their
-/// original TTL — serving them keeps old links working until expiry.
+/// Raw bytes for og:image, embeds and the download button.
 async function serveRaw({ id, ext }, env, ctx) {
-  const meta = await env.SHARE.get(metaKey(id)).then((v) => v && JSON.parse(v));
   const obj = await env.BLOB.get(blobKey(id, ext));
-  if (obj) {
-    if (meta) touch(env, ctx, id, meta);
-    return new Response(obj.body, {
-      headers: {
-        "content-type": `image/${ext}`,
-        "cache-control": "public, max-age=86400",
-        "x-content-type-options": "nosniff",
-      },
-    });
-  }
-  const legacy = await env.SHARE.get(`${ext}:${id}`, "arrayBuffer");
-  if (!legacy) return new Response("gone", { status: 404 });
-  return new Response(legacy, {
+  if (!obj) return new Response("gone", { status: 404 });
+  const meta = await env.SHARE.get(metaKey(id)).then((v) => v && JSON.parse(v));
+  if (meta) touch(env, ctx, id, meta);
+  return new Response(obj.body, {
     headers: {
       "content-type": `image/${ext}`,
       "cache-control": "public, max-age=86400",
@@ -181,21 +169,9 @@ async function serveRaw({ id, ext }, env, ctx) {
 async function servePage(url, env, ctx) {
   const id = url.pathname.slice(3);
   const meta = await env.SHARE.get(metaKey(id)).then((v) => v && JSON.parse(v));
-  if (!meta) {
-    // legacy KV image: no meta — still serve a page so the link works
-    const legacy = await hasLegacy(env, id);
-    if (!legacy) return new Response("gone", { status: 404 });
-    return page(url, id, legacy);
-  }
+  if (!meta) return new Response("gone", { status: 404 });
   touch(env, ctx, id, meta);
   return page(url, id, meta.ext);
-}
-
-async function hasLegacy(env, id) {
-  for (const ext of Object.values(TYPES)) {
-    if (await env.SHARE.get(`${ext}:${id}`)) return ext;
-  }
-  return null;
 }
 
 function page(url, id, ext) {
@@ -260,16 +236,9 @@ async function revoke(req, { id, ext }, env, ctx) {
   const key = req.headers.get("x-delete-key") || "";
   if (!/^[a-f0-9]{32}$/.test(key)) return err(403, "bad delete key");
   const meta = await env.SHARE.get(metaKey(id)).then((v) => v && JSON.parse(v));
-  if (meta) {
-    if ((await sha256hex(key)) !== meta.dk) return err(403, "bad delete key");
-    await Promise.all([env.BLOB.delete(blobKey(id, ext)), env.SHARE.delete(metaKey(id))]);
-    return Response.json({ ok: true });
-  }
-  // legacy KV image: metadata carried the delete-key hash on the object
-  const { metadata } = await env.SHARE.getWithMetadata(`${ext}:${id}`);
-  if (!metadata?.dk) return new Response("gone", { status: 404 });
-  if ((await sha256hex(key)) !== metadata.dk) return err(403, "bad delete key");
-  await env.SHARE.delete(`${ext}:${id}`);
+  if (!meta) return new Response("gone", { status: 404 });
+  if ((await sha256hex(key)) !== meta.dk) return err(403, "bad delete key");
+  await Promise.all([env.BLOB.delete(blobKey(id, ext)), env.SHARE.delete(metaKey(id))]);
   return Response.json({ ok: true });
 }
 
