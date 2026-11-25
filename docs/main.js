@@ -132,7 +132,7 @@ document.querySelectorAll(".copy-btn").forEach((btn) => {
       status.classList.add("ok");
       form.reset();
     } catch {
-      status.innerHTML = `<a href="https://github.com/truongnat/quickshort/issues/new?labels=enhancement" target="_blank" rel="noopener">${QS_T("req.fail")}</a>`;
+      status.innerHTML = `<a href="https://github.com/2tsoftwareapp/quickshort/issues/new?labels=enhancement" target="_blank" rel="noopener">${QS_T("req.fail")}</a>`;
       status.classList.add("err");
     }
   });
