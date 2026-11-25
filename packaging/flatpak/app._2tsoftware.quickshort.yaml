@@ -140,12 +140,13 @@ modules:
         /app/share/applications/app._2tsoftware.quickshort.desktop
       - sed -i 's/^Icon=quickshort$/Icon=app._2tsoftware.quickshort/'
         /app/share/applications/app._2tsoftware.quickshort.desktop
-      - install -Dm644 docs/assets/icon.png
-        /app/share/icons/hicolor/1024x1024/apps/app._2tsoftware.quickshort.png
+      # flathub caps icons at 512px — icon-512.png is committed alongside
+      - install -Dm644 packaging/linux/icon-512.png
+        /app/share/icons/hicolor/512x512/apps/app._2tsoftware.quickshort.png
       - install -Dm644 packaging/flatpak/app._2tsoftware.quickshort.metainfo.xml
         /app/share/metainfo/app._2tsoftware.quickshort.metainfo.xml
     sources:
       - type: git
         url: https://github.com/2tsoftwareapp/quickshort.git
-        commit: 97da3727767e53a3c008e73e363ab6d612c7eed3
+        commit: 513e4449ea56170d98eefa7fdff677efd45d7c92
       - cargo-sources.json
