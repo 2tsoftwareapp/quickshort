@@ -1,16 +1,18 @@
 # Flatpak manifest — buildable with:
-#   flatpak-builder --force-clean build-dir packaging/flatpak/app.2tsoftware.quickshort.yaml
+#   flatpak-builder --force-clean build-dir packaging/flatpak/app._2tsoftware.quickshort.yaml
 # Flathub submission: move this file + cargo-sources.json + metainfo.xml + the
-# shared-modules submodule reference into a flathub/app.2tsoftware.quickshort repo.
+# shared-modules submodule reference into a flathub/app._2tsoftware.quickshort repo.
 #
 # cargo-sources.json is generated from the workspace lockfile:
 #   flatpak-cargo-generator -o packaging/flatpak/cargo-sources.json Cargo.lock
-app-id: app.2tsoftware.quickshort
+app-id: app._2tsoftware.quickshort
 runtime: org.gnome.Platform
-runtime-version: "48"
+runtime-version: "51"
 sdk: org.gnome.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable
+  # libspa-sys runs bindgen at build time -> needs libclang
+  - org.freedesktop.Sdk.Extension.llvm23
 command: quickshort
 finish-args:
   - --share=ipc
@@ -47,6 +49,8 @@ modules:
   # actions.rs shells out to wl-copy for clipboard on Wayland
   - name: wl-clipboard
     buildsystem: meson
+    config-opts:
+      - -Dfishcompletiondir=/app/share/fish/vendor_completions.d
     sources:
       - type: archive
         url: https://github.com/bugaevc/wl-clipboard/archive/refs/tags/v2.3.0.tar.gz
@@ -54,9 +58,9 @@ modules:
 
   # OCR: record.rs-style shell-out to the tesseract binary (eng+vie traineddata)
   - name: leptonica
-    buildsystem: cmake-ninja
+    buildsystem: autotools
     config-opts:
-      - -DBUILD_PROG=OFF
+      - --disable-programs
     sources:
       - type: archive
         url: https://github.com/DanBloomberg/leptonica/releases/download/1.87.0/leptonica-1.87.0.tar.gz
@@ -64,20 +68,25 @@ modules:
 
   - name: tesseract
     buildsystem: cmake-ninja
+    builddir: true
     config-opts:
       - -DBUILD_TRAINING_TOOLS=OFF
     sources:
       - type: archive
         url: https://github.com/tesseract-ocr/tesseract/archive/refs/tags/5.5.4.tar.gz
         sha256: a8dbf8b8c8ee427ff6ad1d99116502feaf59440af1adb893caf60a6576826cf4
+
+  - name: tessdata
+    buildsystem: simple
+    build-commands:
+      - install -Dm644 eng.traineddata vie.traineddata -t /app/share/tessdata/
+    sources:
       - type: file
         url: https://github.com/tesseract-ocr/tessdata_fast/raw/main/eng.traineddata
         sha256: 7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2
       - type: file
         url: https://github.com/tesseract-ocr/tessdata_fast/raw/main/vie.traineddata
         sha256: 79df64caf7bcfb2a27df5042ecb6121e196eada34da774956995747636d5bfa1
-    post-install:
-      - install -Dm644 eng.traineddata vie.traineddata -t /app/share/tessdata/
 
   # screen recording: record.rs pipes rgba frames into `ffmpeg ... -c:v libx264`
   - name: x264
@@ -119,23 +128,24 @@ modules:
   - name: quickshort
     buildsystem: simple
     build-options:
-      append-path: /usr/lib/sdk/rust-stable/bin
+      append-path: /usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/llvm23/bin
       env:
         CARGO_HOME: /run/build/quickshort/cargo
+        LIBCLANG_PATH: /usr/lib/sdk/llvm23/lib
     build-commands:
       - cargo --offline build --release --locked -p qs-app -p qs-editor
       - install -Dm755 target/release/quickshort /app/bin/quickshort
       - install -Dm755 target/release/qs-editor /app/bin/qs-editor
       - install -Dm644 packaging/linux/quickshort.desktop
-        /app/share/applications/app.2tsoftware.quickshort.desktop
-      - sed -i 's/^Icon=quickshort$/Icon=app.2tsoftware.quickshort/'
-        /app/share/applications/app.2tsoftware.quickshort.desktop
+        /app/share/applications/app._2tsoftware.quickshort.desktop
+      - sed -i 's/^Icon=quickshort$/Icon=app._2tsoftware.quickshort/'
+        /app/share/applications/app._2tsoftware.quickshort.desktop
       - install -Dm644 docs/assets/icon.png
-        /app/share/icons/hicolor/1024x1024/apps/app.2tsoftware.quickshort.png
-      - install -Dm644 packaging/flatpak/app.2tsoftware.quickshort.metainfo.xml
-        /app/share/metainfo/app.2tsoftware.quickshort.metainfo.xml
+        /app/share/icons/hicolor/1024x1024/apps/app._2tsoftware.quickshort.png
+      - install -Dm644 packaging/flatpak/app._2tsoftware.quickshort.metainfo.xml
+        /app/share/metainfo/app._2tsoftware.quickshort.metainfo.xml
     sources:
       - type: git
         url: https://github.com/2tsoftwareapp/quickshort.git
-        commit: 3426cab8d6f3074efd7b60d713b8b1eab94cc856
+        commit: 97da3727767e53a3c008e73e363ab6d612c7eed3
       - cargo-sources.json

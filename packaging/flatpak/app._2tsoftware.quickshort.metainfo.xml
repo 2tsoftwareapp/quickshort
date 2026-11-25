@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>app.2tsoftware.quickshort</id>
+  <id>app._2tsoftware.quickshort</id>
   <name>Quickshort</name>
   <summary>Region screenshot tool with annotations and OCR</summary>
   <metadata_license>MIT</metadata_license>
@@ -8,7 +8,7 @@
   <developer>
     <name>truongdq</name>
   </developer>
-  <launchable type="desktop-id">app.2tsoftware.quickshort.desktop</launchable>
+  <launchable type="desktop-id">app._2tsoftware.quickshort.desktop</launchable>
   <description>
     <p>
       Quickshort captures screen regions, windows and full monitors at native
