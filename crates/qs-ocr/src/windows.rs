@@ -10,25 +10,6 @@ use windows::Graphics::Imaging::{BitmapPixelFormat, SoftwareBitmap};
 use windows::Media::Ocr::{OcrEngine, OcrResult};
 use windows::Storage::Streams::DataWriter;
 
-/// tesseract-style codes -> BCP-47 tags the OS language packs use.
-/// Mirrors macos.rs; unknown codes are skipped.
-fn bcp47(code: &str) -> Option<&'static str> {
-    Some(match code.trim() {
-        "eng" | "en" | "en-US" => "en-US",
-        "vie" | "vi" | "vi-VN" => "vi-VN",
-        "jpn" | "ja" | "ja-JP" => "ja-JP",
-        "kor" | "ko" | "ko-KR" => "ko-KR",
-        "chi_sim" | "zh-Hans" | "zh-CN" => "zh-Hans",
-        "chi_tra" | "zh-Hant" | "zh-TW" => "zh-Hant",
-        "fra" | "fr" | "fr-FR" => "fr-FR",
-        "deu" | "de" | "de-DE" => "de-DE",
-        "spa" | "es" | "es-ES" => "es-ES",
-        "tha" | "th" | "th-TH" => "th-TH",
-        "ind" | "id" | "id-ID" => "id-ID",
-        _ => return None,
-    })
-}
-
 pub fn extract(img: &RgbaImage, lang: &str) -> Result<String> {
     let res = recognize(img, lang)?;
     Ok(res.Text()?.to_string_lossy())
@@ -104,7 +85,7 @@ fn recognize(img: &RgbaImage, lang: &str) -> Result<OcrResult> {
     // OcrEngine is single-language — the first listed code wins
     let tag = lang
         .split(|c| c == '+' || c == ',' || c == ' ')
-        .find_map(bcp47);
+        .find_map(crate::bcp47);
     let engine = match tag {
         Some(tag) => {
             let l = Language::CreateLanguage(&HSTRING::from(tag))?;

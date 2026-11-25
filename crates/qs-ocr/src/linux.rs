@@ -17,15 +17,17 @@ pub fn extract(img: &RgbaImage, lang: &str) -> Result<String> {
     } else {
         lang.to_string()
     };
-    run_tesseract(&png, &["-l", &lang])
+    run_tesseract(&png, &["-l", &lang], &[])
 }
 
-/// Run tesseract with extra args between `stdin stdout`; returns stdout.
-/// `timeout` wrapper so a pathological frame can never hang the action.
-fn run_tesseract(png: &[u8], extra: &[&str]) -> Result<String> {
+/// Run tesseract with args before `stdin stdout` and config names after
+/// it (e.g. `tsv`); returns stdout. `timeout` wrapper so a pathological
+/// frame can never hang the action.
+fn run_tesseract(png: &[u8], extra: &[&str], configs: &[&str]) -> Result<String> {
     let mut args = vec!["60", "tesseract"];
     args.extend_from_slice(extra);
     args.extend_from_slice(&["stdin", "stdout"]);
+    args.extend_from_slice(configs);
     let mut child = Command::new("timeout")
         .args(&args)
         .stdin(Stdio::piped())
@@ -77,7 +79,7 @@ pub fn installed() -> Vec<String> {
 /// One OSD pass: returns the dominant script name ("Latin", "Han",
 /// "Japanese", ...) or None when the crop is too small to tell.
 fn detect_script(png: &[u8]) -> Option<String> {
-    let out = run_tesseract(png, &["-l", "osd", "--psm", "0"]).ok()?;
+    let out = run_tesseract(png, &["-l", "osd", "--psm", "0"], &[]).ok()?;
     out.lines().find_map(|l| {
         l.strip_prefix("Script:")
             .map(|s| s.trim().to_string())
@@ -132,36 +134,7 @@ fn detect_lang(png: &[u8]) -> Result<String> {
     })
 }
 
-/// tesseract `tsv` output → line geometry. Same `timeout` wrapper as the text
-/// path so a pathological frame can never hang the action.
-fn run_tesseract_tsv(png: &[u8], lang: &str) -> Result<String> {
-    let mut child = Command::new("timeout")
-        .args(["60", "tesseract", "-l", lang, "stdin", "stdout", "tsv"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context("tesseract not found — `sudo apt install tesseract-ocr`")?;
 
-    let png = png.to_vec();
-    let mut stdin = child.stdin.take().unwrap();
-    let writer = std::thread::spawn(move || stdin.write_all(&png));
-    let out = child.wait_with_output()?;
-    let _ = writer.join();
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        let stderr = stderr.trim();
-        anyhow::bail!(
-            "tesseract tsv failed{}",
-            if stderr.is_empty() {
-                format!(" ({})", out.status)
-            } else {
-                format!(": {stderr}")
-            }
-        );
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
-}
 
 /// Text with line geometry, from the same engine and language resolution as
 /// [`extract`].
@@ -181,7 +154,7 @@ pub fn extract_lines(img: &RgbaImage, lang: &str) -> Result<Vec<crate::OcrLine>>
     } else {
         lang.to_string()
     };
-    let tsv = run_tesseract_tsv(&png, &lang)?;
+    let tsv = run_tesseract(&png, &["-l", &lang], &["tsv"])?;
     let mut lines = crate::parse_tesseract_tsv(&tsv);
     // tesseract splits CJK per glyph; `tidy` drops the artificial spaces.
     for line in &mut lines {

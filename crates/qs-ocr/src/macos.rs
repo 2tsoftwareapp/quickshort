@@ -11,25 +11,6 @@ use objc2_vision::{
     VNRequest, VNRequestTextRecognitionLevel,
 };
 
-/// tesseract-style codes -> BCP-47 tags Vision understands.
-/// Unknown codes are skipped rather than failing the request.
-fn bcp47(code: &str) -> Option<&'static str> {
-    Some(match code.trim() {
-        "eng" | "en" | "en-US" => "en-US",
-        "vie" | "vi" | "vi-VN" => "vi-VN",
-        "jpn" | "ja" | "ja-JP" => "ja-JP",
-        "kor" | "ko" | "ko-KR" => "ko-KR",
-        "chi_sim" | "zh-Hans" | "zh-CN" => "zh-Hans",
-        "chi_tra" | "zh-Hant" | "zh-TW" => "zh-Hant",
-        "fra" | "fr" | "fr-FR" => "fr-FR",
-        "deu" | "de" | "de-DE" => "de-DE",
-        "spa" | "es" | "es-ES" => "es-ES",
-        "tha" | "th" | "th-TH" => "th-TH",
-        "ind" | "id" | "id-ID" => "id-ID",
-        _ => return None,
-    })
-}
-
 /// Text only — the lines joined by `\n`, exactly the texts `extract_lines`
 /// returns for the same image so the two cannot drift.
 pub fn extract(img: &RgbaImage, lang: &str) -> Result<String> {
@@ -60,7 +41,7 @@ pub fn extract_lines(img: &RgbaImage, lang: &str) -> Result<Vec<crate::OcrLine>>
     // so an explicit pick must turn detection off.
     let explicit: Vec<_> = lang
         .split(['+', ',', ' '])
-        .filter_map(bcp47)
+        .filter_map(crate::bcp47)
         .collect();
     if explicit.is_empty() {
         req.setAutomaticallyDetectsLanguage(true);

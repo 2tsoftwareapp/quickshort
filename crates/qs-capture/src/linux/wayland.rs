@@ -569,6 +569,9 @@ fn drain_frame(stream: &pw::stream::StreamRef, w: usize, h: usize) -> Option<Vec
     let mut out = None;
     for data in buf.datas_mut() {
         let chunk = data.chunk();
+        // A negative stride means the buffer is bottom-up: read the rows
+        // back to front instead of silently emitting a flipped frame.
+        let flipped = chunk.stride() < 0;
         let (off, len, stride) = (
             chunk.offset() as usize,
             chunk.size() as usize,
@@ -612,7 +615,7 @@ fn drain_frame(stream: &pw::stream::StreamRef, w: usize, h: usize) -> Option<Vec
             let s = &raw[off..off + len];
             let mut f = vec![0u8; w * h * 4];
             for y in 0..h {
-                let si = y * stride;
+                let si = if flipped { (h - 1 - y) * stride } else { y * stride };
                 if si + w * 4 > s.len() {
                     break;
                 }
