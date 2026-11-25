@@ -658,23 +658,36 @@ pub fn open_editor(p: &Path) {
 
     let cfg = crate::config::Config::load();
     let accent_hex = format!("{:06x}", cfg.accent_rgb());
+    let spawn = |bin: &Path| {
+        std::process::Command::new(bin)
+            .arg(p)
+            .env("QS_THEME", &cfg.theme)
+            .env("QS_ACCENT", &accent_hex)
+            .spawn()
+    };
     if let Some(editor) = sibling_editor {
-        let mut cmd = std::process::Command::new(editor);
-        cmd.arg(p)
-            .env("QS_THEME", &cfg.theme)
-            .env("QS_ACCENT", &accent_hex);
-        if let Err(e) = cmd.spawn() {
-            log::warn!("failed to spawn qs-editor: {e}; falling back to open_path");
-            open_path(p);
+        if let Err(e) = spawn(&editor) {
+            warn_editor_unavailable(p, &format!("failed to launch qs-editor: {e}"));
         }
-    } else {
-        // Fallback: try PATH or default association
-        let mut cmd = std::process::Command::new("qs-editor");
-        cmd.arg(p)
-            .env("QS_THEME", &cfg.theme)
-            .env("QS_ACCENT", &accent_hex);
-        if cmd.spawn().is_err() {
-            open_path(p);
-        }
+    } else if spawn(Path::new("qs-editor")).is_err() {
+        warn_editor_unavailable(p, "qs-editor not found next to the app or on PATH");
     }
+}
+
+/// Tell the user the editor can't run before handing the file to the OS
+/// default handler — a missing qs-editor must not look like a silent no-op.
+fn warn_editor_unavailable(p: &Path, reason: &str) {
+    log::warn!("{reason}; falling back to open_path");
+    let msg = format!("Quickshort Editor isn't available ({reason}). Opening with the default app instead.");
+    #[cfg(target_os = "linux")]
+    crate::linux_notify::send(&msg, false);
+    // rfd dialogs must run on the main thread (NSAlert on macOS); callers
+    // are UI event handlers, so showing inline is correct.
+    #[cfg(not(target_os = "linux"))]
+    rfd::MessageDialog::new()
+        .set_title("Quickshort Editor")
+        .set_description(msg)
+        .set_level(rfd::MessageLevel::Warning)
+        .show();
+    open_path(p);
 }
