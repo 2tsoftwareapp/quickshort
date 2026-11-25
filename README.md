@@ -1,85 +1,66 @@
-<div align="center">
-  <img src="assets/icon.png" width="120" alt="Quickshort">
-  <h1>Quickshort</h1>
-  <p><strong>Region screenshots with annotations and OCR — in Rust, native all the way down.</strong></p>
-  <p>
-    <a href="https://github.com/2tsoftwareapp/quickshort/releases"><img src="https://img.shields.io/github/v/release/2tsoftwareapp/quickshort?include_prereleases&label=release" alt="Release"></a>
-    <a href="https://github.com/2tsoftwareapp/quickshort/actions/workflows/release.yml"><img src="https://github.com/2tsoftwareapp/quickshort/actions/workflows/release.yml/badge.svg" alt="Build"></a>
-    <img src="https://img.shields.io/badge/platform-macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-blue" alt="Platform">
-  </p>
-</div>
+# Quickshort
 
-<div align="center">
-  <img src="assets/screenshot.png" width="640" alt="Quickshort overlay: region selection with annotation toolbar">
-</div>
+**Region screenshots with annotations and OCR — native Rust, all the way down.**
 
-One flow: **capture → quick look → (optional) edit**. Press the global
-hotkey, drag a region — even across monitors — mark it up right on the
-overlay, then press **Done**: the PNG is saved *and* on your clipboard.
-Need more? **Edit** opens the same capture in the editor with every
-annotation still an editable layer. No Electron, no runtime, no model
-downloads.
+[![Release](https://img.shields.io/github/v/release/2tsoftwareapp/quickshort?include_prereleases&label=release)](https://github.com/2tsoftwareapp/quickshort/releases)
+[![Build](https://github.com/2tsoftwareapp/quickshort/actions/workflows/release.yml/badge.svg)](https://github.com/2tsoftwareapp/quickshort/actions/workflows/release.yml)
+![Platform](https://img.shields.io/badge/platform-macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-blue)
+
+One flow: **capture → quick look → (optional) edit**. Press the global hotkey,
+drag a region — even across monitors — mark it up right on the overlay, then
+press **Done**: the PNG is saved *and* on your clipboard. Need more? **Edit**
+opens the same capture in the editor with every annotation still an editable
+layer. No Electron, no runtime, no model downloads.
 
 ## Features
 
-- **One capture flow** — no Quick/Editor mode to pick. Done (Enter) saves
-  and copies; Edit (`E`) continues in the editor; Esc cancels. On Linux,
-  Quickshort's own notifications are closed before the overlay opens, so
-  they never end up in the shot
-- **Multi-monitor selection** — drag across monitor boundaries; per-monitor
-  crops are stitched through a virtual coordinate space
-- **Full physical resolution** — Retina and mixed-DPI displays are captured
-  and stitched at native framebuffer pixels, never downsampled
-- **Annotations** — rect, arrow, numbered step badges (①②③), text, blur
-  on the main row; select, pen, ellipse, highlight behind **⋯**; undo/redo, stroke sizes, color palette — rendered at output resolution and
-  confined to the captured region. Text gets real font sizes (12–48), a bold
-  toggle, a proper editing box (arrows, selection, ⌘A) and Vietnamese IME
-  input. Shapes and text stay editable blocks: the Select tool picks, drags
-  and deletes them. The overlay re-arms the tool you used last
-- **Editor** — opens captures as `.qsdoc` documents with layers, an
-  Inspector (style, Canvas, Align cards), Library inside the canvas, a
-  pinned Find bar, an Export dropdown (PNG/JPEG/WebP, Copy image, Print)
-  and undoable Flatten/Trash instead of confirmation dialogs. `⌘N` starts a
-  new capture, the image refits as the window resizes
-- **Evidence sessions** — for manual testers: tray → *Start Evidence
-  Session*, then capture as usual. Each Done is saved as `TC-001_01.png`,
-  `TC-001_02.png`… in an `evidence-<ts>` folder (still copied too); *Next
-  Test Case* stitches the case into one tall `TC-001_all.png` and moves to
-  TC-002; *End* stitches and opens the folder
-- **Link sharing** — one click uploads the shot as WebP (q95, roughly
-  half a PNG's size) to a Cloudflare Worker (`relay/share/`) and copies
-  an unguessable URL that expires in 3 days. No account, no local
-  server, and the process does not need to stay alive. Opt in to
-  **Google Drive** instead (tray → *Share Links via Google Drive*): you sign
-  in with your own Google account once, the image goes to a `Quickshort`
-  folder in *your* Drive with an anyone-with-the-link URL, and sharing
-  again revokes it. Scope is `drive.file` only — the app sees nothing but
-  the files it created
-- **OCR with per-OS engines** — Vision `VNRecognizeTextRequest` on macOS,
-  `Windows.Media.Ocr` on Windows, Tesseract on Linux with script
-  auto-detection (`ocr_lang = "auto"`, OSD pass picks eng/jpn/vie/…);
-  nothing ships in the binary
-- **Screen recording** — `⌘R` records the selected region to mp4 at 15fps:
-  PipeWire push on GNOME/portal Wayland sessions, re-capture polling on
-  Hyprland/wlroots, X11, macOS (ScreenCaptureKit) and Windows (GDI).
-  Encoding runs on a worker through `ffmpeg` — slow
-  encodes drop frames instead of shortening the clip (needs `ffmpeg` on
-  PATH; installers surface it)
-- **Scrolling capture** — `⌘G` re-grabs the region while you scroll and
-  stitches the frames into one tall image — docs, threads, chat logs
-- **Pin & beautify** — Pin floats a capture as an always-on-top reference
-  window; Beautify mounts it on a soft gradient backdrop with rounded
-  corners and a drop shadow
-- **Resident tray app** — menu-bar icon, global hotkey, launch at login,
-  recent captures, auto-update
-- **macOS 26 look** — neutral greys, Apple's dark-mode accent colors,
-  concentric corner radii, a capsule capture HUD, floating Editor toolbar
-  groups and inset glass panels; SF Pro on macOS, Be Vietnam Pro elsewhere
-- **Settings window** — paged preferences (Capture, General, Shortcuts,
-  Appearance, Storage, About): rebindable ⌘-action keys, accent color,
-  retention policy for old captures, one-click update install
-- **One-shot CLI** — `quickshort --capture` fits into scripts and window
-  manager keybinds
+### Capture
+
+| Capability | Details |
+|---|---|
+| Region capture | One flow, no mode picker. Done (`Enter`) saves + copies; Edit (`E`) continues in the editor; `Esc` cancels |
+| Multi-monitor selection | Drag across monitor boundaries; per-monitor crops stitched through a virtual coordinate space |
+| Full physical resolution | Retina and mixed-DPI displays captured and stitched at native framebuffer pixels — never downsampled |
+| Scrolling capture | `⌘G` re-grabs the region while you scroll and stitches frames into one tall image — docs, threads, chat logs |
+| Screen recording | `⌘R` records the region to mp4 at 15fps via PipeWire push (GNOME/portal Wayland) or re-capture polling; encodes through `ffmpeg`, slow encodes drop frames instead of shortening the clip |
+| Native Wayland capture | `zwlr_screencopy` in-process on Hyprland/Sway/Niri/River/labwc — instant, no consent dialog; mutter ScreenCast on GNOME; portal only as last resort |
+
+### Markup
+
+| Capability | Details |
+|---|---|
+| Annotations | Rect, arrow, numbered step badges (①②③), text, blur on the main row; select, pen, ellipse, highlight behind **⋯** |
+| Text tool | Real font sizes (12–48), bold toggle, proper editing box (arrows, selection, `⌘A`), Vietnamese IME input |
+| Editable blocks | Shapes and text stay live objects — the Select tool picks, drags, deletes; the overlay re-arms your last tool |
+| Rendering | Undo/redo, stroke sizes, color palette — rendered at output resolution, confined to the captured region |
+
+### Workflow
+
+| Capability | Details |
+|---|---|
+| Editor | `.qsdoc` documents with layers, Inspector (style, Canvas, Align), in-canvas Library, pinned Find bar with word-level OCR highlights, Export dropdown (PNG/JPEG/WebP, Copy, Print), undoable Flatten/Trash |
+| Evidence sessions | For manual testers: tray → *Start Evidence Session* — each Done saves `TC-001_01.png`, `TC-001_02.png`…; *Next Test Case* stitches the case into one tall `TC-001_all.png` |
+| Link sharing | One click uploads WebP (q95, ~half a PNG) to a Cloudflare Worker and copies an unguessable URL that expires in 3 days — no account, no server to keep alive |
+| Google Drive | Opt-in alternative: images land in a `Quickshort` folder in *your* Drive (`drive.file` scope only), share again to revoke |
+| OCR | Vision on macOS, `Windows.Media.Ocr` on Windows, Tesseract on Linux with script auto-detection; nothing ships in the binary |
+| Pin & beautify | Pin floats a capture as an always-on-top reference; Beautify mounts it on a soft gradient backdrop with rounded corners and a drop shadow |
+
+### Desktop integration
+
+| Capability | Details |
+|---|---|
+| Resident tray app | Menu-bar icon, global hotkey, launch at login, recent captures, auto-update |
+| Global hotkeys, per desktop | GNOME keybinding, swaymsg, hyprctl, GlobalShortcuts portal (KDE + probed on other Wayland), `XGrabKey` on X11 |
+| Notifications | Native `org.freedesktop.Notifications` with an Edit action — follows the desktop's position/timeout/DND settings |
+| Settings window | Paged preferences: Capture, General, Shortcuts, Appearance, Storage, About — rebindable keys, accent color, retention policy, one-click update install |
+| One-shot CLI | `quickshort --capture` fits scripts and window-manager keybinds; relays to the resident app over a locked-down unix socket |
+| Signed updates | Release assets carry `<asset>.sig` ed25519 sidecars verified against a public key embedded in the binary |
+
+### Look
+
+Neutral greys, dark-mode accent colors, concentric corner radii, a capsule
+capture HUD, floating Editor toolbar groups and inset glass panels — SF Pro on
+macOS, Be Vietnam Pro elsewhere.
 
 ## Install
 
@@ -109,8 +90,7 @@ Required permissions (System Settings → Privacy & Security):
 **Updates** — the app checks GitHub Releases once a day in the background;
 the tray item becomes *Update to vX — Restart to Install*. Or: tray menu →
 **Check for Updates…**, or `brew upgrade --cask quickshort`. Downloads are
-verified against an ed25519 signature the release workflow writes as a
-`<asset>.sig` sidecar, checked with a public key embedded in the binary.
+verified against the embedded ed25519 key (see *Signed updates* above).
 
 Optional: `brew install ffmpeg` enables screen recording (`⌘R`); without
 it everything else still works — Record fails with a visible toast.
@@ -121,20 +101,18 @@ it everything else still works — Record fails with a visible toast.
 [Releases](https://github.com/2tsoftwareapp/quickshort/releases), `chmod +x`,
 run. Bundles the tray dependencies (gtk plugin).
 
-**Debian / Ubuntu** — `quickshort_amd64.deb` installs to `/usr/bin` with a
-`.desktop` entry and icon:
+**Debian / Ubuntu**:
 
 ```bash
 sudo apt install ./quickshort_amd64.deb
 ```
 
-When upgrading from the v0.4.0 Debian package, install the new `.deb` with
-that command so APT installs the editor and its runtime dependencies.
+Installs to `/usr/bin` with a `.desktop` entry and icon. When upgrading from
+the v0.4.0 Debian package, install the new `.deb` with that command so APT
+pulls the editor and its runtime dependencies. The deb pulls `ffmpeg` via
+Recommends (screen recording); AppImage users need it on PATH themselves.
 
-The deb pulls `ffmpeg` via Recommends (screen recording); AppImage users
-need it on PATH themselves — `sudo apt install ffmpeg`.
-
-Or from source — `./install.sh` installs missing system deps on
+**From source** — `./install.sh` installs missing system deps on
 Debian/Ubuntu (pipewire/spa/clang dev packages for the build, plus
 `tesseract-ocr` + language packs, `wl-clipboard`, `libnotify-bin` at
 runtime; extra OCR languages via `QS_OCR_LANGS`), builds release →
@@ -226,9 +204,10 @@ and saves it, so nothing exists only in memory. **⋯** opens Select, Pen,
 Ellipse, Highlight, Scroll, Record, OCR and Share; **Edit** hands the
 capture, annotations still editable, to the editor. Before you drag, a
 hint reads *Drag to select an area · Esc to cancel*. Clicking away
-starts a new selection; Esc or a click without dragging cancels. Saved files go to `~/Pictures/quickshort/quickshort-<ts>.png`.
+starts a new selection; Esc or a click without dragging cancels. Saved
+files go to `~/Pictures/quickshort/quickshort-<ts>.png`.
 
-## How it works
+## Architecture
 
 ```
 capture every monitor into RAM
@@ -238,12 +217,14 @@ capture every monitor into RAM
   → stitch per-monitor crops on a worker thread
 ```
 
+### Crates
+
 | Crate | Role |
 |---|---|
 | `qs-core` | geometry + stitching, pure |
 | `qs-capture` | per-OS backends behind `ScreenCapture` |
 | `qs-overlay` | winit + softbuffer, SDF-drawn toolbar, annotation layers, text via embedded Inter (ab_glyph) |
-| `qs-ocr` | native text extraction |
+| `qs-ocr` | native text extraction, line + word geometry |
 | `qs-doc` | `.qsdoc` vector document schema |
 | `qs-edit` | headless editing engine, undo history |
 | `qs-library` | capture album storage + provenance |
@@ -253,7 +234,7 @@ capture every monitor into RAM
 | `qs-theme` | shared palette, accent, radius, type and spacing tokens |
 | `qs-app` | CLI + resident tray app (`tray-icon`/`muda`/`global-hotkey`), toasts, evidence sessions, share/Drive, updates |
 
-Capture backends:
+### Capture backends
 
 | Platform | Backend chain (best first) |
 |---|---|
@@ -298,7 +279,8 @@ Release packaging: `packaging/macos/release.sh` runs the full pipeline —
 release build (universal when both rustup targets exist), `Quickshort.app`
 bundle, self-signed identity (`packaging/macos/gen_signing_cert.sh`), zip +
 dmg + sha256 into `dist/`. Tagging `v*` triggers the GitHub workflow, which
-does the same and publishes a GitHub Release.
+does the same and publishes a GitHub Release; the publish job signs every
+asset with ed25519 when the `QS_ED25519_KEY` secret is provisioned.
 
 ## Privacy
 
@@ -316,8 +298,6 @@ Free and open source, built in spare time. If Quickshort saves you time:
 
 - **[GitHub Sponsors](https://github.com/sponsors/truongnat)** — international, zero fees on personal sponsorships
 - **VietQR** — MB Bank `0969069035` · ĐÀO QUANG TRƯỞNG (scan with any VN banking app)
-
-<img src="docs/donate-qr.png" width="180" alt="VietQR — MB Bank 0969069035, ĐÀO QUANG TRƯỞNG">
 
 ## Known limits
 
