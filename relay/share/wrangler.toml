@@ -1,18 +1,31 @@
 name = "quickshort-share"
+account_id = "6edd876c8649d928cdd25e983cfbb591"
 main = "worker.js"
 compatibility_date = "2026-01-01"
 # keep the workers.dev URL live — older clients hardcode it
 workers_dev = true
 
 # Custom domain on the 2tsoftware.app zone (same account) — serves
-# share.2tsoftware.app/s/<id>.<ext>; custom_domain lets wrangler
-# create the proxied DNS record + cert itself. Top-level key: must
-# precede the [[kv_namespaces]] table.
+# share.2tsoftware.app/s/<id>; custom_domain lets wrangler create the
+# proxied DNS record + cert itself. Top-level key: must precede the
+# [[kv_namespaces]] table.
 routes = [
   { pattern = "share.2tsoftware.app", custom_domain = true, zone_name = "2tsoftware.app" },
 ]
 
 # KV namespace lives on this account; id is stable across deploys.
+# Holds small meta:<id> records (ext, delete-key hash, last_access)
+# and the rl: per-IP rate counters — image bytes live in R2.
 [[kv_namespaces]]
 binding = "SHARE"
-id = "9ecf1a5ff389485baeb47859ba56da06"
+id = "7611e57597ef4ae1929668e4bfe751c6"
+
+# Image bytes. Lifecycle rule (90-day hard delete) is set on the
+# bucket via the API — wrangler does not manage lifecycle rules.
+[[r2_buckets]]
+binding = "BLOB"
+bucket_name = "quickshort-share"
+
+# Daily cleanup: drop shares nobody has requested in RETENTION_S.
+[triggers]
+crons = ["0 4 * * *"]
