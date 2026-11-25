@@ -51,7 +51,7 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::monitor::MonitorHandle;
 use winit::window::{Window, WindowId, WindowLevel};
 
-use super::{ChromeCmd, ChromeEv, Corner, FRect, Key, Land, Stack};
+use super::{ChromeCmd, ChromeEv, Corner, FRect, Key, Land, PlatformChrome, Stack};
 
 /* ==================== DIB surface ==================== */
 
@@ -153,7 +153,119 @@ pub struct ChromeWin {
 }
 
 impl ChromeWin {
-    pub(super) fn new(
+
+
+
+
+
+
+
+
+
+
+    /// Send a ChromeEv through the host's proxy sink (set by `land`).
+    fn emit(&self, ev: ChromeEv) {
+        if let Some(s) = &*self.sink.borrow() {
+            s(ev);
+        }
+    }
+
+    /// Render the stack into the DIB and push the frame with
+    /// `UpdateLayeredWindow` (screen-space destination in physical px).
+    fn present(&mut self) {
+        let (pw, ph) = (self.dib.w, self.dib.h);
+        self.buf.fill(0);
+        {
+            let mut cv = Canvas {
+                buf: &mut self.buf,
+                w: pw,
+                h: ph,
+                scale: self.scale,
+            };
+            let font = self.font.clone();
+            self.stack
+                .render(&mut cv, &font, self.accent, Instant::now());
+        }
+
+        // per-pixel alpha hit-testing only covers what's painted; stamp
+        // α=1 into the retention zone's dead pixels so the hover
+        // hysteresis works (see the module docs — a window region can't
+        // do this without clipping the fly animation)
+        let s = self.scale;
+        for r in self.stack.zone_rects(self.lw, self.lh) {
+            let x0 = (r.x * s).floor().max(0.0) as usize;
+            let y0 = (r.y * s).floor().max(0.0) as usize;
+            let x1 = ((r.x + r.w) * s).ceil().min(pw as f64).max(0.0) as usize;
+            let y1 = ((r.y + r.h) * s).ceil().min(ph as f64).max(0.0) as usize;
+            for y in y0..y1 {
+                for px in &mut self.buf[y * pw + x0..y * pw + x1] {
+                    if *px >> 24 == 0 {
+                        *px |= 1 << 24;
+                    }
+                }
+            }
+        }
+
+        // GDI wants premul memory order B,G,R,A (u32 0xAARRGGBB); the
+        // buffer is R,G,B,A — swap the outer channels as the pixels
+        // land in the DIB
+        let dst = unsafe { std::slice::from_raw_parts_mut(self.dib.bits as *mut u32, pw * ph) };
+        for (d, &p) in dst.iter_mut().zip(&self.buf) {
+            *d = (p & 0xFF00_FF00) | ((p & 0xFF) << 16) | ((p >> 16) & 0xFF);
+        }
+
+        let blend = BLENDFUNCTION {
+            BlendOp: AC_SRC_OVER as u8,
+            BlendFlags: 0,
+            SourceConstantAlpha: 255,
+            AlphaFormat: AC_SRC_ALPHA as u8,
+        };
+        let pt_dst = POINT {
+            x: self.px,
+            y: self.py,
+        };
+        let pt_src = POINT { x: 0, y: 0 };
+        let size = SIZE {
+            cx: pw as i32,
+            cy: ph as i32,
+        };
+        unsafe {
+            // hdcDst None — the system composites straight to the screen
+            let _ = UpdateLayeredWindow(
+                self.hwnd,
+                None,
+                Some(&pt_dst),
+                Some(&size),
+                Some(self.dib.dc),
+                Some(&pt_src),
+                COLORREF(0), // unused with ULW_ALPHA
+                Some(&blend),
+                ULW_ALPHA,
+            );
+        }
+    }
+
+
+
+
+
+
+
+
+
+
+
+    /// Context menus on Windows go through muda's window handle, not a
+    /// native view — nothing to hand out (host cfg-gates use to macOS).
+    pub fn view_ptr(&self) -> *const c_void {
+        std::ptr::null()
+    }
+}
+
+/// Shared chrome contract — signatures enforced by
+/// `PlatformChrome` in `chrome.rs`; helpers stay inherent.
+impl PlatformChrome for ChromeWin {
+    fn new(
         el: &ActiveEventLoop,
         mon: &MonitorHandle,
         corner: Corner,
@@ -239,112 +351,34 @@ impl ChromeWin {
         Ok(w)
     }
 
-    pub fn id(&self) -> WindowId {
+    fn id(&self) -> WindowId {
         self.win.id()
     }
 
-    pub(super) fn set_dock_corner(&mut self, corner: Corner) {
+    fn set_dock_corner(&mut self, corner: Corner) {
         self.stack.set_corner(corner);
     }
-    pub(super) fn mon_key(&self) -> &str {
+
+    fn mon_key(&self) -> &str {
         &self.mon_key
     }
+
     /// Rebind the event sink once the real WindowId exists — the generic
     /// `land` calls this right after `new`.
-    pub(super) fn set_sink(&self, sink: Rc<dyn Fn(ChromeEv)>) {
+    fn set_sink(&self, sink: Rc<dyn Fn(ChromeEv)>) {
         *self.sink.borrow_mut() = Some(sink);
     }
-    pub fn stack(&self) -> &Stack {
+
+    fn stack(&self) -> &Stack {
         &self.stack
     }
-    pub fn stack_mut(&mut self) -> &mut Stack {
+
+    fn stack_mut(&mut self) -> &mut Stack {
         &mut self.stack
     }
 
-    /// Send a ChromeEv through the host's proxy sink (set by `land`).
-    fn emit(&self, ev: ChromeEv) {
-        if let Some(s) = &*self.sink.borrow() {
-            s(ev);
-        }
-    }
-
-    /// Render the stack into the DIB and push the frame with
-    /// `UpdateLayeredWindow` (screen-space destination in physical px).
-    fn present(&mut self) {
-        let (pw, ph) = (self.dib.w, self.dib.h);
-        self.buf.fill(0);
-        {
-            let mut cv = Canvas {
-                buf: &mut self.buf,
-                w: pw,
-                h: ph,
-                scale: self.scale,
-            };
-            let font = self.font.clone();
-            self.stack
-                .render(&mut cv, &font, self.accent, Instant::now());
-        }
-
-        // per-pixel alpha hit-testing only covers what's painted; stamp
-        // α=1 into the retention zone's dead pixels so the hover
-        // hysteresis works (see the module docs — a window region can't
-        // do this without clipping the fly animation)
-        let s = self.scale;
-        for r in self.stack.zone_rects(self.lw, self.lh) {
-            let x0 = (r.x * s).floor().max(0.0) as usize;
-            let y0 = (r.y * s).floor().max(0.0) as usize;
-            let x1 = ((r.x + r.w) * s).ceil().min(pw as f64).max(0.0) as usize;
-            let y1 = ((r.y + r.h) * s).ceil().min(ph as f64).max(0.0) as usize;
-            for y in y0..y1 {
-                for px in &mut self.buf[y * pw + x0..y * pw + x1] {
-                    if *px >> 24 == 0 {
-                        *px |= 1 << 24;
-                    }
-                }
-            }
-        }
-
-        // GDI wants premul memory order B,G,R,A (u32 0xAARRGGBB); the
-        // buffer is R,G,B,A — swap the outer channels as the pixels
-        // land in the DIB
-        let dst = unsafe { std::slice::from_raw_parts_mut(self.dib.bits as *mut u32, pw * ph) };
-        for (d, &p) in dst.iter_mut().zip(&self.buf) {
-            *d = (p & 0xFF00_FF00) | ((p & 0xFF) << 16) | ((p >> 16) & 0xFF);
-        }
-
-        let blend = BLENDFUNCTION {
-            BlendOp: AC_SRC_OVER as u8,
-            BlendFlags: 0,
-            SourceConstantAlpha: 255,
-            AlphaFormat: AC_SRC_ALPHA as u8,
-        };
-        let pt_dst = POINT {
-            x: self.px,
-            y: self.py,
-        };
-        let pt_src = POINT { x: 0, y: 0 };
-        let size = SIZE {
-            cx: pw as i32,
-            cy: ph as i32,
-        };
-        unsafe {
-            // hdcDst None — the system composites straight to the screen
-            let _ = UpdateLayeredWindow(
-                self.hwnd,
-                None,
-                Some(&pt_dst),
-                Some(&size),
-                Some(self.dib.dc),
-                Some(&pt_src),
-                COLORREF(0), // unused with ULW_ALPHA
-                Some(&blend),
-                ULW_ALPHA,
-            );
-        }
-    }
-
     /// Fly a finished shot into this monitor's stack.
-    pub(super) fn land(&mut self, l: Land) {
+    fn land(&mut self, l: Land) {
         let from = l
             .sel
             .map(|r| FRect {
@@ -367,7 +401,7 @@ impl ChromeWin {
 
     /// Platform event → stack → optional host command. Redraw is handled
     /// by the caller (Chrome::event) via `redraw`.
-    pub fn event(&mut self, ev: ChromeEv) -> Option<ChromeCmd> {
+    fn event(&mut self, ev: ChromeEv) -> Option<ChromeCmd> {
         let cmd = match ev {
             ChromeEv::Key(k) => self.stack.key(k),
             e => self.stack.pointer(e, self.lw, self.lh),
@@ -380,13 +414,13 @@ impl ChromeWin {
         }
     }
 
-    pub fn redraw(&mut self) {
+    fn redraw(&mut self) {
         self.present();
     }
 
     /// winit window event → repaint plus ChromeEv forwarding through the
     /// sink `land` bound. Always consumes — this is our window.
-    pub fn window_event(&mut self, ev: &WindowEvent) -> bool {
+    fn window_event(&mut self, ev: &WindowEvent) -> bool {
         match ev {
             WindowEvent::CursorMoved { position, .. } => {
                 let (x, y) = (position.x / self.scale, position.y / self.scale);
@@ -462,7 +496,7 @@ impl ChromeWin {
     /// blocks until the compositor presents the queued frame — that
     /// makes each pump land one render per display refresh (the
     /// deprecated-but-live API is the same clock D3D Present waits on).
-    pub fn pump(&mut self) -> Option<Instant> {
+    fn pump(&mut self) -> Option<Instant> {
         let now = Instant::now();
         let was = self.stack.animating();
         self.stack.settle(now); // may kick off the idle-hide tween
@@ -480,13 +514,8 @@ impl ChromeWin {
             self.stack.idle_deadline()
         }
     }
-
-    /// Context menus on Windows go through muda's window handle, not a
-    /// native view — nothing to hand out (host cfg-gates use to macOS).
-    pub fn view_ptr(&self) -> *const c_void {
-        std::ptr::null()
-    }
 }
+
 
 /// No direct "reduce motion" switch exists on Windows; the closest is
 /// "Animate controls and elements inside windows" (Performance Options),

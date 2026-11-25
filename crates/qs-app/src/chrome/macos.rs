@@ -46,7 +46,7 @@ use winit::monitor::MonitorHandle;
 use winit::platform::macos::MonitorHandleExtMacOS;
 use winit::window::{Window, WindowId};
 
-use super::{ChromeCmd, ChromeEv, Corner, FRect, Key, Land, Stack};
+use super::{ChromeCmd, ChromeEv, Corner, FRect, Key, Land, PlatformChrome, Stack};
 
 /* ==================== NSView subclass ==================== */
 
@@ -306,7 +306,380 @@ pub struct ChromeWin {
 }
 
 impl ChromeWin {
-    pub(super) fn new(
+
+
+
+
+
+
+
+
+
+
+    /// Render the stack into the buffer and push it to the layer.
+    /// Only the stack's paint bounds become the layer's frame + a
+    /// cropped CGImage — fullscreen-layer contents meant WindowServer
+    /// re-composited the whole monitor every frame (~20MB @60Hz),
+    /// which was the residual jank even on vsync.
+    fn present(&mut self) {
+        let now = Instant::now();
+        let bounds = self.stack.paint_bounds(self.lw, self.lh, now);
+        let Some(b) = bounds else {
+            unsafe { self.canvas.setContents(None) };
+            self.view.sync_input(Vec::new());
+            return;
+        };
+        // dirty region (physical px) — zero just this band before render
+        let s = self.scale;
+        let pw = (self.lw * s).round() as usize;
+        let ph = (self.lh * s).round() as usize;
+        let x0 = ((b.x * s).floor() as usize).min(pw);
+        let y0 = ((b.y * s).floor() as usize).min(ph);
+        let x1 = (((b.x + b.w) * s).ceil() as usize).min(pw);
+        let y1 = (((b.y + b.h) * s).ceil() as usize).min(ph);
+        for row in &mut self.buf[y0.min(y1) * pw..y1 * pw] {
+            *row = 0;
+        }
+        {
+            let mut cv = Canvas {
+                buf: &mut self.buf,
+                w: pw,
+                h: ph,
+                scale: s,
+            };
+            let font = self.font.clone();
+            self.stack.render(&mut cv, &font, self.accent, now);
+        }
+        let Some(mtm) = MainThreadMarker::new() else {
+            return;
+        };
+        let mut planes = [self.buf.as_mut_ptr() as *mut u8];
+        let Some(rep) = (unsafe {
+            NSBitmapImageRep::initWithBitmapDataPlanes_pixelsWide_pixelsHigh_bitsPerSample_samplesPerPixel_hasAlpha_isPlanar_colorSpaceName_bitmapFormat_bytesPerRow_bitsPerPixel(
+                mtm.alloc::<NSBitmapImageRep>(),
+                planes.as_mut_ptr(),
+                pw as isize,
+                ph as isize,
+                8,
+                4,
+                true,
+                false,
+                objc2_app_kit::NSCalibratedRGBColorSpace,
+                NSBitmapFormat::ThirtyTwoBitLittleEndian,
+                (pw * 4) as isize,
+                32,
+            )
+        }) else {
+            return;
+        };
+        let Some(full) = rep.CGImage() else {
+            return;
+        };
+        let Some(cg) = CGImage::with_image_in_rect(
+            Some(&full),
+            CGRect::new(
+                objc2_core_foundation::CGPoint::new(x0 as f64, y0 as f64),
+                objc2_core_foundation::CGSize::new((x1 - x0) as f64, (y1 - y0) as f64),
+            ),
+        ) else {
+            return;
+        };
+        let obj: &AnyObject = unsafe { &*(CFRetained::as_ptr(&cg).cast::<AnyObject>().as_ptr()) };
+        unsafe { self.canvas.setContents(Some(obj)) };
+        // frame lives in the SUPERlayer's coords: the content
+        // layer backs winit's flipped view, so top-left y maps
+        // 1:1 there.
+        let parent = self.canvas.superlayer();
+        let py = match parent.as_ref() {
+            Some(p) if !p.isGeometryFlipped() => p.bounds().size.height - b.y - b.h,
+            _ => b.y,
+        };
+        self.canvas.setFrame(CGRect::new(
+            objc2_core_foundation::CGPoint::new(b.x, py),
+            objc2_core_foundation::CGSize::new(b.w, b.h),
+        ));
+        self.view.sync_input(
+            self.stack
+                .input_rects(self.lw, self.lh)
+                .into_iter()
+                .map(|(r, _)| r)
+                .collect(),
+        );
+    }
+
+
+
+    /// Hand a landing to Core Animation. Returns false when the window
+    /// has no usable backing layer or the capture can't become a
+    /// CGImage; the caller then reveals the thumb immediately.
+    fn start_native(&mut self, from: FRect, to: FRect, img: Rc<image::RgbaImage>) -> bool {
+        let Some(mtm) = MainThreadMarker::new() else {
+            return false;
+        };
+        // the canvas's superlayer is the window's content layer:
+        // full-size, stable, and geometry-flipped like winit's view, so
+        // top-left logical coords map 1:1
+        let Some(parent) = self.canvas.superlayer() else {
+            return false;
+        };
+        let pb = parent.bounds();
+        let ph = pb.size.height;
+        if ph <= 0.0 {
+            return false;
+        }
+
+        let (iw, ih) = (img.width() as isize, img.height() as isize);
+        if iw <= 0 || ih <= 0 {
+            return false;
+        }
+        // rep wraps the capture's RGBA bytes directly — `NativeFly`
+        // keeps both alive for as long as the layer displays them
+        let mut planes = [img.as_raw().as_ptr() as *mut u8];
+        let Some(rep) = (unsafe {
+            NSBitmapImageRep::initWithBitmapDataPlanes_pixelsWide_pixelsHigh_bitsPerSample_samplesPerPixel_hasAlpha_isPlanar_colorSpaceName_bitmapFormat_bytesPerRow_bitsPerPixel(
+                mtm.alloc::<NSBitmapImageRep>(),
+                planes.as_mut_ptr(),
+                iw,
+                ih,
+                8,
+                4,
+                true,
+                false,
+                objc2_app_kit::NSCalibratedRGBColorSpace,
+                NSBitmapFormat::ThirtyTwoBitLittleEndian,
+                iw * 4,
+                32,
+            )
+        }) else {
+            return false;
+        };
+        let Some(cg) = rep.CGImage() else {
+            return false;
+        };
+        let content: &AnyObject = unsafe { &*((Retained::as_ptr(&cg)) as *const AnyObject) };
+
+        let layer = CALayer::new();
+        layer.setContentsScale(self.scale);
+        unsafe { layer.setContents(Some(content)) };
+        layer.setContentsGravity(unsafe { kCAGravityResizeAspectFill });
+        layer.setMasksToBounds(true);
+        layer.setCornerRadius(6.0);
+        layer.setZPosition(1000.0);
+        let shadow = CGColor::new_srgb(0.0, 0.0, 0.0, 1.0);
+        layer.setShadowColor(Some(&shadow));
+        layer.setShadowOpacity(0.3);
+        layer.setShadowRadius(12.0);
+        layer.setShadowOffset(CGSize::new(0.0, 0.0));
+        // explicit spring below; the property sets must not animate
+        let (k1, k2, k3) = (
+            NSString::from_str("contents"),
+            NSString::from_str("position"),
+            NSString::from_str("bounds"),
+        );
+        let null = || ProtocolObject::<dyn CAAction>::from_retained(NSNull::null());
+        let acts =
+            NSDictionary::from_retained_objects(&[&*k1, &*k2, &*k3], &[null(), null(), null()]);
+        layer.setActions(Some(&acts));
+
+        // top-left logical rect → parent-local coords (bottom-left when
+        // the parent is not geometry-flipped)
+        let flipped = parent.isGeometryFlipped();
+        let geom = |r: FRect| {
+            let (x, y) = (r.x - pb.origin.x, r.y - pb.origin.y);
+            CGRect::new(
+                CGPoint::new(x, if flipped { y } else { ph - y - r.h }),
+                CGSize::new(r.w, r.h),
+            )
+        };
+        parent.addSublayer(&layer);
+        layer.setFrame(geom(to));
+
+        // Animate position and bounds — the real properties behind
+        // `frame`. Animating the derived "frame" key path makes the
+        // presentation layer report interpolated frames while the
+        // render server draws nothing (black-hole layer).
+        let spring = |key: &str, from_v: Retained<NSValue>, to_v: Retained<NSValue>| {
+            let a = CASpringAnimation::initWithPerceptualDuration_bounce(
+                CASpringAnimation::alloc(),
+                0.36,
+                0.08,
+            );
+            a.setKeyPath(Some(&NSString::from_str(key)));
+            let f: &AnyObject = unsafe { &*(Retained::as_ptr(&from_v) as *const AnyObject) };
+            let t: &AnyObject = unsafe { &*(Retained::as_ptr(&to_v) as *const AnyObject) };
+            unsafe {
+                a.setFromValue(Some(f));
+                a.setToValue(Some(t));
+            }
+            let d = a.settlingDuration();
+            a.setDuration(d);
+            layer.addAnimation_forKey(&a, Some(&NSString::from_str(key)));
+            d
+        };
+        let gf = geom(from);
+        let gt = geom(to);
+        let center = |r: CGRect| {
+            CGPoint::new(
+                r.origin.x + r.size.width / 2.0,
+                r.origin.y + r.size.height / 2.0,
+            )
+        };
+        let settle = spring(
+            "position",
+            unsafe { NSValue::valueWithPoint(center(gf)) },
+            unsafe { NSValue::valueWithPoint(center(gt)) },
+        );
+        spring(
+            "bounds",
+            unsafe { NSValue::valueWithRect(CGRect::new(CGPoint::new(0.0, 0.0), gf.size)) },
+            unsafe { NSValue::valueWithRect(CGRect::new(CGPoint::new(0.0, 0.0), gt.size)) },
+        );
+
+        let end =
+            Instant::now() + Duration::from_secs_f64(settle.max(0.05)) + Duration::from_millis(80);
+        self.native = Some(NativeFly {
+            layer,
+            _rep: rep,
+            _img: img,
+            end,
+        });
+        true
+    }
+
+    /// Spring done: drop the layer and reveal the thumb it was standing
+    /// in for. Also the cancel path for a newer landing.
+    fn finish_native(&mut self) {
+        if let Some(n) = self.native.take() {
+            n.layer.removeFromSuperlayer();
+            self.stack.hold_newest(false);
+            self.present();
+        }
+    }
+
+
+
+    /// A thumb got dragged past the threshold — start a real drag
+    /// session. Saved or not, the shot goes out as an
+    /// `NSFilePromiseProvider` so the PNG materializes wherever the
+    /// drop lands (Finder, an editor, a composer) — no save-first step.
+    fn begin_drag(&mut self, idx: usize) {
+        let Some(mtm) = MainThreadMarker::new() else {
+            return;
+        };
+        let Some((img, name)) = self.stack.shot(idx).map(|s| {
+            let name = s
+                .path
+                .as_ref()
+                .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+                .unwrap_or_else(|| format!("quickshort-{}.png", unix_ts()));
+            (s.img.clone(), name)
+        }) else {
+            return;
+        };
+        // drag image: the thumbnail the cursor grabbed, rebuilt as an
+        // NSImage (de-premultiplied into a fresh rep)
+        let (pixels, tw, th) = match self.stack.shot(idx).map(|s| s.thumb()) {
+            Some(t) => t,
+            None => return,
+        };
+        let rep = unsafe {
+            NSBitmapImageRep::initWithBitmapDataPlanes_pixelsWide_pixelsHigh_bitsPerSample_samplesPerPixel_hasAlpha_isPlanar_colorSpaceName_bitmapFormat_bytesPerRow_bitsPerPixel(
+                mtm.alloc::<NSBitmapImageRep>(),
+                std::ptr::null_mut(),
+                tw as isize,
+                th as isize,
+                8,
+                4,
+                true,
+                false,
+                objc2_app_kit::NSCalibratedRGBColorSpace,
+                NSBitmapFormat::ThirtyTwoBitLittleEndian,
+                (tw * 4) as isize,
+                32,
+            )
+        };
+        let Some(rep) = rep else { return };
+        // packed thumb is premul A<<24|B<<16|G<<8|R → de-premultiply into
+        // the rep's RGBA bytes so the drag image matches what's on screen
+        unsafe {
+            let dst = rep.bitmapData();
+            for (i, px) in pixels.iter().enumerate() {
+                let (a, b, g, r) = (px >> 24, (px >> 16) & 0xff, (px >> 8) & 0xff, px & 0xff);
+                let (r, g, b) = (
+                    (r * 255).checked_div(a).unwrap_or(0),
+                    (g * 255).checked_div(a).unwrap_or(0),
+                    (b * 255).checked_div(a).unwrap_or(0),
+                );
+                *dst.add(i * 4) = r as u8;
+                *dst.add(i * 4 + 1) = g as u8;
+                *dst.add(i * 4 + 2) = b as u8;
+                *dst.add(i * 4 + 3) = a as u8;
+            }
+        }
+        let size = NSSize::new(tw as f64 / self.scale, th as f64 / self.scale);
+        let nsimg = NSImage::initWithSize(mtm.alloc::<NSImage>(), size);
+        nsimg.addRepresentation(&rep);
+
+        let delegate = PromiseWriter::new(mtm, name, encode_png(&img));
+        let provider = NSFilePromiseProvider::initWithFileType_delegate(
+            mtm.alloc::<NSFilePromiseProvider>(),
+            &NSString::from_str("public.png"),
+            ProtocolObject::from_ref(&*delegate),
+        );
+        let item = NSDraggingItem::initWithPasteboardWriter(
+            mtm.alloc::<NSDraggingItem>(),
+            ProtocolObject::from_ref(&*provider),
+        );
+        // anchor the drag image under the cursor — a small offset past
+        // the press point reads as "the thumb came along"
+        let f = NSRect::new(NSPoint::new(-size.width / 2.0, -size.height / 2.0), size);
+        unsafe { item.setDraggingFrame_contents(f, Some(&*nsimg)) };
+        let stashed = self.view.ivars().drag_ev.borrow().clone();
+        let ev = match stashed {
+            Some(e) => e,
+            // scriptable tools (cliclick & friends) deliver down/up but
+            // never leftMouseDragged — synthesize one so the session
+            // still starts
+            None => {
+                let p = self
+                    .view
+                    .window()
+                    .map(|w| w.convertPointToScreen(NSPoint::new(0.0, 0.0)))
+                    .unwrap_or(NSPoint::new(0.0, 0.0));
+                let wnum = self.view.window().map(|w| w.windowNumber()).unwrap_or(0);
+                let ev: Option<Retained<NSEvent>> = unsafe {
+                    msg_send![
+                        objc2::class!(NSEvent),
+                        mouseEventWithType: objc2_app_kit::NSEventType::LeftMouseDragged,
+                        location: NSPoint::new(p.x + self.lw - 60.0, p.y + 60.0),
+                        modifierFlags: NSEventModifierFlags::empty(),
+                        timestamp: 0.0_f64,
+                        windowNumber: wnum,
+                        context: std::ptr::null::<AnyObject>(),
+                        eventNumber: 0_isize,
+                        clickCount: 1_isize,
+                        pressure: 0.0_f32
+                    ]
+                };
+                match ev {
+                    Some(e) => e,
+                    None => return, // can't even build the event — skip
+                }
+            }
+        };
+        let items = NSArray::from_retained_slice(&[item]);
+        self.view.beginDraggingSessionWithItems_event_source(
+            &items,
+            &ev,
+            ProtocolObject::from_ref(&*self.view),
+        );
+    }
+}
+
+/// Shared chrome contract — signatures enforced by
+/// `PlatformChrome` in `chrome.rs`; helpers stay inherent.
+impl PlatformChrome for ChromeWin {
+    fn new(
         el: &ActiveEventLoop,
         mon: &MonitorHandle,
         corner: Corner,
@@ -503,121 +876,34 @@ impl ChromeWin {
         })
     }
 
-    pub fn id(&self) -> WindowId {
+    fn id(&self) -> WindowId {
         self.win.id()
     }
 
-    pub(super) fn set_dock_corner(&mut self, corner: super::Corner) {
+    fn set_dock_corner(&mut self, corner: super::Corner) {
         self.stack.set_corner(corner);
     }
-    pub(super) fn mon_key(&self) -> &str {
+
+    fn mon_key(&self) -> &str {
         &self.mon_key
     }
+
     /// Rebind the event sink once the real WindowId exists — the generic
     /// `land` calls this right after `new`.
-    pub(super) fn set_sink(&self, sink: EvSink) {
+    fn set_sink(&self, sink: EvSink) {
         *self.view.ivars().handler.borrow_mut() = Some(sink);
     }
-    pub fn stack(&self) -> &Stack {
+
+    fn stack(&self) -> &Stack {
         &self.stack
     }
-    pub fn stack_mut(&mut self) -> &mut Stack {
+
+    fn stack_mut(&mut self) -> &mut Stack {
         &mut self.stack
     }
 
-    /// Render the stack into the buffer and push it to the layer.
-    /// Only the stack's paint bounds become the layer's frame + a
-    /// cropped CGImage — fullscreen-layer contents meant WindowServer
-    /// re-composited the whole monitor every frame (~20MB @60Hz),
-    /// which was the residual jank even on vsync.
-    fn present(&mut self) {
-        let now = Instant::now();
-        let bounds = self.stack.paint_bounds(self.lw, self.lh, now);
-        let Some(b) = bounds else {
-            unsafe { self.canvas.setContents(None) };
-            self.view.sync_input(Vec::new());
-            return;
-        };
-        // dirty region (physical px) — zero just this band before render
-        let s = self.scale;
-        let pw = (self.lw * s).round() as usize;
-        let ph = (self.lh * s).round() as usize;
-        let x0 = ((b.x * s).floor() as usize).min(pw);
-        let y0 = ((b.y * s).floor() as usize).min(ph);
-        let x1 = (((b.x + b.w) * s).ceil() as usize).min(pw);
-        let y1 = (((b.y + b.h) * s).ceil() as usize).min(ph);
-        for row in &mut self.buf[y0.min(y1) * pw..y1 * pw] {
-            *row = 0;
-        }
-        {
-            let mut cv = Canvas {
-                buf: &mut self.buf,
-                w: pw,
-                h: ph,
-                scale: s,
-            };
-            let font = self.font.clone();
-            self.stack.render(&mut cv, &font, self.accent, now);
-        }
-        let Some(mtm) = MainThreadMarker::new() else {
-            return;
-        };
-        let mut planes = [self.buf.as_mut_ptr() as *mut u8];
-        let Some(rep) = (unsafe {
-            NSBitmapImageRep::initWithBitmapDataPlanes_pixelsWide_pixelsHigh_bitsPerSample_samplesPerPixel_hasAlpha_isPlanar_colorSpaceName_bitmapFormat_bytesPerRow_bitsPerPixel(
-                mtm.alloc::<NSBitmapImageRep>(),
-                planes.as_mut_ptr(),
-                pw as isize,
-                ph as isize,
-                8,
-                4,
-                true,
-                false,
-                objc2_app_kit::NSCalibratedRGBColorSpace,
-                NSBitmapFormat::ThirtyTwoBitLittleEndian,
-                (pw * 4) as isize,
-                32,
-            )
-        }) else {
-            return;
-        };
-        let Some(full) = rep.CGImage() else {
-            return;
-        };
-        let Some(cg) = CGImage::with_image_in_rect(
-            Some(&full),
-            CGRect::new(
-                objc2_core_foundation::CGPoint::new(x0 as f64, y0 as f64),
-                objc2_core_foundation::CGSize::new((x1 - x0) as f64, (y1 - y0) as f64),
-            ),
-        ) else {
-            return;
-        };
-        let obj: &AnyObject = unsafe { &*(CFRetained::as_ptr(&cg).cast::<AnyObject>().as_ptr()) };
-        unsafe { self.canvas.setContents(Some(obj)) };
-        // frame lives in the SUPERlayer's coords: the content
-        // layer backs winit's flipped view, so top-left y maps
-        // 1:1 there.
-        let parent = self.canvas.superlayer();
-        let py = match parent.as_ref() {
-            Some(p) if !p.isGeometryFlipped() => p.bounds().size.height - b.y - b.h,
-            _ => b.y,
-        };
-        self.canvas.setFrame(CGRect::new(
-            objc2_core_foundation::CGPoint::new(b.x, py),
-            objc2_core_foundation::CGSize::new(b.w, b.h),
-        ));
-        self.view.sync_input(
-            self.stack
-                .input_rects(self.lw, self.lh)
-                .into_iter()
-                .map(|(r, _)| r)
-                .collect(),
-        );
-    }
-
     /// Fly a finished shot into this monitor's stack.
-    pub(super) fn land(&mut self, l: Land) {
+    fn land(&mut self, l: Land) {
         // a newer landing supersedes a layer that is still travelling
         self.finish_native();
         let from = l
@@ -658,282 +944,18 @@ impl ChromeWin {
         }
     }
 
-    /// Hand a landing to Core Animation. Returns false when the window
-    /// has no usable backing layer or the capture can't become a
-    /// CGImage; the caller then reveals the thumb immediately.
-    fn start_native(&mut self, from: FRect, to: FRect, img: Rc<image::RgbaImage>) -> bool {
-        let Some(mtm) = MainThreadMarker::new() else {
-            return false;
-        };
-        // the canvas's superlayer is the window's content layer:
-        // full-size, stable, and geometry-flipped like winit's view, so
-        // top-left logical coords map 1:1
-        let Some(parent) = self.canvas.superlayer() else {
-            return false;
-        };
-        let pb = parent.bounds();
-        let ph = pb.size.height;
-        if ph <= 0.0 {
-            return false;
-        }
-
-        let (iw, ih) = (img.width() as isize, img.height() as isize);
-        if iw <= 0 || ih <= 0 {
-            return false;
-        }
-        // rep wraps the capture's RGBA bytes directly — `NativeFly`
-        // keeps both alive for as long as the layer displays them
-        let mut planes = [img.as_raw().as_ptr() as *mut u8];
-        let Some(rep) = (unsafe {
-            NSBitmapImageRep::initWithBitmapDataPlanes_pixelsWide_pixelsHigh_bitsPerSample_samplesPerPixel_hasAlpha_isPlanar_colorSpaceName_bitmapFormat_bytesPerRow_bitsPerPixel(
-                mtm.alloc::<NSBitmapImageRep>(),
-                planes.as_mut_ptr(),
-                iw,
-                ih,
-                8,
-                4,
-                true,
-                false,
-                objc2_app_kit::NSCalibratedRGBColorSpace,
-                NSBitmapFormat::ThirtyTwoBitLittleEndian,
-                iw * 4,
-                32,
-            )
-        }) else {
-            return false;
-        };
-        let Some(cg) = rep.CGImage() else {
-            return false;
-        };
-        let content: &AnyObject = unsafe { &*((Retained::as_ptr(&cg)) as *const AnyObject) };
-
-        let layer = CALayer::new();
-        layer.setContentsScale(self.scale);
-        unsafe { layer.setContents(Some(content)) };
-        layer.setContentsGravity(unsafe { kCAGravityResizeAspectFill });
-        layer.setMasksToBounds(true);
-        layer.setCornerRadius(6.0);
-        layer.setZPosition(1000.0);
-        let shadow = CGColor::new_srgb(0.0, 0.0, 0.0, 1.0);
-        layer.setShadowColor(Some(&shadow));
-        layer.setShadowOpacity(0.3);
-        layer.setShadowRadius(12.0);
-        layer.setShadowOffset(CGSize::new(0.0, 0.0));
-        // explicit spring below; the property sets must not animate
-        let (k1, k2, k3) = (
-            NSString::from_str("contents"),
-            NSString::from_str("position"),
-            NSString::from_str("bounds"),
-        );
-        let null = || ProtocolObject::<dyn CAAction>::from_retained(NSNull::null());
-        let acts =
-            NSDictionary::from_retained_objects(&[&*k1, &*k2, &*k3], &[null(), null(), null()]);
-        layer.setActions(Some(&acts));
-
-        // top-left logical rect → parent-local coords (bottom-left when
-        // the parent is not geometry-flipped)
-        let flipped = parent.isGeometryFlipped();
-        let geom = |r: FRect| {
-            let (x, y) = (r.x - pb.origin.x, r.y - pb.origin.y);
-            CGRect::new(
-                CGPoint::new(x, if flipped { y } else { ph - y - r.h }),
-                CGSize::new(r.w, r.h),
-            )
-        };
-        parent.addSublayer(&layer);
-        layer.setFrame(geom(to));
-
-        // Animate position and bounds — the real properties behind
-        // `frame`. Animating the derived "frame" key path makes the
-        // presentation layer report interpolated frames while the
-        // render server draws nothing (black-hole layer).
-        let spring = |key: &str, from_v: Retained<NSValue>, to_v: Retained<NSValue>| {
-            let a = CASpringAnimation::initWithPerceptualDuration_bounce(
-                CASpringAnimation::alloc(),
-                0.36,
-                0.08,
-            );
-            a.setKeyPath(Some(&NSString::from_str(key)));
-            let f: &AnyObject = unsafe { &*(Retained::as_ptr(&from_v) as *const AnyObject) };
-            let t: &AnyObject = unsafe { &*(Retained::as_ptr(&to_v) as *const AnyObject) };
-            unsafe {
-                a.setFromValue(Some(f));
-                a.setToValue(Some(t));
-            }
-            let d = a.settlingDuration();
-            a.setDuration(d);
-            layer.addAnimation_forKey(&a, Some(&NSString::from_str(key)));
-            d
-        };
-        let gf = geom(from);
-        let gt = geom(to);
-        let center = |r: CGRect| {
-            CGPoint::new(
-                r.origin.x + r.size.width / 2.0,
-                r.origin.y + r.size.height / 2.0,
-            )
-        };
-        let settle = spring(
-            "position",
-            unsafe { NSValue::valueWithPoint(center(gf)) },
-            unsafe { NSValue::valueWithPoint(center(gt)) },
-        );
-        spring(
-            "bounds",
-            unsafe { NSValue::valueWithRect(CGRect::new(CGPoint::new(0.0, 0.0), gf.size)) },
-            unsafe { NSValue::valueWithRect(CGRect::new(CGPoint::new(0.0, 0.0), gt.size)) },
-        );
-
-        let end =
-            Instant::now() + Duration::from_secs_f64(settle.max(0.05)) + Duration::from_millis(80);
-        self.native = Some(NativeFly {
-            layer,
-            _rep: rep,
-            _img: img,
-            end,
-        });
-        true
-    }
-
-    /// Spring done: drop the layer and reveal the thumb it was standing
-    /// in for. Also the cancel path for a newer landing.
-    fn finish_native(&mut self) {
-        if let Some(n) = self.native.take() {
-            n.layer.removeFromSuperlayer();
-            self.stack.hold_newest(false);
-            self.present();
-        }
-    }
-
     /// Abort without repainting — the caller clears/redraws the stack
     /// itself (remove / clear-all paths).
-    pub(super) fn cancel_native(&mut self) {
+    fn cancel_native(&mut self) {
         if let Some(n) = self.native.take() {
             n.layer.removeFromSuperlayer();
             self.stack.hold_newest(false);
         }
-    }
-
-    /// A thumb got dragged past the threshold — start a real drag
-    /// session. Saved or not, the shot goes out as an
-    /// `NSFilePromiseProvider` so the PNG materializes wherever the
-    /// drop lands (Finder, an editor, a composer) — no save-first step.
-    fn begin_drag(&mut self, idx: usize) {
-        let Some(mtm) = MainThreadMarker::new() else {
-            return;
-        };
-        let Some((img, name)) = self.stack.shot(idx).map(|s| {
-            let name = s
-                .path
-                .as_ref()
-                .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
-                .unwrap_or_else(|| format!("quickshort-{}.png", unix_ts()));
-            (s.img.clone(), name)
-        }) else {
-            return;
-        };
-        // drag image: the thumbnail the cursor grabbed, rebuilt as an
-        // NSImage (de-premultiplied into a fresh rep)
-        let (pixels, tw, th) = match self.stack.shot(idx).map(|s| s.thumb()) {
-            Some(t) => t,
-            None => return,
-        };
-        let rep = unsafe {
-            NSBitmapImageRep::initWithBitmapDataPlanes_pixelsWide_pixelsHigh_bitsPerSample_samplesPerPixel_hasAlpha_isPlanar_colorSpaceName_bitmapFormat_bytesPerRow_bitsPerPixel(
-                mtm.alloc::<NSBitmapImageRep>(),
-                std::ptr::null_mut(),
-                tw as isize,
-                th as isize,
-                8,
-                4,
-                true,
-                false,
-                objc2_app_kit::NSCalibratedRGBColorSpace,
-                NSBitmapFormat::ThirtyTwoBitLittleEndian,
-                (tw * 4) as isize,
-                32,
-            )
-        };
-        let Some(rep) = rep else { return };
-        // packed thumb is premul A<<24|B<<16|G<<8|R → de-premultiply into
-        // the rep's RGBA bytes so the drag image matches what's on screen
-        unsafe {
-            let dst = rep.bitmapData();
-            for (i, px) in pixels.iter().enumerate() {
-                let (a, b, g, r) = (px >> 24, (px >> 16) & 0xff, (px >> 8) & 0xff, px & 0xff);
-                let (r, g, b) = (
-                    (r * 255).checked_div(a).unwrap_or(0),
-                    (g * 255).checked_div(a).unwrap_or(0),
-                    (b * 255).checked_div(a).unwrap_or(0),
-                );
-                *dst.add(i * 4) = r as u8;
-                *dst.add(i * 4 + 1) = g as u8;
-                *dst.add(i * 4 + 2) = b as u8;
-                *dst.add(i * 4 + 3) = a as u8;
-            }
-        }
-        let size = NSSize::new(tw as f64 / self.scale, th as f64 / self.scale);
-        let nsimg = NSImage::initWithSize(mtm.alloc::<NSImage>(), size);
-        nsimg.addRepresentation(&rep);
-
-        let delegate = PromiseWriter::new(mtm, name, encode_png(&img));
-        let provider = NSFilePromiseProvider::initWithFileType_delegate(
-            mtm.alloc::<NSFilePromiseProvider>(),
-            &NSString::from_str("public.png"),
-            ProtocolObject::from_ref(&*delegate),
-        );
-        let item = NSDraggingItem::initWithPasteboardWriter(
-            mtm.alloc::<NSDraggingItem>(),
-            ProtocolObject::from_ref(&*provider),
-        );
-        // anchor the drag image under the cursor — a small offset past
-        // the press point reads as "the thumb came along"
-        let f = NSRect::new(NSPoint::new(-size.width / 2.0, -size.height / 2.0), size);
-        unsafe { item.setDraggingFrame_contents(f, Some(&*nsimg)) };
-        let stashed = self.view.ivars().drag_ev.borrow().clone();
-        let ev = match stashed {
-            Some(e) => e,
-            // scriptable tools (cliclick & friends) deliver down/up but
-            // never leftMouseDragged — synthesize one so the session
-            // still starts
-            None => {
-                let p = self
-                    .view
-                    .window()
-                    .map(|w| w.convertPointToScreen(NSPoint::new(0.0, 0.0)))
-                    .unwrap_or(NSPoint::new(0.0, 0.0));
-                let wnum = self.view.window().map(|w| w.windowNumber()).unwrap_or(0);
-                let ev: Option<Retained<NSEvent>> = unsafe {
-                    msg_send![
-                        objc2::class!(NSEvent),
-                        mouseEventWithType: objc2_app_kit::NSEventType::LeftMouseDragged,
-                        location: NSPoint::new(p.x + self.lw - 60.0, p.y + 60.0),
-                        modifierFlags: NSEventModifierFlags::empty(),
-                        timestamp: 0.0_f64,
-                        windowNumber: wnum,
-                        context: std::ptr::null::<AnyObject>(),
-                        eventNumber: 0_isize,
-                        clickCount: 1_isize,
-                        pressure: 0.0_f32
-                    ]
-                };
-                match ev {
-                    Some(e) => e,
-                    None => return, // can't even build the event — skip
-                }
-            }
-        };
-        let items = NSArray::from_retained_slice(&[item]);
-        self.view.beginDraggingSessionWithItems_event_source(
-            &items,
-            &ev,
-            ProtocolObject::from_ref(&*self.view),
-        );
     }
 
     /// Platform event → stack → optional host command. Redraw is handled
     /// by the caller (Chrome::event) via `redraw`.
-    pub fn event(&mut self, ev: ChromeEv) -> Option<ChromeCmd> {
+    fn event(&mut self, ev: ChromeEv) -> Option<ChromeCmd> {
         if let ChromeEv::Tick = ev {
             // one frame per display refresh — settle + present, then
             // park the link once the tween ends
@@ -962,13 +984,13 @@ impl ChromeWin {
         cmd
     }
 
-    pub fn redraw(&mut self) {
+    fn redraw(&mut self) {
         self.present();
     }
 
     /// winit window event — repaint requests only; animation frames
     /// come from the CADisplayLink, not RedrawRequested.
-    pub fn window_event(&mut self, ev: &WindowEvent) -> bool {
+    fn window_event(&mut self, ev: &WindowEvent) -> bool {
         match ev {
             WindowEvent::RedrawRequested => {
                 let now = Instant::now();
@@ -989,7 +1011,7 @@ impl ChromeWin {
     /// backstop: if the link's screen is occluded or asleep its ticks
     /// stop, and the host-side settle still advances the tween
     /// wall-clock so nothing hangs mid-flight.
-    pub fn pump(&mut self) -> Option<Instant> {
+    fn pump(&mut self) -> Option<Instant> {
         let now = Instant::now();
         if self.native.as_ref().is_some_and(|n| now >= n.end) {
             self.finish_native();
@@ -1011,7 +1033,12 @@ impl ChromeWin {
         }
         self.stack.idle_deadline()
     }
+
+    fn frontmost_app_name() -> Option<String> {
+        frontmost_app_name()
+    }
 }
+
 
 impl Drop for ChromeWin {
     fn drop(&mut self) {

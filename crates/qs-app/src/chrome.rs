@@ -39,6 +39,45 @@ pub use imp::ChromeWin;
 use crate::config;
 use crate::widgets::Txt;
 
+/// One stack surface on one monitor — the contract every backend in
+/// `chrome/` fulfils (`stub.rs` is the readable form of it). Shared
+/// logic above (`land`, `Chrome`) is written against this trait, so the
+/// only `#[cfg]` left in this file is the `mod imp` platform selection.
+trait PlatformChrome {
+    fn new(
+        el: &ActiveEventLoop,
+        mon: &MonitorHandle,
+        corner: Corner,
+        font: Rc<fontdue::Font>,
+        accent: u32,
+    ) -> Result<Self>
+    where
+        Self: Sized;
+    fn id(&self) -> winit::window::WindowId;
+    fn set_dock_corner(&mut self, corner: Corner);
+    fn mon_key(&self) -> &str;
+    fn set_sink(&self, sink: Rc<dyn Fn(ChromeEv)>);
+    fn land(&mut self, l: Land);
+    fn stack(&self) -> &Stack;
+    fn stack_mut(&mut self) -> &mut Stack;
+    fn event(&mut self, ev: ChromeEv) -> Option<ChromeCmd>;
+    fn redraw(&mut self);
+    fn window_event(&mut self, ev: &winit::event::WindowEvent) -> bool;
+    fn pump(&mut self) -> Option<Instant>;
+    /// macOS drags shots natively — the shared remove/clear paths must
+    /// cancel an in-flight drag before the shot underneath moves.
+    /// Backends without native drags keep the default no-op.
+    fn cancel_native(&mut self) {}
+    /// App that was frontmost when the capture ran (provenance for
+    /// Saved shots). Backends without a window API return `None`.
+    fn frontmost_app_name() -> Option<String>
+    where
+        Self: Sized,
+    {
+        None
+    }
+}
+
 /* ---- layout constants (logical px) ---- */
 const TW: f64 = 118.0;
 const TH: f64 = 74.0;
@@ -76,7 +115,7 @@ pub enum ShotKind {
     Saved,
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     Copied,
-    #[cfg(not(target_os = "macos"))]
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
     Ocr,
     Shared,
     Scroll,
@@ -121,14 +160,8 @@ impl Shot {
 }
 
 /// Name of the application in front of the user, if the platform reports one.
-#[cfg(target_os = "macos")]
 pub fn frontmost_app_name() -> Option<String> {
-    imp::frontmost_app_name()
-}
-
-#[cfg(not(target_os = "macos"))]
-pub fn frontmost_app_name() -> Option<String> {
-    None
+    ChromeWin::frontmost_app_name()
 }
 
 #[derive(Clone, Copy)]
@@ -1651,7 +1684,6 @@ impl Stack {
                 let (bg, glyph) = match shot.kind {
                     ShotKind::Saved => (qs_theme::pal().success, "✓"),
                     ShotKind::Copied => (qs_theme::pal().success, "⧉"),
-                    #[cfg(not(target_os = "macos"))]
                     ShotKind::Ocr => (qs_theme::pal().success, "T"),
                     ShotKind::Scroll => (qs_theme::pal().success, "↕"),
                     ShotKind::Shared => (accent, "↗"),
@@ -1987,7 +2019,6 @@ impl Chrome {
         if let Some(w) = self.wins.iter_mut().find(|w| w.id() == id) {
             // a removal reshuffles the landing slot — the fly layer is
             // pointing at geometry that no longer exists
-            #[cfg(target_os = "macos")]
             w.cancel_native();
             w.stack_mut().remove(idx);
             w.redraw();
@@ -1998,7 +2029,6 @@ impl Chrome {
     /// sweeps afterwards so the emptied window goes away.
     pub fn clear_all(&mut self, id: winit::window::WindowId) {
         if let Some(w) = self.wins.iter_mut().find(|w| w.id() == id) {
-            #[cfg(target_os = "macos")]
             w.cancel_native();
             w.stack_mut().clear_all();
         }

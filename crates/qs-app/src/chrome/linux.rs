@@ -30,7 +30,7 @@ use winit::keyboard::{Key as WKey, ModifiersState, NamedKey};
 use winit::monitor::MonitorHandle;
 use winit::window::{Fullscreen, Window, WindowId, WindowLevel};
 
-use super::{shelf_logical_size, ChromeCmd, ChromeEv, Corner, FRect, Key, Land, Stack};
+use super::{ChromeCmd, ChromeEv, Corner, FRect, Key, Land, PlatformChrome, Stack, shelf_logical_size};
 
 /* ==================== window ==================== */
 
@@ -198,7 +198,155 @@ fn try_gtk_album(
 }
 
 impl ChromeWin {
-    pub(super) fn new(
+
+
+    fn reveal_if_ready(&mut self, painted: bool) {
+        // zwlr/gtk layer — winit is only a 1×1 handle; mapping it lands
+        // a shelf-sized surface in the compositor's default placement.
+        if !self.winit_maps {
+            if painted {
+                self.shown = true;
+            }
+            return;
+        }
+        if !self.shown && painted {
+            self.win.set_visible(true);
+            self.win.request_redraw();
+            self.shown = true;
+        }
+    }
+
+
+
+
+
+
+
+
+
+    fn emit(&self, ev: ChromeEv) {
+        if let Some(s) = self.sink.borrow().clone() {
+            s(ev);
+        }
+    }
+
+    /// Render the stack into the buffer and push it to the window.
+    /// `paint_bounds` caps the work to the dirty region — a fullscreen
+    /// copy + full-surface damage per frame was the animation jank.
+    fn present(&mut self) {
+        let now = Instant::now();
+        // track size/scale drift (fractional-scale flips, mode changes)
+        // here instead of a dedicated resize path - buffers simply
+        // follow inner_size each frame
+        self.scale = self.win.scale_factor();
+        if !self.fixed_shelf && !self.full_monitor {
+            let size = self.win.inner_size();
+            let (pw, ph) = (size.width.max(1) as usize, size.height.max(1) as usize);
+            self.lw = pw as f64 / self.scale;
+            self.lh = ph as f64 / self.scale;
+        }
+        let (pw, ph) = (
+            (self.lw * self.scale).round().max(1.0) as usize,
+            (self.lh * self.scale).round().max(1.0) as usize,
+        );
+        if self.buf.len() != pw * ph {
+            self.buf = vec![0; pw * ph];
+        }
+        let bounds = self.stack.paint_bounds(self.lw, self.lh, now);
+        if let Some(b) = bounds {
+            let s = self.scale;
+            let y0 = ((b.y * s).floor() as usize).min(ph);
+            let y1 = (((b.y + b.h) * s).ceil() as usize).min(ph);
+            for row in &mut self.buf[y0.min(y1) * pw..y1 * pw] {
+                *row = 0;
+            }
+        } else {
+            self.buf.fill(0);
+        }
+        {
+            let mut cv = Canvas {
+                buf: &mut self.buf,
+                w: pw,
+                h: ph,
+                scale: self.scale,
+            };
+            let font = self.font.clone();
+            self.stack.render(&mut cv, &font, self.accent, now);
+        }
+        // zone rects (not input_rects): the wider retention zone is the
+        // hysteresis that keeps hover alive between moving thumbs
+        let rects = self.stack.zone_rects(self.lw, self.lh);
+        // Wayland: arm winit's wl_surface.frame callback before our raw
+        // commit. Without it FrameCallbackState stays None and every
+        // request_redraw delivers RedrawRequested immediately - an
+        // unthrottled busy-loop instead of vsync-paced animation.
+        // dirty in physical px for the backends
+        let dirty = bounds.map(|b| FRect {
+            x: b.x * self.scale,
+            y: b.y * self.scale,
+            w: b.w * self.scale,
+            h: b.h * self.scale,
+        });
+        if self.fixed_shelf {
+            if let Imp::Wl(w) = &mut self.imp {
+                w.sync_layer_keyboard(self.stack.modal_open());
+            }
+        }
+        let show = self.shown || bounds.is_some() || self.stack.animating();
+        self.imp
+            .present(&self.buf, pw, ph, &rects, self.scale, dirty, show);
+        self.reveal_if_ready(bounds.is_some() || self.stack.animating());
+    }
+
+
+
+    fn apply_wl_input(&mut self, ev: WlChromeInput) {
+        match ev {
+            WlChromeInput::Move { x, y } => {
+                self.cursor = PhysicalPosition::new(x * self.scale, y * self.scale);
+                self.emit(if self.held {
+                    ChromeEv::Dragged { x, y }
+                } else {
+                    ChromeEv::Move { x, y }
+                });
+            }
+            WlChromeInput::Leave => {
+                self.held = false;
+                self.emit(ChromeEv::Leave);
+            }
+            WlChromeInput::Down { x, y } => {
+                self.held = true;
+                self.emit(ChromeEv::Down { x, y });
+            }
+            WlChromeInput::Up { x, y } => {
+                self.held = false;
+                self.emit(ChromeEv::Up { x, y });
+            }
+            WlChromeInput::RightDown { x, y } => {
+                self.emit(ChromeEv::RightDown { x, y });
+            }
+            WlChromeInput::Key(k) => self.emit(ChromeEv::Key(k)),
+        }
+    }
+
+
+
+
+
+
+
+
+
+    /// unused outside macOS — the host cfg-gates the call site
+    pub fn view_ptr(&self) -> *const c_void {
+        std::ptr::null()
+    }
+}
+
+/// Shared chrome contract — signatures enforced by
+/// `PlatformChrome` in `chrome.rs`; helpers stay inherent.
+impl PlatformChrome for ChromeWin {
+    fn new(
         el: &ActiveEventLoop,
         mon: &MonitorHandle,
         corner: Corner,
@@ -285,29 +433,13 @@ impl ChromeWin {
         })
     }
 
-    fn reveal_if_ready(&mut self, painted: bool) {
-        // zwlr/gtk layer — winit is only a 1×1 handle; mapping it lands
-        // a shelf-sized surface in the compositor's default placement.
-        if !self.winit_maps {
-            if painted {
-                self.shown = true;
-            }
-            return;
-        }
-        if !self.shown && painted {
-            self.win.set_visible(true);
-            self.win.request_redraw();
-            self.shown = true;
-        }
-    }
-
-    pub fn id(&self) -> WindowId {
+    fn id(&self) -> WindowId {
         self.win.id()
     }
 
     /// Settings → Appearance: retarget layer-shell anchor (Wayland) or
     /// stack layout (all paths).
-    pub(super) fn set_dock_corner(&mut self, corner: Corner) {
+    fn set_dock_corner(&mut self, corner: Corner) {
         self.stack.set_corner(corner);
         match &mut self.imp {
             Imp::Wl(w) => w.set_layer_corner(corner),
@@ -315,97 +447,27 @@ impl ChromeWin {
             _ => {}
         }
     }
-    pub(super) fn mon_key(&self) -> &str {
+
+    fn mon_key(&self) -> &str {
         &self.mon_key
     }
+
     /// Store the host's event sink — `land` binds it once the real
     /// WindowId exists. RefCell because this is `&self`.
-    pub(super) fn set_sink(&self, sink: Rc<dyn Fn(ChromeEv)>) {
+    fn set_sink(&self, sink: Rc<dyn Fn(ChromeEv)>) {
         *self.sink.borrow_mut() = Some(sink);
     }
-    pub fn stack(&self) -> &Stack {
+
+    fn stack(&self) -> &Stack {
         &self.stack
     }
-    pub fn stack_mut(&mut self) -> &mut Stack {
+
+    fn stack_mut(&mut self) -> &mut Stack {
         &mut self.stack
     }
 
-    fn emit(&self, ev: ChromeEv) {
-        if let Some(s) = self.sink.borrow().clone() {
-            s(ev);
-        }
-    }
-
-    /// Render the stack into the buffer and push it to the window.
-    /// `paint_bounds` caps the work to the dirty region — a fullscreen
-    /// copy + full-surface damage per frame was the animation jank.
-    fn present(&mut self) {
-        let now = Instant::now();
-        // track size/scale drift (fractional-scale flips, mode changes)
-        // here instead of a dedicated resize path - buffers simply
-        // follow inner_size each frame
-        self.scale = self.win.scale_factor();
-        if !self.fixed_shelf && !self.full_monitor {
-            let size = self.win.inner_size();
-            let (pw, ph) = (size.width.max(1) as usize, size.height.max(1) as usize);
-            self.lw = pw as f64 / self.scale;
-            self.lh = ph as f64 / self.scale;
-        }
-        let (pw, ph) = (
-            (self.lw * self.scale).round().max(1.0) as usize,
-            (self.lh * self.scale).round().max(1.0) as usize,
-        );
-        if self.buf.len() != pw * ph {
-            self.buf = vec![0; pw * ph];
-        }
-        let bounds = self.stack.paint_bounds(self.lw, self.lh, now);
-        if let Some(b) = bounds {
-            let s = self.scale;
-            let y0 = ((b.y * s).floor() as usize).min(ph);
-            let y1 = (((b.y + b.h) * s).ceil() as usize).min(ph);
-            for row in &mut self.buf[y0.min(y1) * pw..y1 * pw] {
-                *row = 0;
-            }
-        } else {
-            self.buf.fill(0);
-        }
-        {
-            let mut cv = Canvas {
-                buf: &mut self.buf,
-                w: pw,
-                h: ph,
-                scale: self.scale,
-            };
-            let font = self.font.clone();
-            self.stack.render(&mut cv, &font, self.accent, now);
-        }
-        // zone rects (not input_rects): the wider retention zone is the
-        // hysteresis that keeps hover alive between moving thumbs
-        let rects = self.stack.zone_rects(self.lw, self.lh);
-        // Wayland: arm winit's wl_surface.frame callback before our raw
-        // commit. Without it FrameCallbackState stays None and every
-        // request_redraw delivers RedrawRequested immediately - an
-        // unthrottled busy-loop instead of vsync-paced animation.
-        // dirty in physical px for the backends
-        let dirty = bounds.map(|b| FRect {
-            x: b.x * self.scale,
-            y: b.y * self.scale,
-            w: b.w * self.scale,
-            h: b.h * self.scale,
-        });
-        if self.fixed_shelf {
-            if let Imp::Wl(w) = &mut self.imp {
-                w.sync_layer_keyboard(self.stack.modal_open());
-            }
-        }
-        let show = self.shown || bounds.is_some() || self.stack.animating();
-        self.imp
-            .present(&self.buf, pw, ph, &rects, self.scale, dirty, show);
-        self.reveal_if_ready(bounds.is_some() || self.stack.animating());
-    }
-
     /// Fly a finished shot into this monitor's stack.
-    pub(super) fn land(&mut self, l: Land) {
+    fn land(&mut self, l: Land) {
         let from = l
             .sel
             .map(|r| FRect {
@@ -434,38 +496,9 @@ impl ChromeWin {
         }
     }
 
-    fn apply_wl_input(&mut self, ev: WlChromeInput) {
-        match ev {
-            WlChromeInput::Move { x, y } => {
-                self.cursor = PhysicalPosition::new(x * self.scale, y * self.scale);
-                self.emit(if self.held {
-                    ChromeEv::Dragged { x, y }
-                } else {
-                    ChromeEv::Move { x, y }
-                });
-            }
-            WlChromeInput::Leave => {
-                self.held = false;
-                self.emit(ChromeEv::Leave);
-            }
-            WlChromeInput::Down { x, y } => {
-                self.held = true;
-                self.emit(ChromeEv::Down { x, y });
-            }
-            WlChromeInput::Up { x, y } => {
-                self.held = false;
-                self.emit(ChromeEv::Up { x, y });
-            }
-            WlChromeInput::RightDown { x, y } => {
-                self.emit(ChromeEv::RightDown { x, y });
-            }
-            WlChromeInput::Key(k) => self.emit(ChromeEv::Key(k)),
-        }
-    }
-
     /// Platform event → stack → optional host command. Redraw is handled
     /// by the caller (Chrome::event) via `redraw`.
-    pub fn event(&mut self, ev: ChromeEv) -> Option<ChromeCmd> {
+    fn event(&mut self, ev: ChromeEv) -> Option<ChromeCmd> {
         let cmd = match ev {
             ChromeEv::Key(k) => self.stack.key(k),
             e => self.stack.pointer(e, self.lw, self.lh),
@@ -478,13 +511,13 @@ impl ChromeWin {
         }
     }
 
-    pub fn redraw(&mut self) {
+    fn redraw(&mut self) {
         self.present();
     }
 
     /// winit window event — translate to ChromeEv for the sink, repaint
     /// on request.
-    pub fn window_event(&mut self, ev: &WindowEvent) -> bool {
+    fn window_event(&mut self, ev: &WindowEvent) -> bool {
         match ev {
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor = *position;
@@ -571,7 +604,7 @@ impl ChromeWin {
     /// Animation driver — Wayland ticks on the compositor's frame
     /// callback (winit throttles RedrawRequested to it), X11 has no
     /// reliable vsync so it keeps the 16ms timer.
-    pub fn pump(&mut self) -> Option<Instant> {
+    fn pump(&mut self) -> Option<Instant> {
         if let Imp::Wl(wl) = &mut self.imp {
             wl.dispatch();
             for ev in wl.take_inputs() {
@@ -621,12 +654,8 @@ impl ChromeWin {
             }
         }
     }
-
-    /// unused outside macOS — the host cfg-gates the call site
-    pub fn view_ptr(&self) -> *const c_void {
-        std::ptr::null()
-    }
 }
+
 
 impl Imp {
     fn new(
