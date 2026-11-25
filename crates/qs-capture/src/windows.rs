@@ -210,13 +210,19 @@ unsafe fn capture_one(screen: HDC, mem: HDC, m: &Monitor) -> Result<CapturedFram
         }
         let s = m.scale;
         Ok(CapturedFrame {
-            geometry: MonitorGeometry {
-                origin: Point::new(
-                    (m.rect.left as f64 / s).round() as i32,
-                    (m.rect.top as f64 / s).round() as i32,
-                ),
-                size: Size::new((w as f64 / s).round() as u32, (h as f64 / s).round() as u32),
-                scale: s,
+            geometry: {
+                let lr = qs_core::PhysicalRect::new(
+                    m.rect.left,
+                    m.rect.top,
+                    w,
+                    h,
+                )
+                .to_logical(&qs_core::MonitorScale::new(s));
+                MonitorGeometry {
+                    origin: Point::new(lr.x, lr.y),
+                    size: Size::new(lr.w, lr.h),
+                    scale: s,
+                }
             },
             pixels: RgbaImage::from_raw(w, h, data).context("capture size mismatch")?,
         })

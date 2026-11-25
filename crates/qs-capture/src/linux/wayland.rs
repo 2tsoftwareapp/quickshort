@@ -10,7 +10,7 @@
 use anyhow::{bail, Context, Result};
 use pipewire as pw;
 use pw::spa;
-use qs_core::{CapturedFrame, MonitorGeometry, Point, Rect, Size};
+use qs_core::{CapturedFrame, MonitorGeometry, Rect};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -753,17 +753,8 @@ fn display_config(conn: &Connection) -> Result<Vec<Mon>> {
 }
 
 pub(super) fn mk_frame(img: image::RgbaImage, logical: Rect) -> CapturedFrame {
-    let scale = if logical.w > 0 {
-        img.width() as f64 / logical.w as f64
-    } else {
-        1.0
-    };
     CapturedFrame {
-        geometry: MonitorGeometry {
-            origin: Point::new(logical.x, logical.y),
-            size: Size::new(logical.w, logical.h),
-            scale,
-        },
+        geometry: MonitorGeometry::from_logical(logical.into(), img.width()),
         pixels: img,
     }
 }

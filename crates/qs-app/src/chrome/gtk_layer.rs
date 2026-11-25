@@ -136,8 +136,10 @@ fn create_surface(
             }
         }
     }
-    let pw = (lw * scale).round().max(1.0) as i32;
-    let ph = (lh * scale).round().max(1.0) as i32;
+    // surface dims = logical size in physical px on this monitor
+    let ms = qs_core::MonitorScale::new(scale);
+    let pw = ms.len(lw).round().max(1.0) as i32;
+    let ph = ms.len(lh).round().max(1.0) as i32;
     window.set_default_size(pw, ph);
 
     let pixels = std::sync::Arc::new(std::sync::Mutex::new(vec![0u8; pw as usize * ph as usize * 4]));

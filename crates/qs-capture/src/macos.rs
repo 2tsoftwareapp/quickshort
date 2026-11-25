@@ -7,7 +7,7 @@
 
 use anyhow::{bail, Context, Result};
 use image::RgbaImage;
-use qs_core::{CapturedFrame, MonitorGeometry, Point, Rect, Size};
+use qs_core::{CapturedFrame, MonitorGeometry, Rect};
 use screencapturekit::prelude::*;
 use screencapturekit::screenshot_manager::{CGImageExt, SCScreenshotManager};
 
@@ -56,14 +56,15 @@ fn grab(display: &SCDisplay, shows_cursor: bool) -> Result<CapturedFrame> {
     let pixels =
         RgbaImage::from_raw(w, h, image.rgba_data()?).context("captured image size mismatch")?;
     Ok(CapturedFrame {
-        geometry: MonitorGeometry {
-            origin: Point::new(frame.origin.x.round() as i32, frame.origin.y.round() as i32),
-            size: Size::new(
+        geometry: MonitorGeometry::from_logical(
+            qs_core::LogicalRect::new(
+                frame.origin.x.round() as i32,
+                frame.origin.y.round() as i32,
                 frame.size.width.round() as u32,
                 frame.size.height.round() as u32,
             ),
-            scale: w as f64 / frame.size.width,
-        },
+            w,
+        ),
         pixels,
     })
 }

@@ -6,7 +6,7 @@
 
 use anyhow::Result;
 use image::imageops;
-use qs_core::{CapturedFrame, Point, Rect};
+use qs_core::{CapturedFrame, LogicalPoint, LogicalRect, MonitorScale, PhysicalPoint, PhysicalRect, Point, Rect};
 use softbuffer::{Context, Surface};
 use std::num::NonZeroU32;
 use std::rc::Rc;
@@ -264,22 +264,19 @@ fn composite(frames: &[CapturedFrame], bounds: Rect) -> (Vec<u32>, Vec<u32>, f64
         .iter()
         .map(|f| f.geometry.scale)
         .fold(1.0_f64, f64::max);
-    let (w, h) = (
-        (bounds.w as f64 * cscale).round() as usize,
-        (bounds.h as f64 * cscale).round() as usize,
-    );
+    // the composite canvas is one virtual monitor: logical origin at
+    // `bounds`, physical px per logical px = cscale
+    let canvas_scale = MonitorScale::at(cscale, LogicalPoint::from(Point::new(bounds.x, bounds.y)));
+    let (w, h) = {
+        let br = LogicalRect::from(bounds).to_physical(&canvas_scale);
+        (br.w as usize, br.h as usize)
+    };
     let mut canvas = vec![0u32; w * h];
     for f in frames {
-        let mon = f.geometry.logical_rect();
         // this frame's region in canvas px
-        let (dx0, dy0) = (
-            ((mon.x - bounds.x) as f64 * cscale).round() as i64,
-            ((mon.y - bounds.y) as f64 * cscale).round() as i64,
-        );
-        let (dw, dh) = (
-            (mon.w as f64 * cscale).round() as u32,
-            (mon.h as f64 * cscale).round() as u32,
-        );
+        let dst = LogicalRect::from(f.geometry.logical_rect()).to_physical(&canvas_scale);
+        let (dx0, dy0) = (dst.x as i64, dst.y as i64);
+        let (dw, dh) = (dst.w, dst.h);
         let resized;
         let img = if f.pixels.width() == dw && f.pixels.height() == dh {
             &f.pixels
@@ -448,14 +445,16 @@ impl Session {
         }
     }
 
+    /// The composite canvas viewed as a monitor: logical origin `bounds`,
+    /// `cscale` physical px per logical px.
+    fn canvas_monitor(&self) -> MonitorScale {
+        MonitorScale::at(self.cscale, LogicalPoint::from(Point::new(self.bounds.x, self.bounds.y)))
+    }
+
     /// Logical virtual rect -> canvas px rect (canvas = logical * cscale).
     fn canvas_rect(&self, r: Rect) -> Rect {
-        Rect::new(
-            ((r.x - self.bounds.x) as f64 * self.cscale).round() as i32,
-            ((r.y - self.bounds.y) as f64 * self.cscale).round() as i32,
-            (r.w as f64 * self.cscale).round().max(1.0) as u32,
-            (r.h as f64 * self.cscale).round().max(1.0) as u32,
-        )
+        let p = LogicalRect::from(r).to_physical(&self.canvas_monitor());
+        Rect::new(p.x, p.y, p.w.max(1), p.h.max(1))
     }
 
     /// Monitor logical rect holding the selection's bottom-right corner —
@@ -618,13 +617,8 @@ impl Session {
         let op = if let Annotation::Pixelate(r) = an {
             let rc = self.canvas_rect(r);
             let (cw, ch) = self.canvas_dims();
-            let backup = annotate::pixelate_canvas(
-                &mut self.bright,
-                cw,
-                ch,
-                rc,
-                (annotate::PIX_BLOCK as f64 * self.cscale).round().max(2.0) as i32,
-            );
+            let block = self.canvas_monitor().len(annotate::PIX_BLOCK as f64).round().max(2.0) as i32;
+            let backup = annotate::pixelate_canvas(&mut self.bright, cw, ch, rc, block);
             Op::Add {
                 pix: Some((rc, backup)),
             }
@@ -800,10 +794,10 @@ impl Session {
 
     /// Physical dims of the `bright` canvas, for pixel-edit ops.
     fn canvas_dims(&self) -> (usize, usize) {
-        (
-            (self.bounds.w as f64 * self.cscale).round() as usize,
-            (self.bounds.h as f64 * self.cscale).round() as usize,
-        )
+        {
+            let p = LogicalRect::from(self.bounds).to_physical(&self.canvas_monitor());
+            (p.w as usize, p.h as usize)
+        }
     }
 
     fn sync_tb_flags(&mut self) {
@@ -855,13 +849,8 @@ impl Session {
                     // reproduces both the edit and the backup it had
                     let rc = self.canvas_rect(r);
                     let (cw, ch) = self.canvas_dims();
-                    let nb = annotate::pixelate_canvas(
-                        &mut self.bright,
-                        cw,
-                        ch,
-                        rc,
-                        (annotate::PIX_BLOCK as f64 * self.cscale).round().max(2.0) as i32,
-                    );
+                    let block = self.canvas_monitor().len(annotate::PIX_BLOCK as f64).round().max(2.0) as i32;
+                    let nb = annotate::pixelate_canvas(&mut self.bright, cw, ch, rc, block);
                     Some((rc, nb))
                 } else {
                     None
@@ -948,14 +937,11 @@ impl Session {
         scale: f64,
     ) -> Vec<u32> {
         let k = cscale / scale;
-        let (oxc, oyc) = (
-            (vrect.x - bounds.x) as f64 * cscale,
-            (vrect.y - bounds.y) as f64 * cscale,
-        );
-        let (cw, ch) = (
-            (bounds.w as f64 * cscale).round() as i32,
-            (bounds.h as f64 * cscale).round() as i32,
-        );
+        let cs = MonitorScale::at(cscale, LogicalPoint::from(Point::new(bounds.x, bounds.y)));
+        let o = LogicalPoint::new(vrect.x, vrect.y).to_physical(&cs);
+        let (oxc, oyc) = (o.x, o.y);
+        let cb = LogicalRect::from(bounds).to_physical(&cs);
+        let (cw, ch) = (cb.w as i32, cb.h as i32);
         let colmap: Vec<i32> = (0..sw).map(|x| (oxc + x as f64 * k) as i32).collect();
         let rowmap: Vec<i32> = (0..sh).map(|y| (oyc + y as f64 * k) as i32).collect();
         let mut buf = vec![0u32; sw * sh];
@@ -986,15 +972,11 @@ impl Session {
     /// MonitorHandle -> monitor rect in virtual coords.
     /// winit reports position/size in physical px; divide by scale_factor.
     fn vrect_of(m: &MonitorHandle) -> Rect {
-        let s = m.scale_factor();
         let p = m.position();
         let sz = m.size();
-        Rect::new(
-            (p.x as f64 / s).round() as i32,
-            (p.y as f64 / s).round() as i32,
-            (sz.width as f64 / s).round() as u32,
-            (sz.height as f64 / s).round() as u32,
-        )
+        PhysicalRect::new(p.x, p.y, sz.width, sz.height)
+            .to_logical(&MonitorScale::new(m.scale_factor()))
+            .into()
     }
 
     fn draw(&mut self, id: WindowId) {
@@ -1004,6 +986,7 @@ impl Session {
         // resolved before the `wins` borrow below — caret state is a
         // plain field, the range helper needs `&self`
         let sel_range = self.edit_range();
+        let cs = self.canvas_monitor();
         let wctx = &mut self.wins[i];
         let size = wctx.win.inner_size();
         let (sw, sh) = match (NonZeroU32::new(size.width), NonZeroU32::new(size.height)) {
@@ -1020,14 +1003,10 @@ impl Session {
         let scale = wctx.win.scale_factor();
         let k = self.cscale / scale;
         // canvas offset of this monitor (canvas px)
-        let (oxc, oyc) = (
-            (wctx.vrect.x - self.bounds.x) as f64 * self.cscale,
-            (wctx.vrect.y - self.bounds.y) as f64 * self.cscale,
-        );
-        let (cw, ch) = (
-            (self.bounds.w as f64 * self.cscale).round() as i32,
-            (self.bounds.h as f64 * self.cscale).round() as i32,
-        );
+        let o = LogicalPoint::new(wctx.vrect.x, wctx.vrect.y).to_physical(&cs);
+        let (oxc, oyc) = (o.x, o.y);
+        let cb = LogicalRect::from(self.bounds).to_physical(&cs);
+        let (cw, ch) = (cb.w as i32, cb.h as i32);
         // surface (x,y) -> canvas (cx, cy); precompute per-row/col mapping
         let colmap: Vec<i32> = (0..sw).map(|x| (oxc + x as f64 * k) as i32).collect();
         let rowmap: Vec<i32> = (0..sh).map(|y| (oyc + y as f64 * k) as i32).collect();
@@ -1353,12 +1332,10 @@ impl Session {
             WindowEvent::RedrawRequested => self.draw(id),
             WindowEvent::CursorMoved { position, .. } => {
                 // position is physical px; virtual coords are logical
-                let s = self.wins[i].win.scale_factor();
                 let v = self.wins[i].vrect;
-                self.cursor = Point::new(
-                    v.x + (position.x / s).round() as i32,
-                    v.y + (position.y / s).round() as i32,
-                );
+                let l = PhysicalPoint::new(position.x, position.y)
+                    .to_logical(&MonitorScale::new(self.wins[i].win.scale_factor()));
+                self.cursor = Point::new(v.x + l.x, v.y + l.y);
                 if let Some(g) = &mut self.grabbed {
                     // incremental integer delta — no drift, no per-frame
                     // clone of `before`

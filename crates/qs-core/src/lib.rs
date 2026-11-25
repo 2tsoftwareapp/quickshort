@@ -12,6 +12,9 @@
 use image::{imageops, RgbaImage};
 
 mod beautify;
+mod coords;
+
+pub use coords::{LogicalPoint, LogicalRect, MonitorScale, PhysicalPoint, PhysicalRect};
 pub use beautify::{beautify, beautify_opts, Beautify};
 
 pub mod config;
@@ -110,6 +113,28 @@ impl MonitorGeometry {
     pub fn logical_rect(&self) -> Rect {
         Rect::new(self.origin.x, self.origin.y, self.size.w, self.size.h)
     }
+
+    /// The logical↔physical bridge for this monitor: anchored at its
+    /// virtual logical origin, converting into buffer-local pixels.
+    pub fn monitor_scale(&self) -> MonitorScale {
+        MonitorScale::at(self.scale, self.origin.into())
+    }
+
+    /// Geometry from a backend-declared logical rect and the actual buffer
+    /// width — the scale is *derived* from the pixels the backend actually
+    /// returned, so the frame can never disagree with its own buffer.
+    pub fn from_logical(logical: LogicalRect, buf_w: u32) -> Self {
+        let scale = if logical.w > 0 {
+            buf_w as f64 / logical.w as f64
+        } else {
+            1.0
+        };
+        Self {
+            origin: Point::new(logical.x, logical.y),
+            size: crate::Size::new(logical.w, logical.h),
+            scale,
+        }
+    }
 }
 
 /// Raw screenshot of one monitor plus where it sits in virtual space.
@@ -158,39 +183,37 @@ pub fn stitch(frames: &[CapturedFrame], selection: Rect) -> Option<(RgbaImage, f
         .filter(|f| selection.intersection(&f.geometry.logical_rect()).is_some())
         .map(|f| f.geometry.scale)
         .fold(1.0_f64, f64::max);
-    let ow = (selection.w as f64 * out_scale).round().max(1.0) as u32;
-    let oh = (selection.h as f64 * out_scale).round().max(1.0) as u32;
+    let out_size = LogicalRect::from(selection).to_physical(&MonitorScale::new(out_scale));
+    let ow = out_size.w.max(1);
+    let oh = out_size.h.max(1);
     let mut out = RgbaImage::new(ow, oh);
     let mut covered = false;
 
+    let canvas = MonitorScale::at(out_scale, LogicalPoint::new(selection.x, selection.y));
     for frame in frames {
-        let mon = frame.geometry.logical_rect();
-        let Some(inter) = selection.intersection(&mon) else {
+        let Some(inter) = selection.intersection(&frame.geometry.logical_rect()) else {
             continue;
         };
         covered = true;
 
-        // intersection in monitor-local logical coords -> physical crop rect
-        let local = inter.translated(-mon.x, -mon.y);
-        let s = frame.geometry.scale;
-        let px = (local.x as f64 * s).round().max(0.0) as u32;
-        let py = (local.y as f64 * s).round().max(0.0) as u32;
-        let pr = ((local.x + inter.w as i32) as f64 * s).round() as u32;
-        let pb = ((local.y + inter.h as i32) as f64 * s).round() as u32;
+        // intersection -> monitor-buffer crop rect (buffer-local physical px)
+        let src = LogicalRect::from(inter).to_physical(&frame.geometry.monitor_scale());
         // clamp to the real buffer; scale * size may drift by a pixel
-        let px = px.min(frame.pixels.width());
-        let py = py.min(frame.pixels.height());
-        let pw = pr.min(frame.pixels.width()).saturating_sub(px);
-        let ph = pb.min(frame.pixels.height()).saturating_sub(py);
+        let px = (src.x.max(0) as u32).min(frame.pixels.width());
+        let py = (src.y.max(0) as u32).min(frame.pixels.height());
+        let pr = (src.x + src.w as i32).clamp(0, frame.pixels.width() as i32) as u32;
+        let pb = (src.y + src.h as i32).clamp(0, frame.pixels.height() as i32) as u32;
+        let pw = pr.saturating_sub(px);
+        let ph = pb.saturating_sub(py);
         if pw == 0 || ph == 0 {
             continue;
         }
 
         let crop = imageops::crop_imm(&frame.pixels, px, py, pw, ph).to_image();
-        let dw = (inter.w as f64 * out_scale).round() as u32;
-        let dh = (inter.h as f64 * out_scale).round() as u32;
-        let dx = ((inter.x - selection.x) as f64 * out_scale).round() as i64;
-        let dy = ((inter.y - selection.y) as f64 * out_scale).round() as i64;
+        // destination: the same logical rect at canvas scale
+        let dst = LogicalRect::from(inter).to_physical(&canvas);
+        let (dw, dh) = (dst.w, dst.h);
+        let (dx, dy) = (dst.x as i64, dst.y as i64);
         if pw == dw && ph == dh {
             imageops::overlay(&mut out, &crop, dx, dy);
         } else {
