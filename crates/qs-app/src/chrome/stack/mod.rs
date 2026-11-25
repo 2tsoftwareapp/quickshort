@@ -70,8 +70,10 @@ pub struct Shot {
 }
 
 impl Shot {
-    /// Premul-packed thumbnail pixels + dims (physical px) — backends
-    /// use it as the drag-session image.
+    /// Premul-packed thumbnail pixels + dims (physical px) — the macOS
+    /// backend uses it as the drag-session image (Linux/Windows drag the
+    /// file itself).
+    #[cfg(target_os = "macos")]
     pub fn thumb(&self) -> (&[u32], usize, usize) {
         (&self.thumb, self.tw, self.th)
     }

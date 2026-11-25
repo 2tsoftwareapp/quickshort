@@ -444,7 +444,11 @@ match res {
             el,
             Land {
                 img,
-                kind: ShotKind::Saved,
+                kind: if copied {
+                    ShotKind::Copied
+                } else {
+                    ShotKind::Saved
+                },
                 path: Some(p),
                 sel: Some(sel),
                 instant: false,
