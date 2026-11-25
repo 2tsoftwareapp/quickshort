@@ -6,20 +6,26 @@ use crate::{
     filmstrip::Filmstrip,
     fonts,
     icons::{self, ActionIcon},
-    image_panel::{self, OrientCmd},
+    image_panel,
     recovery,
+    state::{CloseDecision, Dialogs, DocumentState, ExportFormat, RenderState,
+            SavedDocSession, ToolState, ViewportState},
     styles,
     templates::{self, CombineLayout},
     theme::{self, accent_blue, success_green, text_primary},
     toolbar::{self, ZoomCmd},
 };
 use eframe::egui::{
-    self, Color32, ColorImage, CursorIcon, FontId, Key, Modifiers, Pos2, Rect, Stroke, StrokeKind,
-    TextureHandle, TextureOptions, Vec2,
+    self, Color32, ColorImage, CursorIcon, FontId, Key, Pos2, Rect, Stroke, StrokeKind,
+    TextureOptions, Vec2,
 };
+#[cfg(test)]
+use eframe::egui::Modifiers;
 use image::RgbaImage;
-use qs_doc::{Document, ObjectId, PointF, RectF, qsdoc};
-use qs_edit::{Alignment, Axis, DragHint, Editor, HandleId, Motion, Tool};
+#[cfg(test)]
+use qs_doc::ObjectId;
+use qs_doc::{Document, PointF, RectF, qsdoc};
+use qs_edit::{Alignment, Axis, DragHint, Editor, HandleId, Tool};
 use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -27,148 +33,39 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 
-/// What the user picked in the "unsaved changes" dialog.
-enum CloseDecision {
-    Save,
-    Discard,
-    Cancel,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum ExportFormat {
-    #[default]
-    Png,
-    Jpeg,
-    Webp,
-}
-
-impl ExportFormat {
-    fn ext(self) -> &'static str {
-        match self {
-            Self::Png => "png",
-            Self::Jpeg => "jpg",
-            Self::Webp => "webp",
-        }
-    }
-    fn label(self) -> &'static str {
-        match self {
-            Self::Png => "PNG (Lossless)",
-            Self::Jpeg => "JPEG (Compact)",
-            Self::Webp => "WebP",
-        }
-    }
-}
-
-struct SavedDocSession {
-    editor: Editor,
-    base: RgbaImage,
-    doc_path: Option<PathBuf>,
-    view: CanvasView,
-    unsaved: bool,
-    saved_rev: u64,
-}
-
-/// Texture + CPU cache for the canvas repaint; `needs_render` is the dirty
-/// flag that forces the next frame to rebuild `texture`.
-#[derive(Default)]
-struct RenderState {
-    texture: Option<TextureHandle>,
-    /// Reusable CPU render cache (premultiplied base pixmap + scratch pixmap).
-    render_cache: qs_render::RenderCache,
-    /// Cached 2x2 repeating checkerboard texture keyed by `pal().dark`.
-    checker_tex: Option<(bool, TextureHandle)>,
-    /// The rendered texture is stale and must be rebuilt this frame.
-    needs_render: bool,
-}
-
-/// Open modals, dropdowns and the canvas context menu — at most one is open
-/// at a time in practice; grouping makes that invariant visible.
-/// `close_confirmed` isn't a dialog but lives here as part of the close
-/// handshake.
-#[derive(Default)]
-struct Dialogs {
-    /// Closing was already confirmed, so the next close request goes through.
-    close_confirmed: bool,
-    /// The unsaved-changes dialog is on screen.
-    confirm_close: bool,
-    /// Edits left behind by a crashed session, waiting for the user to accept
-    /// or reject them.
-    pending_recovery: Option<(Document, RgbaImage)>,
-    canvas_dialog_open: bool,
-    export_menu_open: bool,
-    export_anchor: Option<Rect>,
-    app_menu_open: bool,
-    app_menu_anchor: Option<Rect>,
-    combine_dialog_open: bool,
-    /// Right-click context menu on canvas: `(screen_pos, clicked_object_id)`.
-    context_menu: Option<(Pos2, Option<ObjectId>)>,
-    /// Keyboard shortcuts cheat sheet modal (`?` or Status Bar button).
-    shortcuts_open: bool,
-    alignment_open: bool,
-}
-
+/// The application facade: composes the sub-states from `state.rs` and
+/// owns the window chrome (panels, dialogs, menus). Keyboard routing
+/// lives in `input.rs`.
 pub struct EditorApp {
-    editor: Editor,
-    base: RgbaImage,
-    doc_path: Option<PathBuf>,
-    view: CanvasView,
-    render_state: RenderState,
-    /// Prevents overlapping background autosave threads.
-    autosave_busy: Arc<AtomicBool>,
-    /// The document holds edits that are not on disk yet.
-    unsaved: bool,
-    /// Editor revision at the last save/load; `unsaved` is derived from it.
-    saved_rev: u64,
-    dialogs: Dialogs,
-    /// When the recovery copy was last written.
-    autosave_at: Option<std::time::Instant>,
+    /// Document lifecycle: .qsdoc, dirty flag, sessions, recovery.
+    pub(crate) doc: DocumentState,
+    /// Zoom/pan mapping and filmstrip selection.
+    pub(crate) viewport: ViewportState,
+    /// Working state of the modal tool surfaces and pointer/text sessions.
+    pub(crate) tools: ToolState,
+    pub(crate) render_state: RenderState,
+    pub(crate) dialogs: Dialogs,
     /// Title currently pushed to the viewport, to avoid re-sending it.
-    window_title: Option<String>,
-    needs_initial_fit: bool,
-    last_canvas_rect: Option<Rect>,
-    fit_memo: Option<crate::canvas::FitMemo>,
-    saw_drag_press: bool,
-    toast: Option<(String, std::time::Instant)>,
-    /// Document and base image before "Flatten all", so undo can bring
-    /// the layers back.
-    pre_flatten: Option<(Document, RgbaImage)>,
-    canvas_insets: [f32; 4],
-    canvas_background: u32,
-    resize_w: u32,
-    resize_h: u32,
-    resize_lock: bool,
-    export_format: ExportFormat,
-    export_quality: u8,
-    combine_layout: CombineLayout,
-    tray_selected: Vec<PathBuf>,
-    show_layers: bool,
+    pub(crate) window_title: Option<String>,
+    pub(crate) toast: Option<(String, std::time::Instant)>,
+    pub(crate) show_layers: bool,
     /// Last painted width of the resizable layers panel, so the open/close
     /// animation returns to the user's own width rather than the default.
-    layers_w: f32,
-    show_inspector: bool,
-    show_filmstrip: bool,
-    /// Keyboard cursor over the filmstrip (arrows move it, Space marks).
-    filmstrip_focus: Option<usize>,
-    last_cursor_doc: Option<qs_doc::PointF>,
-    filmstrip: Filmstrip,
-    session_cache: std::collections::HashMap<PathBuf, SavedDocSession>,
-    canvas_anchor: (usize, usize),
-    prefs: crate::prefs::AppPrefs,
-    next_prefs_poll: Instant,
+    pub(crate) layers_w: f32,
+    pub(crate) show_inspector: bool,
+    pub(crate) filmstrip: Filmstrip,
+    pub(crate) prefs: crate::prefs::AppPrefs,
+    pub(crate) next_prefs_poll: Instant,
     /// Quick Styles: built-in presets + the user's saved ones.
-    styles: styles::Library,
-    /// Text filter for the quick-style bar (session state).
-    style_filter: String,
+    pub(crate) styles: styles::Library,
     /// OCR line hints for the Smart Move tool, region copy and Find.
-    ocr_hints: crate::ocr_hint::OcrHints,
+    pub(crate) ocr_hints: crate::ocr_hint::OcrHints,
     /// Find in capture: window state, plus the focus we last panned to so the
     /// canvas is not re-centred every frame (which would fight panning).
-    find: crate::find::FindState,
-    last_find_focus: Option<(String, usize)>,
+    pub(crate) find: crate::find::FindState,
+    pub(crate) last_find_focus: Option<(String, usize)>,
     /// Capture library browser (search, tags, favourites, pruning).
-    library: crate::library::Library,
-    /// In-flight IME composition (Telex/VNI preedit) drawn beside the caret.
-    ime_preedit: String,
+    pub(crate) library: crate::library::Library,
 }
 
 fn anchored_insets(vertical: f32, horizontal: f32, anchor: (usize, usize)) -> [f32; 4] {
@@ -212,56 +109,62 @@ impl EditorApp {
         let show_layers = doc.objects.len() >= 2;
         let filmstrip = Filmstrip::new(doc_path.as_deref());
         let mut app = Self {
-            editor: Editor::new(doc),
-            base,
-            doc_path,
-            view,
+            doc: DocumentState {
+                editor: Editor::new(doc),
+                base,
+                path: doc_path,
+                unsaved: false,
+                saved_rev: 0,
+                session_cache: std::collections::HashMap::new(),
+                autosave_busy: Arc::new(AtomicBool::new(false)),
+                autosave_at: None,
+                pre_flatten: None,
+            },
+            viewport: ViewportState {
+                view,
+                needs_initial_fit: true,
+                last_canvas_rect: None,
+                fit_memo: None,
+                last_cursor_doc: None,
+                show_filmstrip: false,
+                filmstrip_focus: None,
+                tray_selected: Vec::new(),
+            },
+            tools: ToolState {
+                canvas_insets: [0.0; 4],
+                canvas_anchor: (1, 1),
+                canvas_background,
+                resize_w: init_w,
+                resize_h: init_h,
+                resize_lock: true,
+                export_format: ExportFormat::Png,
+                export_quality: 90,
+                combine_layout: CombineLayout::SideBySide,
+                style_filter: String::new(),
+                saw_drag_press: false,
+                ime_preedit: String::new(),
+            },
             render_state: RenderState {
                 needs_render: true,
                 ..Default::default()
             },
-            autosave_busy: Arc::new(AtomicBool::new(false)),
-            unsaved: false,
-            saved_rev: 0,
             dialogs: Dialogs {
                 pending_recovery: pending,
                 ..Default::default()
             },
-            autosave_at: None,
             window_title: None,
-            needs_initial_fit: true,
-            last_canvas_rect: None,
-            fit_memo: None,
-            saw_drag_press: false,
             toast: None,
-            pre_flatten: None,
-            canvas_insets: [0.0; 4],
-            canvas_background,
-            resize_w: init_w,
-            resize_h: init_h,
-            resize_lock: true,
-            export_format: ExportFormat::Png,
-            export_quality: 90,
-            combine_layout: CombineLayout::SideBySide,
-            tray_selected: Vec::new(),
-            canvas_anchor: (1, 1),
             show_layers,
             layers_w: 236.0,
             show_inspector: true,
-            show_filmstrip: false,
-            filmstrip_focus: None,
-            last_cursor_doc: None,
             filmstrip,
-            session_cache: std::collections::HashMap::new(),
             prefs,
             next_prefs_poll: Instant::now(),
             styles: styles::Library::load(),
-            library: crate::library::Library::default(),
-            style_filter: String::new(),
-            ime_preedit: String::new(),
             ocr_hints: crate::ocr_hint::OcrHints::default(),
             find: crate::find::FindState::default(),
             last_find_focus: None,
+            library: crate::library::Library::default(),
         };
         app.update_texture(&cc.egui_ctx);
         app
@@ -287,29 +190,29 @@ impl EditorApp {
     }
 
     /// Puts an already-loaded document in place of the current one.
-    fn apply_document(&mut self, doc: Document, base: RgbaImage) {
+    pub(crate) fn apply_document(&mut self, doc: Document, base: RgbaImage) {
         let canvas_background = doc.background;
         let base_rect = RectF::new(0.0, 0.0, doc.base_size.w, doc.base_size.h);
-        self.view = CanvasView::default();
-        self.view.sync(&doc);
-        self.view.center = self.view.map.to_display(base_rect.center());
-        self.view.zoom = (700.0 / doc.base_size.w.max(1.0))
+        self.viewport.view = CanvasView::default();
+        self.viewport.view.sync(&doc);
+        self.viewport.view.center = self.viewport.view.map.to_display(base_rect.center());
+        self.viewport.view.zoom = (700.0 / doc.base_size.w.max(1.0))
             .min(500.0 / doc.base_size.h.max(1.0))
             .clamp(0.2, 1.0);
-        self.base = base;
+        self.doc.base = base;
         self.render_state.render_cache.invalidate_base();
-        self.editor = Editor::new(doc);
-        self.pre_flatten = None;
+        self.doc.editor = Editor::new(doc);
+        self.doc.pre_flatten = None;
         // A different document can share the previous one's size, scale and
         // view; the hint cache is keyed on those, so it has to be dropped
         // explicitly rather than waiting for a key mismatch.
         self.ocr_hints.clear();
-        self.canvas_background = canvas_background;
-        self.canvas_insets = [0.0; 4];
-        self.canvas_anchor = (1, 1);
+        self.tools.canvas_background = canvas_background;
+        self.tools.canvas_insets = [0.0; 4];
+        self.tools.canvas_anchor = (1, 1);
         self.render_state.texture = None;
         self.render_state.needs_render = true;
-        self.needs_initial_fit = true;
+        self.viewport.needs_initial_fit = true;
     }
 
     /// Asks what to do with edits recovered from a crashed session.
@@ -356,7 +259,7 @@ impl EditorApp {
         match choice {
             Some(true) => {
                 self.apply_document(doc, base);
-                self.editor.mark_modified();
+                self.doc.editor.mark_modified();
                 self.sync_unsaved();
                 self.show_toast("Recovered unsaved changes");
             }
@@ -383,18 +286,18 @@ impl EditorApp {
     /// without a frame.
     pub fn create_combined_sheet(&mut self) -> anyhow::Result<()> {
         let (doc, base) = templates::build_combined_document(
-            &self.tray_selected,
-            self.combine_layout,
-            self.editor.doc().background,
+            &self.viewport.tray_selected,
+            self.tools.combine_layout,
+            self.doc.editor.doc().background,
         )?;
-        self.doc_path = None;
+        self.doc.path = None;
         self.apply_document(doc, base);
-        self.editor.mark_modified();
+        self.doc.editor.mark_modified();
         self.touch();
         // The sheet is a new unsaved document; state it here instead of waiting
         // for the next frame's sync.
         self.sync_unsaved();
-        self.tray_selected.clear();
+        self.viewport.tray_selected.clear();
         self.dialogs.combine_dialog_open = false;
         Ok(())
     }
@@ -402,19 +305,19 @@ impl EditorApp {
     /// Mark captures for Combine, for tests.
     #[doc(hidden)]
     pub fn set_tray_selection(&mut self, paths: Vec<std::path::PathBuf>) {
-        self.tray_selected = paths;
+        self.viewport.tray_selected = paths;
     }
 
     /// True when the current document has unsaved edits, for tests.
     #[doc(hidden)]
     pub fn has_unsaved_edits(&self) -> bool {
-        self.unsaved
+        self.doc.unsaved
     }
 
     /// Current document, for tests.
     #[doc(hidden)]
     pub fn document(&self) -> &Document {
-        self.editor.doc()
+        self.doc.editor.doc()
     }
 
     /// Blank editor for tests: same field set as the internal test fixture,
@@ -423,63 +326,69 @@ impl EditorApp {
     pub fn for_tests(doc: Document, base: RgbaImage) -> Self {
         let w = doc.base_size.w.max(1.0) as u32;
         let h = doc.base_size.h.max(1.0) as u32;
-        Self {
-            editor: Editor::new(doc),
-            base,
-            doc_path: None,
-            view: CanvasView::default(),
+Self {
+            doc: DocumentState {
+                editor: Editor::new(doc),
+                base,
+                path: None,
+                unsaved: false,
+                saved_rev: 0,
+                session_cache: std::collections::HashMap::new(),
+                autosave_busy: Arc::new(AtomicBool::new(false)),
+                autosave_at: None,
+                pre_flatten: None,
+            },
+            viewport: ViewportState {
+                view: CanvasView::default(),
+                needs_initial_fit: true,
+                last_canvas_rect: None,
+                fit_memo: None,
+                last_cursor_doc: None,
+                show_filmstrip: false,
+                filmstrip_focus: None,
+                tray_selected: Vec::new(),
+            },
+            tools: ToolState {
+                canvas_insets: [0.0; 4],
+                canvas_anchor: (1, 1),
+                canvas_background: 0,
+                resize_w: w,
+                resize_h: h,
+                resize_lock: true,
+                export_format: ExportFormat::Png,
+                export_quality: 90,
+                combine_layout: CombineLayout::SideBySide,
+                style_filter: String::new(),
+                saw_drag_press: false,
+                ime_preedit: String::new(),
+            },
             render_state: RenderState {
                 needs_render: true,
                 ..Default::default()
             },
-            autosave_busy: Arc::new(AtomicBool::new(false)),
-            unsaved: false,
-            saved_rev: 0,
             dialogs: Dialogs::default(),
-            autosave_at: None,
             window_title: None,
-            needs_initial_fit: true,
-            last_canvas_rect: None,
-            fit_memo: None,
-            saw_drag_press: false,
+            toast: None,
             show_layers: true,
             layers_w: 236.0,
             show_inspector: true,
-            show_filmstrip: false,
-            filmstrip_focus: None,
-            last_cursor_doc: None,
             filmstrip: Filmstrip::new(None),
-            session_cache: std::collections::HashMap::new(),
-            toast: None,
-            pre_flatten: None,
-            canvas_insets: [0.0; 4],
-            canvas_background: 0,
-            resize_w: w,
-            resize_h: h,
-            resize_lock: true,
-            export_format: ExportFormat::Png,
-            export_quality: 90,
-            combine_layout: CombineLayout::SideBySide,
-            tray_selected: Vec::new(),
-            canvas_anchor: (1, 1),
             prefs: crate::prefs::AppPrefs::default(),
             next_prefs_poll: Instant::now(),
             styles: styles::Library::default(),
-            library: crate::library::Library::default(),
-            style_filter: String::new(),
-            ime_preedit: String::new(),
             ocr_hints: crate::ocr_hint::OcrHints::default(),
             find: crate::find::FindState::default(),
             last_find_focus: None,
+            library: crate::library::Library::default(),
         }
     }
 
     pub fn load_path(&mut self, path: &Path) -> anyhow::Result<()> {
         let (doc, base, doc_path) = load_document(path)?;
         self.apply_document(doc, base);
-        self.doc_path = Some(doc_path);
+        self.doc.path = Some(doc_path);
         self.mark_saved();
-        self.dialogs.pending_recovery = Self::pending_recovery(self.doc_path.as_deref());
+        self.dialogs.pending_recovery = Self::pending_recovery(self.doc.path.as_deref());
         let name = self.display_name().to_string();
         self.show_toast(format!("Opened {name}"));
         Ok(())
@@ -488,40 +397,40 @@ impl EditorApp {
     /// Switch to another capture/document, preserving the current one in the
     /// session cache (zoom, pan, unsaved state, and undo/redo history).
     pub fn switch_to_path(&mut self, path: &Path) -> anyhow::Result<()> {
-        if self.doc_path.as_deref() == Some(path) {
+        if self.doc.path.as_deref() == Some(path) {
             return Ok(());
         }
-        if let Some(cur_path) = self.doc_path.clone() {
+        if let Some(cur_path) = self.doc.path.clone() {
             let blank_doc = Document::new(1, 1, 1.0);
-            let old_editor = std::mem::replace(&mut self.editor, Editor::new(blank_doc));
+            let old_editor = std::mem::replace(&mut self.doc.editor, Editor::new(blank_doc));
             let old_base = std::mem::replace(
-                &mut self.base,
+                &mut self.doc.base,
                 RgbaImage::new(1, 1),
             );
-            let old_view = std::mem::take(&mut self.view);
-            self.session_cache.insert(
+            let old_view = std::mem::take(&mut self.viewport.view);
+            self.doc.session_cache.insert(
                 cur_path.clone(),
                 SavedDocSession {
                     editor: old_editor,
                     base: old_base,
                     doc_path: Some(cur_path),
                     view: old_view,
-                    unsaved: self.unsaved,
-                    saved_rev: self.saved_rev,
+                    unsaved: self.doc.unsaved,
+                    saved_rev: self.doc.saved_rev,
                 },
             );
         }
 
-        if let Some(cached) = self.session_cache.remove(path) {
-            self.editor = cached.editor;
-            self.base = cached.base;
+        if let Some(cached) = self.doc.session_cache.remove(path) {
+            self.doc.editor = cached.editor;
+            self.doc.base = cached.base;
             self.render_state.render_cache.invalidate_base();
-            self.doc_path = cached.doc_path;
-            self.view = cached.view;
-            self.unsaved = cached.unsaved;
-            self.saved_rev = cached.saved_rev;
+            self.doc.path = cached.doc_path;
+            self.viewport.view = cached.view;
+            self.doc.unsaved = cached.unsaved;
+            self.doc.saved_rev = cached.saved_rev;
             self.render_state.needs_render = true;
-            self.needs_initial_fit = false;
+            self.viewport.needs_initial_fit = false;
             self.dialogs.pending_recovery = None;
             let name = self.display_name().to_string();
             self.show_toast(format!("Switched to {name}"));
@@ -533,14 +442,14 @@ impl EditorApp {
 
     /// File name to show in titles, dialogs and toasts.
     fn display_name(&self) -> &str {
-        self.doc_path
+        self.doc.path
             .as_ref()
             .and_then(|p| p.file_name())
             .and_then(|s| s.to_str())
             .unwrap_or("Untitled")
     }
 
-    fn show_toast(&mut self, msg: impl Into<String>) {
+    pub(crate) fn show_toast(&mut self, msg: impl Into<String>) {
         self.toast = Some((msg.into(), std::time::Instant::now()));
     }
 
@@ -565,7 +474,7 @@ impl EditorApp {
     }
 
     fn update_texture(&mut self, ctx: &egui::Context) {
-        let flat = self.render_state.render_cache.render(self.editor.doc(), &self.base);
+        let flat = self.render_state.render_cache.render(self.doc.editor.doc(), &self.doc.base);
         let size = [flat.width() as usize, flat.height() as usize];
         let color_img = ColorImage::from_rgba_unmultiplied(size, flat.as_raw());
         if let Some(tex) = &mut self.render_state.texture {
@@ -580,7 +489,7 @@ impl EditorApp {
     /// Saves to the current path, asking for one when the document has never
     /// been written. A cancelled dialog leaves `unsaved` set.
     pub fn save(&mut self) -> anyhow::Result<()> {
-        match self.doc_path.clone() {
+        match self.doc.path.clone() {
             Some(p) => self.save_to(&p),
             None => self.save_as(),
         }
@@ -591,7 +500,7 @@ impl EditorApp {
         let mut dialog = rfd::FileDialog::new()
             .add_filter("Quickshort document", &[qsdoc::EXT])
             .set_file_name(self.display_name());
-        if let Some(dir) = self.doc_path.as_ref().and_then(|p| p.parent()) {
+        if let Some(dir) = self.doc.path.as_ref().and_then(|p| p.parent()) {
             dialog = dialog.set_directory(dir);
         }
         let Some(path) = dialog.save_file() else {
@@ -603,11 +512,11 @@ impl EditorApp {
         } else {
             path.with_extension(qsdoc::EXT)
         };
-        let previous_slot = recovery::slot_path(self.doc_path.as_deref());
+        let previous_slot = recovery::slot_path(self.doc.path.as_deref());
         self.save_to(&path)?;
         // an untitled or renamed document leaves its old recovery copy behind
         if let Some(old) = previous_slot {
-            if Some(old.clone()) != recovery::slot_path(self.doc_path.as_deref()) {
+            if Some(old.clone()) != recovery::slot_path(self.doc.path.as_deref()) {
                 recovery::clear(&old);
             }
         }
@@ -616,12 +525,12 @@ impl EditorApp {
 
     fn save_to(&mut self, path: &Path) -> anyhow::Result<()> {
         // Finalize pending gestures before remembering the saved revision.
-        self.editor.finish_effects();
-        self.editor.end_text_edit();
-        let flat = qs_render::render(self.editor.doc(), &self.base);
+        self.doc.editor.finish_effects();
+        self.doc.editor.end_text_edit();
+        let flat = qs_render::render(self.doc.editor.doc(), &self.doc.base);
         let thumb = qsdoc::make_thumb(&flat);
-        qsdoc::write(path, self.editor.doc(), &self.base, Some(&thumb))?;
-        self.doc_path = Some(path.to_path_buf());
+        qsdoc::write(path, self.doc.editor.doc(), &self.doc.base, Some(&thumb))?;
+        self.doc.path = Some(path.to_path_buf());
         self.mark_saved();
         self.clear_autosave();
         let name = self.display_name().to_string();
@@ -663,7 +572,7 @@ impl EditorApp {
                         {
                             ui.label(label);
                             ui.add(
-                                egui::DragValue::new(&mut self.canvas_insets[index])
+                                egui::DragValue::new(&mut self.tools.canvas_insets[index])
                                     .speed(1.0)
                                     .range(-100_000.0..=100_000.0),
                             );
@@ -679,7 +588,7 @@ impl EditorApp {
                         for column in 0..3usize {
                             let (r, resp) =
                                 ui.allocate_exact_size(Vec2::splat(cell), egui::Sense::click());
-                            let active = self.canvas_anchor == (column, row);
+                            let active = self.tools.canvas_anchor == (column, row);
                             let painter = ui.painter();
                             painter.rect_filled(
                                 r,
@@ -713,34 +622,34 @@ impl EditorApp {
                                 },
                             );
                             if resp.clicked() {
-                                let vertical = self.canvas_insets[0] + self.canvas_insets[2];
-                                let horizontal = self.canvas_insets[1] + self.canvas_insets[3];
-                                self.canvas_insets =
+                                let vertical = self.tools.canvas_insets[0] + self.tools.canvas_insets[2];
+                                let horizontal = self.tools.canvas_insets[1] + self.tools.canvas_insets[3];
+                                self.tools.canvas_insets =
                                     anchored_insets(vertical, horizontal, (column, row));
-                                self.canvas_anchor = (column, row);
+                                self.tools.canvas_anchor = (column, row);
                             }
                         }
                     });
                 }
                 ui.label("Negative values crop that edge.");
 
-                let [a, r, g, b] = self.canvas_background.to_be_bytes();
+                let [a, r, g, b] = self.tools.canvas_background.to_be_bytes();
                 let mut color = Color32::from_rgba_unmultiplied(r, g, b, a);
                 ui.horizontal(|ui| {
                     ui.label("Canvas color");
                     ui.color_edit_button_srgba(&mut color);
                 });
                 let [r, g, b, a] = color.to_srgba_unmultiplied();
-                self.canvas_background = u32::from_be_bytes([a, r, g, b]);
+                self.tools.canvas_background = u32::from_be_bytes([a, r, g, b]);
                 ui.horizontal_wrapped(|ui| {
                     if crate::components::pill_button(ui, "Transparent", "") {
-                        self.canvas_background = 0;
+                        self.tools.canvas_background = 0;
                     }
                     if crate::components::pill_button(ui, "White", "") {
-                        self.canvas_background = u32::MAX;
+                        self.tools.canvas_background = u32::MAX;
                     }
                     if crate::components::pill_button(ui, "Black", "") {
-                        self.canvas_background = 255 << 24;
+                        self.tools.canvas_background = 255 << 24;
                     }
                 });
 
@@ -769,25 +678,25 @@ impl EditorApp {
                 ui.separator();
                 ui.label("Resample image (px)");
                 ui.horizontal_wrapped(|ui| {
-                    let (bw, bh) = (self.base.width().max(1), self.base.height().max(1));
+                    let (bw, bh) = (self.doc.base.width().max(1), self.doc.base.height().max(1));
                     let aspect = bw as f32 / bh as f32;
                     let w_resp = ui.add(
-                        egui::DragValue::new(&mut self.resize_w)
+                        egui::DragValue::new(&mut self.tools.resize_w)
                             .range(1..=16384)
                             .prefix("W: "),
                     );
-                    if w_resp.changed() && self.resize_lock {
-                        self.resize_h = ((self.resize_w as f32 / aspect).round() as u32).max(1);
+                    if w_resp.changed() && self.tools.resize_lock {
+                        self.tools.resize_h = ((self.tools.resize_w as f32 / aspect).round() as u32).max(1);
                     }
                     let h_resp = ui.add(
-                        egui::DragValue::new(&mut self.resize_h)
+                        egui::DragValue::new(&mut self.tools.resize_h)
                             .range(1..=16384)
                             .prefix("H: "),
                     );
-                    if h_resp.changed() && self.resize_lock {
-                        self.resize_w = ((self.resize_h as f32 * aspect).round() as u32).max(1);
+                    if h_resp.changed() && self.tools.resize_lock {
+                        self.tools.resize_w = ((self.tools.resize_h as f32 * aspect).round() as u32).max(1);
                     }
-                    ui.checkbox(&mut self.resize_lock, "Lock");
+                    ui.checkbox(&mut self.tools.resize_lock, "Lock");
                     if crate::components::pill_button(ui, "Resize", "") {
                         resample = true;
                     }
@@ -796,14 +705,14 @@ impl EditorApp {
         }
 
         if resample {
-            let nw = self.resize_w.clamp(1, 16384);
-            let nh = self.resize_h.clamp(1, 16384);
-            if nw != self.base.width() || nh != self.base.height() {
+            let nw = self.tools.resize_w.clamp(1, 16384);
+            let nh = self.tools.resize_h.clamp(1, 16384);
+            if nw != self.doc.base.width() || nh != self.doc.base.height() {
                 let resized =
-                    image::imageops::resize(&self.base, nw, nh, image::imageops::FilterType::Lanczos3);
-                let sx = nw as f32 / self.base.width().max(1) as f32;
-                let sy = nh as f32 / self.base.height().max(1) as f32;
-                let mut doc = self.editor.doc().clone();
+                    image::imageops::resize(&self.doc.base, nw, nh, image::imageops::FilterType::Lanczos3);
+                let sx = nw as f32 / self.doc.base.width().max(1) as f32;
+                let sy = nh as f32 / self.doc.base.height().max(1) as f32;
+                let mut doc = self.doc.editor.doc().clone();
                 doc.base_size = qs_doc::SizeF::new(nw as f32 / doc.scale, nh as f32 / doc.scale);
                 doc.view = RectF::new(
                     doc.view.x * sx,
@@ -812,81 +721,81 @@ impl EditorApp {
                     doc.view.h * sy,
                 );
                 self.apply_document(doc, resized);
-                self.editor.mark_modified();
+                self.doc.editor.mark_modified();
                 self.touch();
                 self.show_toast(format!("Resized image to {nw}×{nh}"));
             }
             self.dialogs.canvas_dialog_open = false;
         } else if trim {
-            if self.editor.trim_to_content(&self.base, 6) {
+            if self.doc.editor.trim_to_content(&self.doc.base, 6) {
                 self.touch();
                 self.dialogs.canvas_dialog_open = false;
             } else {
                 self.show_toast("No safe uniform border to trim");
             }
         } else if fit_to_image {
-            let view = self.editor.doc().view;
-            let base = self.editor.doc().base_size;
+            let view = self.doc.editor.doc().view;
+            let base = self.doc.editor.doc().base_size;
             let top = view.y;
             let left = view.x;
             let right = base.w - view.w - left;
             let bottom = base.h - view.h - top;
             if self
-                .editor
-                .update_canvas(top, right, bottom, left, self.canvas_background)
+                .doc.editor
+                .update_canvas(top, right, bottom, left, self.tools.canvas_background)
             {
                 self.touch();
             }
-            self.canvas_insets = [0.0; 4];
+            self.tools.canvas_insets = [0.0; 4];
             self.dialogs.canvas_dialog_open = false;
         } else if fit_to_objects {
             if self
-                .editor
-                .fit_canvas_to_objects_with_background(self.canvas_background)
+                .doc.editor
+                .fit_canvas_to_objects_with_background(self.tools.canvas_background)
             {
                 self.touch();
             }
-            self.canvas_insets = [0.0; 4];
+            self.tools.canvas_insets = [0.0; 4];
             self.dialogs.canvas_dialog_open = false;
         } else if apply {
             // the dialog's edges are the displayed ones
             let insets = self
-                .editor
+                .doc.editor
                 .doc()
                 .orientation
-                .insets_to_input(self.canvas_insets);
+                .insets_to_input(self.tools.canvas_insets);
             let [top, right, bottom, left] = insets;
             if self
-                .editor
-                .update_canvas(top, right, bottom, left, self.canvas_background)
+                .doc.editor
+                .update_canvas(top, right, bottom, left, self.tools.canvas_background)
             {
                 self.touch();
             }
-            self.canvas_insets = [0.0; 4];
+            self.tools.canvas_insets = [0.0; 4];
             self.dialogs.canvas_dialog_open = false;
         }
     }
 
     /// The rendered texture is stale after an interaction; whether the
     /// document is actually dirty is decided by [`EditorApp::sync_unsaved`].
-    fn touch(&mut self) {
+    pub(crate) fn touch(&mut self) {
         self.render_state.needs_render = true;
     }
 
     /// Derives the unsaved flag from the editor's revision counter, so a click
     /// that changes nothing never marks the document dirty.
     fn sync_unsaved(&mut self) {
-        self.unsaved = self.editor.revision() != self.saved_rev;
+        self.doc.unsaved = self.doc.editor.revision() != self.doc.saved_rev;
     }
 
     /// Remembers the current state as the one on disk.
     fn mark_saved(&mut self) {
-        self.saved_rev = self.editor.revision();
-        self.unsaved = false;
+        self.doc.saved_rev = self.doc.editor.revision();
+        self.doc.unsaved = false;
     }
 
     fn clear_autosave(&mut self) {
-        if let Some(slot) = recovery::slot_path(self.doc_path.as_deref()) {
+        if let Some(slot) = recovery::slot_path(self.doc.path.as_deref()) {
             recovery::clear(&slot);
         }
     }
@@ -895,31 +804,31 @@ impl EditorApp {
     /// [`recovery::AUTOSAVE_INTERVAL`], on a background thread so PNG encoding
     /// and fsync never stall the UI thread.
     fn autosave_tick(&mut self) {
-        if !self.unsaved {
+        if !self.doc.unsaved {
             return;
         }
         let now = std::time::Instant::now();
         if self
-            .autosave_at
+            .doc.autosave_at
             .is_some_and(|last| now.duration_since(last) < recovery::AUTOSAVE_INTERVAL)
         {
             return;
         }
         if self
-            .autosave_busy
+            .doc.autosave_busy
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .is_err()
         {
             return;
         }
-        self.autosave_at = Some(now);
-        let Some(slot) = recovery::slot_path(self.doc_path.as_deref()) else {
-            self.autosave_busy.store(false, Ordering::Release);
+        self.doc.autosave_at = Some(now);
+        let Some(slot) = recovery::slot_path(self.doc.path.as_deref()) else {
+            self.doc.autosave_busy.store(false, Ordering::Release);
             return;
         };
-        let doc = self.editor.doc().clone();
-        let base = self.base.clone();
-        let busy = Arc::clone(&self.autosave_busy);
+        let doc = self.doc.editor.doc().clone();
+        let base = self.doc.base.clone();
+        let busy = Arc::clone(&self.doc.autosave_busy);
         std::thread::spawn(move || {
             let _ = qsdoc::write(&slot, &doc, &base, None);
             busy.store(false, Ordering::Release);
@@ -928,7 +837,7 @@ impl EditorApp {
 
     /// Keeps the window title in step with the file name and the unsaved mark.
     fn sync_window_title(&mut self, ctx: &egui::Context) {
-        let mark = if self.unsaved { "\u{2022} " } else { "" };
+        let mark = if self.doc.unsaved { "\u{2022} " } else { "" };
         let title = format!("{mark}{} — Quickshort", self.display_name());
         if self.window_title.as_deref() != Some(title.as_str()) {
             self.window_title = Some(title.clone());
@@ -939,7 +848,7 @@ impl EditorApp {
     /// Intercepts a close request while edits are pending and runs the
     /// Save / Discard / Cancel dialog.
     fn close_guard(&mut self, ctx: &egui::Context) {
-        if ctx.input(|i| i.viewport().close_requested()) && self.unsaved && !self.dialogs.close_confirmed {
+        if ctx.input(|i| i.viewport().close_requested()) && self.doc.unsaved && !self.dialogs.close_confirmed {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.dialogs.confirm_close = true;
         }
@@ -993,7 +902,7 @@ impl EditorApp {
         match decision {
             // a cancelled Save-As leaves the document unsaved: keep the window
             Some(CloseDecision::Save) => {
-                if self.save().is_ok() && !self.unsaved {
+                if self.save().is_ok() && !self.doc.unsaved {
                     self.finish_close(ctx);
                 }
             }
@@ -1014,10 +923,10 @@ impl EditorApp {
     }
 
     pub fn export_png(&mut self, path: Option<&Path>) -> anyhow::Result<()> {
-        let flat = qs_render::render(self.editor.doc(), &self.base);
+        let flat = qs_render::render(self.doc.editor.doc(), &self.doc.base);
         let out_path = path
             .map(PathBuf::from)
-            .or_else(|| self.doc_path.as_ref().map(|p| p.with_extension("png")))
+            .or_else(|| self.doc.path.as_ref().map(|p| p.with_extension("png")))
             .unwrap_or_else(|| PathBuf::from("export.png"));
         flat.save(&out_path)?;
         let name = out_path
@@ -1030,7 +939,7 @@ impl EditorApp {
 
     fn export_with_dialog(&mut self, fmt: ExportFormat, quality: u8) -> anyhow::Result<()> {
         let default_name = self
-            .doc_path
+            .doc.path
             .as_ref()
             .and_then(|p| p.file_stem())
             .and_then(|s| s.to_str())
@@ -1042,7 +951,7 @@ impl EditorApp {
         else {
             return Ok(());
         };
-        let flat = qs_render::render(self.editor.doc(), &self.base);
+        let flat = qs_render::render(self.doc.editor.doc(), &self.doc.base);
         match fmt {
             ExportFormat::Png => flat.save(&out_path)?,
             ExportFormat::Jpeg => {
@@ -1060,12 +969,12 @@ impl EditorApp {
             .and_then(|s| s.to_str())
             .unwrap_or("export");
         self.show_toast(format!("Exported {name}"));
-        self.export_format = fmt;
+        self.tools.export_format = fmt;
         Ok(())
     }
 
     fn print_image(&mut self) -> anyhow::Result<()> {
-        let flat = qs_render::render(self.editor.doc(), &self.base);
+        let flat = qs_render::render(self.doc.editor.doc(), &self.doc.base);
         let tmp = std::env::temp_dir().join(format!("quickshort_print_{}.png", std::process::id()));
         flat.save(&tmp)?;
         #[cfg(target_os = "macos")]
@@ -1101,7 +1010,7 @@ impl EditorApp {
                             ("Right", Alignment::Right),
                         ] {
                             if crate::components::pill_button(ui, label, "")
-                                && self.editor.align_selected(a) {
+                                && self.doc.editor.align_selected(a) {
                                     self.touch();
                                 }
                         }
@@ -1113,22 +1022,22 @@ impl EditorApp {
                             ("Bottom", Alignment::Bottom),
                         ] {
                             if crate::components::pill_button(ui, label, "")
-                                && self.editor.align_selected(a) {
+                                && self.doc.editor.align_selected(a) {
                                     self.touch();
                                 }
                         }
                     });
                     ui.separator();
                     ui.horizontal_wrapped(|ui| {
-                        let enabled = self.editor.selection().len() >= 3;
+                        let enabled = self.doc.editor.selection().len() >= 3;
                         ui.add_enabled_ui(enabled, |ui| {
                             if crate::components::pill_button(ui, "Distribute horizontally", "")
-                                && self.editor.distribute_selected(Axis::Horizontal)
+                                && self.doc.editor.distribute_selected(Axis::Horizontal)
                             {
                                 self.touch();
                             }
                             if crate::components::pill_button(ui, "Distribute vertically", "")
-                                && self.editor.distribute_selected(Axis::Vertical)
+                                && self.doc.editor.distribute_selected(Axis::Vertical)
                             {
                                 self.touch();
                             }
@@ -1162,7 +1071,7 @@ impl EditorApp {
             Rect::from_min_size(r.min, Vec2::new(1.0, 36.0))
         });
         let is_dark = qs_theme::pal().dark;
-        let has_region = self.editor.region().is_some();
+        let has_region = self.doc.editor.region().is_some();
         let (mut capture, mut library, mut copy_text, mut canvas, mut settings, mut flip_theme, mut close) =
             (false, false, false, false, false, false, false);
         let area = egui::Area::new(egui::Id::unique("app_menu"))
@@ -1263,9 +1172,9 @@ impl EditorApp {
         if canvas {
             self.dialogs.canvas_dialog_open = true;
             self.show_inspector = true;
-            self.canvas_background = self.editor.doc().background;
-            self.resize_w = self.base.width().max(1);
-            self.resize_h = self.base.height().max(1);
+            self.tools.canvas_background = self.doc.editor.doc().background;
+            self.tools.resize_w = self.doc.base.width().max(1);
+            self.tools.resize_h = self.doc.base.height().max(1);
         }
         if settings {
             spawn_app("--settings");
@@ -1322,7 +1231,7 @@ impl EditorApp {
                             ui,
                             &label,
                             None,
-                            fmt == self.export_format,
+                            fmt == self.tools.export_format,
                             true,
                             false,
                         ) {
@@ -1368,7 +1277,7 @@ impl EditorApp {
                 self.show_toast(format!("Export failed: {e}"));
             }
         } else if let Some(fmt) = pick {
-            if let Err(e) = self.export_with_dialog(fmt, self.export_quality) {
+            if let Err(e) = self.export_with_dialog(fmt, self.tools.export_quality) {
                 self.show_toast(format!("Export failed: {e}"));
             }
         } else if copy {
@@ -1409,7 +1318,7 @@ impl EditorApp {
                     .iter()
                     .map(|&i| self.ocr_hints.lines()[i].rect)
                     .collect();
-                let n = self.editor.add_redactions(&rects, qs_doc::BlurMode::Solid);
+                let n = self.doc.editor.add_redactions(&rects, qs_doc::BlurMode::Solid);
                 if n > 0 {
                     self.touch();
                     self.show_toast(format!("Redacted {n} match(es)"));
@@ -1434,7 +1343,7 @@ impl EditorApp {
             line.rect.x + line.rect.w / 2.0,
             line.rect.y + line.rect.h / 2.0,
         );
-        self.view.center = self.view.map.to_display(centre);
+        self.viewport.view.center = self.viewport.view.map.to_display(centre);
     }
 
     /// Copy the recognized text inside the selection region.
@@ -1443,7 +1352,7 @@ impl EditorApp {
     /// from a broken command, so "nothing recognized here" and "the engine is
     /// unavailable" stay distinct messages.
     fn copy_text_in_region(&mut self) {
-        let Some(region) = self.editor.region() else {
+        let Some(region) = self.doc.editor.region() else {
             self.show_toast("Select a region first");
             return;
         };
@@ -1504,9 +1413,9 @@ impl EditorApp {
             return;
         };
         let mut close = false;
-        let has_sel = hit_id.is_some() || !self.editor.selection().is_empty();
-        let multi = self.editor.selection().len() >= 2;
-        let grouped = self.editor.selection_grouped();
+        let has_sel = hit_id.is_some() || !self.doc.editor.selection().is_empty();
+        let multi = self.doc.editor.selection().len() >= 2;
+        let grouped = self.doc.editor.selection_grouped();
         let area = egui::Area::new(egui::Id::unique("canvas_ctx_menu"))
             .order(egui::Order::Foreground)
             .fixed_pos(pos)
@@ -1516,19 +1425,19 @@ impl EditorApp {
                     ui.spacing_mut().item_spacing.y = 2.0;
                     if has_sel {
                         if crate::components::menu_item(ui, "Duplicate", Some("Ctrl+D"), false, true, false) {
-                            if self.editor.duplicate_selected().is_some() {
+                            if self.doc.editor.duplicate_selected().is_some() {
                                 self.touch();
                             }
                             close = true;
                         }
                         if crate::components::menu_item(ui, "Bring to Front", None, false, true, false) {
-                            if self.editor.reorder(qs_edit::ZOrder::Front) {
+                            if self.doc.editor.reorder(qs_edit::ZOrder::Front) {
                                 self.touch();
                             }
                             close = true;
                         }
                         if crate::components::menu_item(ui, "Send to Back", None, false, true, false) {
-                            if self.editor.reorder(qs_edit::ZOrder::Back) {
+                            if self.doc.editor.reorder(qs_edit::ZOrder::Back) {
                                 self.touch();
                             }
                             close = true;
@@ -1536,18 +1445,18 @@ impl EditorApp {
                         if multi {
                             ui.separator();
                             if crate::components::menu_item(ui, "Group", Some("Ctrl+G"), false, true, false) {
-                                self.editor.group_selected();
+                                self.doc.editor.group_selected();
                                 close = true;
                             }
                         }
                         if grouped
                             && crate::components::menu_item(ui, "Ungroup", Some("Ctrl+Shift+G"), false, true, false) {
-                                self.editor.ungroup_selected();
+                                self.doc.editor.ungroup_selected();
                                 close = true;
                             }
                         ui.separator();
                         if crate::components::menu_item(ui, "Delete", Some("Del"), false, true, true) {
-                            if self.editor.delete_selected() {
+                            if self.doc.editor.delete_selected() {
                                 self.show_toast("Deleted");
                                 self.touch();
                             }
@@ -1570,9 +1479,9 @@ impl EditorApp {
                         if crate::components::menu_item(ui, "Canvas & Resize…", Some("Ctrl+Shift+C"), false, true, false) {
                             self.dialogs.canvas_dialog_open = true;
                             self.show_inspector = true;
-                            self.canvas_background = self.editor.doc().background;
-                            self.resize_w = self.base.width().max(1);
-                            self.resize_h = self.base.height().max(1);
+                            self.tools.canvas_background = self.doc.editor.doc().background;
+                            self.tools.resize_w = self.doc.base.width().max(1);
+                            self.tools.resize_h = self.doc.base.height().max(1);
                             close = true;
                         }
                         if crate::components::menu_item(ui, "Find text (OCR)…", Some("Ctrl+F"), false, true, false) {
@@ -1675,7 +1584,7 @@ impl EditorApp {
         }
         let mut open = self.dialogs.combine_dialog_open;
         let mut create = false;
-        let count = self.tray_selected.len();
+        let count = self.viewport.tray_selected.len();
         crate::components::modal_window(
             ctx,
             "combine_template_modal",
@@ -1698,21 +1607,21 @@ impl EditorApp {
                 ] {
                     if crate::components::radio_card(
                         ui,
-                        self.combine_layout == layout,
+                        self.tools.combine_layout == layout,
                         layout.label(),
                     ) {
-                        self.combine_layout = layout;
+                        self.tools.combine_layout = layout;
                     }
                     ui.add_space(qs_theme::space::XS as f32);
                 }
-                if self.tray_selected.len() >= 2 {
+                if self.viewport.tray_selected.len() >= 2 {
                     ui.add_space(qs_theme::space::XS as f32);
                     if crate::components::pill_button(
                         ui,
                         "Reverse order",
                         "Flip the order of selected captures (e.g. swap Before / After)",
                     ) {
-                        self.tray_selected.reverse();
+                        self.viewport.tray_selected.reverse();
                     }
                 }
                 ui.add_space(qs_theme::space::SM as f32);
@@ -1748,12 +1657,12 @@ impl EditorApp {
     }
 
     pub fn copy_to_clipboard(&mut self) -> anyhow::Result<()> {
-        let region = self.editor.doc().region;
+        let region = self.doc.editor.doc().region;
         let (flat, what) = match region.and_then(|r| {
-            qs_render::render_region(self.editor.doc(), &self.base, r)
+            qs_render::render_region(self.doc.editor.doc(), &self.doc.base, r)
         }) {
             Some(cropped) => (cropped, "selection"),
-            None => (qs_render::render(self.editor.doc(), &self.base), "image"),
+            None => (qs_render::render(self.doc.editor.doc(), &self.doc.base), "image"),
         };
         clipboard::copy_image(&flat)?;
         self.show_toast(format!("Copied {what} to clipboard"));
@@ -1763,37 +1672,37 @@ impl EditorApp {
     /// Bake every annotation into the image and start a fresh document over
     /// the result. Destructive: the annotations and the undo history are gone.
     pub fn flatten_all(&mut self) -> anyhow::Result<()> {
-        let flat = qs_render::render(self.editor.doc(), &self.base);
-        let old = self.editor.doc().clone();
+        let flat = qs_render::render(self.doc.editor.doc(), &self.doc.base);
+        let old = self.doc.editor.doc().clone();
         let mut doc = Document::new(flat.width(), flat.height(), old.scale);
         doc.meta = old.meta.clone();
         doc.background = old.background;
-        let before = (old, self.base.clone());
+        let before = (old, self.doc.base.clone());
         self.apply_document(doc, flat);
-        self.pre_flatten = Some(before);
-        self.editor.mark_modified();
+        self.doc.pre_flatten = Some(before);
+        self.doc.editor.mark_modified();
         self.touch();
         self.show_toast("Flattened into the image \u{00b7} Ctrl+Z to undo");
         Ok(())
     }
 
-    fn apply_zoom_cmd(&mut self, cmd: ZoomCmd) {
-        let Some(rect) = self.last_canvas_rect else {
+    pub(crate) fn apply_zoom_cmd(&mut self, cmd: ZoomCmd) {
+        let Some(rect) = self.viewport.last_canvas_rect else {
             return;
         };
         let center = rect.center();
         match cmd {
             ZoomCmd::None => {}
-            ZoomCmd::In => self.view.zoom_at(1.25, center, rect),
-            ZoomCmd::Out => self.view.zoom_at(0.8, center, rect),
+            ZoomCmd::In => self.viewport.view.zoom_at(1.25, center, rect),
+            ZoomCmd::Out => self.viewport.view.zoom_at(0.8, center, rect),
             ZoomCmd::Fit => {
-                self.view.sync(self.editor.doc());
-                self.view.fit_to(self.view.display_rect(), rect, 40.0);
-                self.fit_memo = Some(crate::canvas::FitMemo::of(&self.view, rect.size(), 1.5));
+                self.viewport.view.sync(self.doc.editor.doc());
+                self.viewport.view.fit_to(self.viewport.view.display_rect(), rect, 40.0);
+                self.viewport.fit_memo = Some(crate::canvas::FitMemo::of(&self.viewport.view, rect.size(), 1.5));
             }
             ZoomCmd::Set(target) => {
-                let factor = target / self.view.zoom.max(0.01);
-                self.view.zoom_at(factor, center, rect);
+                let factor = target / self.viewport.view.zoom.max(0.01);
+                self.viewport.view.zoom_at(factor, center, rect);
             }
         }
     }
@@ -1803,7 +1712,7 @@ impl EditorApp {
     /// The red button and cmd+W both land here, so there is one rule for
     /// throwing edits away.
     pub fn request_close(&mut self, ctx: &egui::Context) {
-        if self.unsaved && !self.dialogs.close_confirmed {
+        if self.doc.unsaved && !self.dialogs.close_confirmed {
             self.dialogs.confirm_close = true;
         } else {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -1814,98 +1723,6 @@ impl EditorApp {
     #[doc(hidden)]
     pub fn is_confirming_close(&self) -> bool {
         self.dialogs.confirm_close
-    }
-
-    /// Dialog chords and Escape. Split out of `handle_shortcuts` so tests can
-    /// drive them without an eframe frame.
-    pub fn handle_dialog_keys(&mut self, ctx: &egui::Context) {
-        // `send_viewport_cmd` needs the context outside the input lock.
-        let mut close_requested = false;
-        let mut flatten_now = false;
-        ctx.input_mut(|i| {
-            // macOS close chord: same guard as the window's red button.
-            if i.consume_key(Modifiers::COMMAND, Key::W) {
-                close_requested = true;
-            }
-            // Escape closes whichever dialog or popup is on top.
-            if i.modifiers.is_none() && i.key_pressed(Key::Escape) {
-                if self.dialogs.context_menu.is_some() {
-                    self.dialogs.context_menu = None;
-                    i.consume_key(Modifiers::NONE, Key::Escape);
-                } else if let Some(open) = [
-                    &mut self.dialogs.shortcuts_open,
-                    &mut self.dialogs.confirm_close,
-                    &mut self.dialogs.app_menu_open,
-                    &mut self.dialogs.export_menu_open,
-                    &mut self.dialogs.canvas_dialog_open,
-                    &mut self.dialogs.combine_dialog_open,
-                    &mut self.dialogs.alignment_open,
-                    &mut self.library.open,
-                ]
-                .into_iter()
-                .find(|open| **open)
-                {
-                    *open = false;
-                    i.consume_key(Modifiers::NONE, Key::Escape);
-                } else if self.find.open {
-                    self.find.open = false;
-                    self.last_find_focus = None;
-                    i.consume_key(Modifiers::NONE, Key::Escape);
-                }
-            }
-            // Settings has the standard macOS shortcut; Align needs a panel that
-            // used to be reachable only from the Layers header.
-            if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::T)
-                || i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::T)
-            {
-                self.show_filmstrip = !self.show_filmstrip;
-            }
-            if i.consume_key(Modifiers::COMMAND, Key::Comma) {
-                self.dialogs.canvas_dialog_open = false;
-                self.dialogs.export_menu_open = false;
-                self.dialogs.alignment_open = false;
-                spawn_app("--settings");
-            }
-            if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::A)
-                || i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::A)
-            {
-                self.dialogs.canvas_dialog_open = false;
-                self.dialogs.export_menu_open = false;
-                self.dialogs.alignment_open = true;
-                self.show_inspector = true;
-            }
-            // Dialog shortcuts: these panels were only reachable by mouse.
-            if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::C)
-                || i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::C)
-            {
-                self.dialogs.export_menu_open = false;
-                self.dialogs.canvas_dialog_open = true;
-                self.show_inspector = true;
-            }
-            if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::E)
-                || i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::E)
-            {
-                self.dialogs.canvas_dialog_open = false;
-                self.dialogs.export_menu_open = true;
-            }
-            // cmd+shift+F never reached us (macOS swallows it), so the
-            // destructive flatten confirmation uses option+cmd+F.
-            if i.consume_key(Modifiers::COMMAND | Modifiers::ALT, Key::F)
-                || i.consume_key(Modifiers::CTRL | Modifiers::ALT, Key::F)
-            {
-                self.dialogs.canvas_dialog_open = false;
-                self.dialogs.export_menu_open = false;
-                flatten_now = true;
-            }
-        });
-        if flatten_now {
-            if let Err(e) = self.flatten_all() {
-                self.show_toast(format!("Flatten failed: {e}"));
-            }
-        }
-        if close_requested {
-            self.request_close(ctx);
-        }
     }
 
     /// Which panels are open: canvas, export menu, align.
@@ -1921,393 +1738,7 @@ impl EditorApp {
     /// Filmstrip visibility, for tests.
     #[doc(hidden)]
     pub fn filmstrip_visible(&self) -> bool {
-        self.show_filmstrip
-    }
-
-    fn handle_shortcuts(&mut self, ctx: &egui::Context) {
-        let mut undo = false;
-        let mut redo = false;
-        let mut copy = false;
-        let mut save = false;
-        let mut save_as = false;
-        let mut quick_export = false;
-        let mut open = false;
-        let mut del = false;
-        let mut dup = false;
-        let mut select_all = false;
-        let mut esc = false;
-        let mut tool = None;
-        let mut nudge = None;
-        let mut orient = None;
-        let mut zoom_cmd = ZoomCmd::None;
-        let mut width_delta: f32 = 0.0;
-        let mut group = false;
-        let mut ungroup = false;
-
-        // An open overlay owns the navigation keys: otherwise the canvas nudge
-        // and the Escape-to-deselect path swallow them before the dialog sees
-        // them, which made the Library keyboard route dead on arrival.
-        let overlay_keys = self.library.open || self.find.open || self.dialogs.shortcuts_open;
-        // A focused text field owns plain keystrokes AND standard text-editing
-        // chords (Backspace, Delete, Ctrl+C, Ctrl+Z, Ctrl+A) so typing in Find,
-        // Watermark, Zoom %, or Sliders never mutates the canvas underneath.
-        let typing = ctx.memory(|m| m.focused().is_some());
-        ctx.input_mut(|i| {
-            if self.find.open && i.consume_key(Modifiers::NONE, Key::Escape) {
-                self.find.open = false;
-            }
-            // While inline-editing a Text/Callout on canvas: still allow Save
-            // (Ctrl+S), Undo/Redo (commits edit first), and Ctrl+Enter to finish.
-            if self.editor.edit().is_some() {
-                if i.consume_key(Modifiers::COMMAND, Key::S) || i.consume_key(Modifiers::CTRL, Key::S)
-                {
-                    save = true;
-                }
-                if i.consume_key(Modifiers::COMMAND, Key::Enter)
-                    || i.consume_key(Modifiers::CTRL, Key::Enter)
-                {
-                    self.editor.end_text_edit();
-                    self.touch();
-                } else if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z)
-                    || i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::Z)
-                    || i.consume_key(Modifiers::COMMAND, Key::Y)
-                    || i.consume_key(Modifiers::CTRL, Key::Y)
-                {
-                    self.editor.end_text_edit();
-                    redo = true;
-                } else if i.consume_key(Modifiers::COMMAND, Key::Z)
-                    || i.consume_key(Modifiers::CTRL, Key::Z)
-                {
-                    self.editor.end_text_edit();
-                    undo = true;
-                }
-                return;
-            }
-
-            if !typing {
-                if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z)
-                    || i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::Z)
-                    || i.consume_key(Modifiers::COMMAND, Key::Y)
-                    || i.consume_key(Modifiers::CTRL, Key::Y)
-                {
-                    redo = true;
-                } else if i.consume_key(Modifiers::COMMAND, Key::Z)
-                    || i.consume_key(Modifiers::CTRL, Key::Z)
-                {
-                    undo = true;
-                }
-
-                if i.consume_key(Modifiers::COMMAND, Key::C) || i.consume_key(Modifiers::CTRL, Key::C)
-                {
-                    copy = true;
-                }
-                if i.consume_key(Modifiers::COMMAND, Key::A) || i.consume_key(Modifiers::CTRL, Key::A)
-                {
-                    select_all = true;
-                }
-            }
-
-            if i.consume_key(Modifiers::COMMAND, Key::E) || i.consume_key(Modifiers::CTRL, Key::E) {
-                quick_export = true;
-            }
-
-            if i.consume_key(Modifiers::COMMAND, Key::L) || i.consume_key(Modifiers::CTRL, Key::L) {
-                // One overlay at a time: two stacked dialogs hide each other's
-                // content and both keep stealing the keyboard.
-                self.find.open = false;
-                self.library.toggle();
-            }
-
-            if i.consume_key(Modifiers::COMMAND, Key::N) || i.consume_key(Modifiers::CTRL, Key::N) {
-                spawn_app("--capture");
-            }
-
-            if i.consume_key(Modifiers::COMMAND, Key::F) || i.consume_key(Modifiers::CTRL, Key::F) {
-                self.library.open = false;
-                self.find.open = true;
-                self.find.focus_pending = true;
-            }
-
-            if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::S)
-                || i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::S)
-            {
-                save_as = true;
-            } else if i.consume_key(Modifiers::COMMAND, Key::S)
-                || i.consume_key(Modifiers::CTRL, Key::S)
-            {
-                save = true;
-            }
-
-            if i.consume_key(Modifiers::COMMAND, Key::O) || i.consume_key(Modifiers::CTRL, Key::O) {
-                open = true;
-            }
-
-            // Shift first: consume_key ignores an unrequested Shift
-            if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::R)
-                || i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::R)
-            {
-                orient = Some(OrientCmd::RotateCcw);
-            } else if i.consume_key(Modifiers::COMMAND, Key::R)
-                || i.consume_key(Modifiers::CTRL, Key::R)
-            {
-                orient = Some(OrientCmd::RotateCw);
-            }
-
-            if i.consume_key(Modifiers::COMMAND, Key::Plus)
-                || i.consume_key(Modifiers::CTRL, Key::Plus)
-                || i.consume_key(Modifiers::COMMAND, Key::Equals)
-                || i.consume_key(Modifiers::CTRL, Key::Equals)
-            {
-                zoom_cmd = ZoomCmd::In;
-            } else if i.consume_key(Modifiers::COMMAND, Key::Minus)
-                || i.consume_key(Modifiers::CTRL, Key::Minus)
-            {
-                zoom_cmd = ZoomCmd::Out;
-            } else if i.consume_key(Modifiers::COMMAND, Key::Num0)
-                || i.consume_key(Modifiers::CTRL, Key::Num0)
-            {
-                zoom_cmd = ZoomCmd::Fit;
-            } else if i.consume_key(Modifiers::COMMAND, Key::Num1)
-                || i.consume_key(Modifiers::CTRL, Key::Num1)
-            {
-                zoom_cmd = ZoomCmd::Set(1.0);
-            }
-
-            if !typing
-                && !overlay_keys
-                && (i.consume_key(Modifiers::NONE, Key::Delete)
-                    || i.consume_key(Modifiers::NONE, Key::Backspace))
-            {
-                del = true;
-            }
-
-            if !typing
-                && (i.consume_key(Modifiers::COMMAND, Key::D)
-                    || i.consume_key(Modifiers::CTRL, Key::D))
-            {
-                dup = true;
-            }
-
-            if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::G)
-                || i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::G)
-            {
-                ungroup = true;
-            } else if i.consume_key(Modifiers::COMMAND, Key::G)
-                || i.consume_key(Modifiers::CTRL, Key::G)
-            {
-                group = true;
-            }
-
-            if !overlay_keys && !typing && i.consume_key(Modifiers::NONE, Key::Escape) {
-                esc = true;
-            }
-
-            if !typing && !overlay_keys {
-                if i.consume_key(Modifiers::NONE, Key::OpenBracket) {
-                    width_delta = -1.0;
-                } else if i.consume_key(Modifiers::NONE, Key::CloseBracket) {
-                    width_delta = 1.0;
-                } else if i.consume_key(Modifiers::SHIFT, Key::Questionmark)
-                    || i.consume_key(Modifiers::NONE, Key::Questionmark)
-                    || i.consume_key(Modifiers::NONE, Key::F1)
-                {
-                    self.dialogs.shortcuts_open = !self.dialogs.shortcuts_open;
-                }
-            }
-
-            if !typing && i.modifiers.is_none() {
-                // `Tool::key()` is the single source of truth — the palette
-                // subscript reads the same letter this dispatches on.
-                let pressed_tool = Tool::ALL.iter().copied().find(|t| {
-                    egui::Key::from_name(&t.key().to_ascii_uppercase().to_string())
-                        .is_some_and(|k| i.key_pressed(k))
-                });
-                if let Some(t) = pressed_tool {
-                    tool = Some(t);
-                }
-            }
-
-            let nudge_step = if i.modifiers.shift { 10.0 } else { 1.0 };
-            if !overlay_keys && !typing && !self.show_filmstrip && i.consume_key(Modifiers::NONE, Key::ArrowLeft)
-                || i.consume_key(Modifiers::SHIFT, Key::ArrowLeft)
-            {
-                nudge = Some((-nudge_step, 0.0));
-            }
-            if !overlay_keys && !typing && !self.show_filmstrip && i.consume_key(Modifiers::NONE, Key::ArrowRight)
-                || i.consume_key(Modifiers::SHIFT, Key::ArrowRight)
-            {
-                nudge = Some((nudge_step, 0.0));
-            }
-            if !overlay_keys && !typing && !self.show_filmstrip && i.consume_key(Modifiers::NONE, Key::ArrowUp)
-                || i.consume_key(Modifiers::SHIFT, Key::ArrowUp)
-            {
-                nudge = Some((0.0, -nudge_step));
-            }
-            if !overlay_keys && !typing && !self.show_filmstrip && i.consume_key(Modifiers::NONE, Key::ArrowDown)
-                || i.consume_key(Modifiers::SHIFT, Key::ArrowDown)
-            {
-                nudge = Some((0.0, nudge_step));
-            }
-        });
-
-        if undo {
-            if self.editor.undo() {
-                self.touch();
-                self.show_toast("Undo");
-            } else if let Some((doc, base)) = self.pre_flatten.take() {
-                self.apply_document(doc, base);
-                self.editor.mark_modified();
-                self.touch();
-                self.show_toast("Flatten undone");
-            }
-        }
-        if redo
-            && self.editor.redo() {
-                self.touch();
-                self.show_toast("Redo");
-            }
-        if copy {
-            let _ = self.copy_to_clipboard();
-        }
-        if select_all {
-            let n = self.editor.select_all();
-            if n > 0 {
-                self.show_toast(format!("Selected {n} object(s)"));
-            }
-        }
-        if quick_export {
-            if let Err(e) = self.export_png(None) {
-                self.show_toast(format!("Export failed: {e}"));
-            }
-        }
-        if width_delta != 0.0 {
-            let next = (self.editor.style.width + width_delta).clamp(1.0, 24.0);
-            self.editor.set_stroke_width(next);
-            self.touch();
-        }
-        if save {
-            let _ = self.save();
-        }
-        if save_as {
-            let _ = self.save_as();
-        }
-        if open {
-            let _ = self.open_dialog();
-        }
-        if zoom_cmd != ZoomCmd::None {
-            self.apply_zoom_cmd(zoom_cmd);
-        }
-        if del && self.editor.delete_selected() {
-            self.show_toast("Deleted");
-            self.touch();
-        }
-        if dup && self.editor.duplicate_selected().is_some() {
-            self.touch();
-        }
-        if group && self.editor.group_selected() {
-            self.touch();
-        }
-        if ungroup && self.editor.ungroup_selected() {
-            self.touch();
-        }
-        if esc {
-            self.editor.escape();
-        }
-        if let Some(t) = tool {
-            self.editor.set_tool(t);
-        }
-        if let Some(cmd) = orient {
-            image_panel::apply_orient(&mut self.editor, cmd);
-            self.touch();
-        }
-        if let Some((dx, dy)) = nudge {
-            // arrows move what the user sees, whatever the orientation
-            let (dx, dy) = self.editor.doc().orientation.unmap_vector(dx, dy);
-            self.editor.nudge(dx, dy);
-            self.touch();
-        }
-    }
-
-    fn handle_text_events(&mut self, ctx: &egui::Context) {
-        if self.editor.edit().is_none() {
-            self.ime_preedit.clear();
-            return;
-        }
-        let events = ctx.input(|i| i.raw.events.clone());
-        for ev in events {
-            match ev {
-                egui::Event::Text(s) => {
-                    self.editor.text_insert(&s);
-                    self.touch();
-                }
-                egui::Event::Key {
-                    key,
-                    pressed: true,
-                    modifiers,
-                    ..
-                } => {
-                    let extend = modifiers.shift;
-                    match key {
-                        Key::Enter => {
-                            self.editor.text_insert("\n");
-                            self.touch();
-                        }
-                        Key::Backspace => {
-                            self.editor.text_backspace();
-                            self.touch();
-                        }
-                        Key::Delete => {
-                            self.editor.text_delete();
-                            self.touch();
-                        }
-                        Key::ArrowLeft => self.editor.text_move(Motion::Left, extend),
-                        Key::ArrowRight => self.editor.text_move(Motion::Right, extend),
-                        Key::ArrowUp => self.editor.text_move(Motion::Up, extend),
-                        Key::ArrowDown => self.editor.text_move(Motion::Down, extend),
-                        Key::Home => self.editor.text_move(Motion::Home, extend),
-                        Key::End => self.editor.text_move(Motion::End, extend),
-                        Key::Escape => {
-                            self.editor.escape();
-                            self.touch();
-                        }
-                        Key::A if modifiers.command || modifiers.ctrl => {
-                            self.editor.text_select_all();
-                        }
-                        Key::C if modifiers.command || modifiers.ctrl => {
-                            if let Some(sel) = self.editor.text_selection() {
-                                let _ = clipboard::copy_text(&sel);
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                egui::Event::Paste(s) => {
-                    self.editor.text_insert(&s);
-                    self.touch();
-                }
-                // IME-composed text (Vietnamese Telex/VNI, dead keys): Preedit is
-                // the in-flight composition shown beside the caret; Commit is
-                // the finished text. Without these only raw ASCII gets through.
-                egui::Event::Ime(ime) => match ime {
-                    egui::ImeEvent::Preedit { text, .. } => {
-                        self.ime_preedit = text;
-                    }
-                    egui::ImeEvent::Commit(text) => {
-                        self.ime_preedit.clear();
-                        self.editor.text_insert(&text);
-                        self.touch();
-                    }
-                    egui::ImeEvent::DeleteSurrounding { before_chars, .. } => {
-                        for _ in 0..before_chars {
-                            self.editor.text_backspace();
-                        }
-                        self.touch();
-                    }
-                    _ => {}
-                },
-                _ => {}
-            }
-        }
+        self.viewport.show_filmstrip
     }
 
     fn update_canvas_cursor(
@@ -2332,9 +1763,9 @@ impl EditorApp {
             ctx.set_cursor_icon(CursorIcon::Grab);
             return;
         }
-        let icon = match self.editor.tool() {
+        let icon = match self.doc.editor.tool() {
             Tool::Text => CursorIcon::Text,
-            Tool::Select => match self.editor.drag_hint() {
+            Tool::Select => match self.doc.editor.drag_hint() {
                 DragHint::Move => CursorIcon::Grabbing,
                 DragHint::Handle(h) => handle_cursor(h),
                 DragHint::Marquee => CursorIcon::Default,
@@ -2345,18 +1776,18 @@ impl EditorApp {
                 | DragHint::SmartMove
                 | DragHint::Region => CursorIcon::Crosshair,
                 DragHint::None => {
-                    let doc_p = self.view.screen_to_doc(pos, screen_rect);
-                    let slack = self.editor.hit_tol * 1.8;
+                    let doc_p = self.viewport.view.screen_to_doc(pos, screen_rect);
+                    let slack = self.doc.editor.hit_tol * 1.8;
                     let handle = self
-                        .editor
+                        .doc.editor
                         .selection_handles()
                         .iter()
                         .find(|h| h.pos.dist(doc_p) <= slack)
                         .map(|h| h.id);
                     if let Some(h) = handle {
                         handle_cursor(h)
-                    } else if let Some(id) = self.editor.pick(doc_p) {
-                        if self.editor.edit().is_some_and(|e| e.id == id) {
+                    } else if let Some(id) = self.doc.editor.pick(doc_p) {
+                        if self.doc.editor.edit().is_some_and(|e| e.id == id) {
                             CursorIcon::Text
                         } else {
                             CursorIcon::Grab
@@ -2411,9 +1842,9 @@ impl EditorApp {
             .show(ui, |ui| {
                 toolbar::render_top_bar(
                     ui,
-                    &mut self.editor,
-                    self.view.zoom,
-                    self.doc_path.as_deref(),
+                    &mut self.doc.editor,
+                    self.viewport.view.zoom,
+                    self.doc.path.as_deref(),
                 )
             })
             .inner;
@@ -2421,13 +1852,13 @@ impl EditorApp {
         egui::Panel::top("tool_palette")
             .frame(egui::Frame::NONE)
             .show(ui, |ui| {
-                toolbar::render_tool_palette(ui, &mut self.editor)
+                toolbar::render_tool_palette(ui, &mut self.doc.editor)
             });
 
         let prop_mutated = egui::Panel::top("properties_bar")
             .frame(egui::Frame::NONE)
             .show(ui, |ui| {
-                toolbar::render_properties_bar(ui, &mut self.editor)
+                toolbar::render_properties_bar(ui, &mut self.doc.editor)
             })
             .inner;
 
@@ -2437,7 +1868,7 @@ impl EditorApp {
         // Only show Quick Styles bar when the user has saved custom presets for
         // the active tool — hides the redundant 8-color bar that duplicated the
         // swatches already shown in the Properties bar right above.
-        let styles_mutated = if !self.styles.for_tool(self.editor.tool()).is_empty() {
+        let styles_mutated = if !self.styles.for_tool(self.doc.editor.tool()).is_empty() {
             egui::Panel::top("quick_style_bar")
                 // Without an explicit fill the panel rendered as a black strip
                 // in the light theme.
@@ -2453,9 +1884,9 @@ impl EditorApp {
                 .show(ui, |ui| {
                     styles::render_bar(
                         ui,
-                        &mut self.editor,
+                        &mut self.doc.editor,
                         &mut self.styles,
-                        &mut self.style_filter,
+                        &mut self.tools.style_filter,
                     )
                 })
                 .inner
@@ -2499,9 +1930,9 @@ impl EditorApp {
             if self.dialogs.canvas_dialog_open {
                 self.show_inspector = true;
             }
-            self.canvas_background = self.editor.doc().background;
-            self.resize_w = self.base.width().max(1);
-            self.resize_h = self.base.height().max(1);
+            self.tools.canvas_background = self.doc.editor.doc().background;
+            self.tools.resize_w = self.doc.base.width().max(1);
+            self.tools.resize_h = self.doc.base.height().max(1);
         }
         if top_res.zoom != ZoomCmd::None {
             self.apply_zoom_cmd(top_res.zoom);
@@ -2546,14 +1977,14 @@ impl EditorApp {
                     if crate::components::status_pill(
                         ui,
                         "Recent",
-                        self.show_filmstrip,
+                        self.viewport.show_filmstrip,
                         "Toggle the recent captures strip (Ctrl+Shift+T)",
                     ) {
-                        self.show_filmstrip = !self.show_filmstrip;
+                        self.viewport.show_filmstrip = !self.viewport.show_filmstrip;
                     }
                     // `.dims` — extra margin-left like the mockup, no divider.
                     ui.add_space(8.0);
-                    let view_r = self.view.display_rect();
+                    let view_r = self.viewport.view.display_rect();
                     let dim_resp = ui
                         .add(
                             egui::Label::new(
@@ -2576,15 +2007,15 @@ impl EditorApp {
                         if self.dialogs.canvas_dialog_open {
                             self.show_inspector = true;
                         }
-                        self.canvas_background = self.editor.doc().background;
-                        self.resize_w = self.base.width().max(1);
-                        self.resize_h = self.base.height().max(1);
+                        self.tools.canvas_background = self.doc.editor.doc().background;
+                        self.tools.resize_w = self.doc.base.width().max(1);
+                        self.tools.resize_h = self.doc.base.height().max(1);
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         // Mockup `.right`: selInfo at the edge, cursorPos before it.
-                        if let Some(b) = self.editor.selection_bounds() {
-                            let count = self.editor.selection().len();
+                        if let Some(b) = self.doc.editor.selection_bounds() {
+                            let count = self.doc.editor.selection().len();
                             let label = if count > 1 {
                                 format!(
                                     "Sel ({count}): {}×{}",
@@ -2601,7 +2032,7 @@ impl EditorApp {
                             );
                             ui.add_space(14.0 - 6.0);
                         }
-                        if let Some(p) = self.last_cursor_doc {
+                        if let Some(p) = self.viewport.last_cursor_doc {
                             ui.label(
                                 egui::RichText::new(format!(
                                     "X: {}  Y: {}",
@@ -2623,11 +2054,11 @@ impl EditorApp {
                         }
                         for (label, target_zoom) in [("200%", 2.0f32), ("100%", 1.0), ("50%", 0.5)]
                         {
-                            let active = (self.view.zoom - target_zoom).abs() < 0.01;
+                            let active = (self.viewport.view.zoom - target_zoom).abs() < 0.01;
                             if crate::components::status_pill(ui, label, active, "") {
-                                if let Some(rect) = self.last_canvas_rect {
-                                    self.view.zoom_at(
-                                        target_zoom / self.view.zoom.max(0.01),
+                                if let Some(rect) = self.viewport.last_canvas_rect {
+                                    self.viewport.view.zoom_at(
+                                        target_zoom / self.viewport.view.zoom.max(0.01),
                                         rect.center(),
                                         rect,
                                     );
@@ -2649,7 +2080,7 @@ impl EditorApp {
         // Collapsible Recent Captures Filmstrip (sits cleanly above Status Bar)
         let film_t = ctx.animate_bool_with_time(
             egui::Id::unique("filmstrip_panel_t"),
-            self.show_filmstrip,
+            self.viewport.show_filmstrip,
             0.18,
         );
         if film_t > 0.01 {
@@ -2681,9 +2112,9 @@ impl EditorApp {
                             )
                         });
                         let (focus, action) = crate::filmstrip_keys::tray_keys(
-                            self.filmstrip_focus,
+                            self.viewport.filmstrip_focus,
                             n,
-                            self.tray_selected.len(),
+                            self.viewport.tray_selected.len(),
                             crate::filmstrip_keys::TrayInput {
                                 left,
                                 right,
@@ -2691,18 +2122,18 @@ impl EditorApp {
                                 enter,
                             },
                         );
-                        self.filmstrip_focus = focus;
+                        self.viewport.filmstrip_focus = focus;
                         match action {
                             crate::filmstrip_keys::TrayAction::None => {}
                             crate::filmstrip_keys::TrayAction::ToggleMark(index) => {
                                 if let Some(item) = self.filmstrip.items.get(index) {
                                     let path = item.path.clone();
                                     if let Some(pos) =
-                                        self.tray_selected.iter().position(|p| p == &path)
+                                        self.viewport.tray_selected.iter().position(|p| p == &path)
                                     {
-                                        self.tray_selected.remove(pos);
+                                        self.viewport.tray_selected.remove(pos);
                                     } else {
-                                        self.tray_selected.push(path);
+                                        self.viewport.tray_selected.push(path);
                                     }
                                 }
                             }
@@ -2741,9 +2172,9 @@ impl EditorApp {
                             {
                                 self.library.toggle();
                             }
-                            if self.tray_selected.len() >= 2
+                            if self.viewport.tray_selected.len() >= 2
                                 && ui
-                                    .small_button(format!("Combine ({})", self.tray_selected.len()))
+                                    .small_button(format!("Combine ({})", self.viewport.tray_selected.len()))
                                     .on_hover_text("Combine selected captures into a template")
                                     .clicked()
                             {
@@ -2773,16 +2204,16 @@ impl EditorApp {
                                         for (item_idx, item) in
                                             self.filmstrip.items.iter().enumerate()
                                         {
-                                            let focused = self.filmstrip_focus == Some(item_idx);
+                                            let focused = self.viewport.filmstrip_focus == Some(item_idx);
                                             let is_active =
-                                                self.doc_path.as_deref() == Some(item.path.as_path());
+                                                self.doc.path.as_deref() == Some(item.path.as_path());
                                             let is_tray_sel = self
-                                                .tray_selected
+                                                .viewport.tray_selected
                                                 .iter()
                                                 .any(|p| p == &item.path);
-                                            let is_dirty = is_active && self.unsaved
+                                            let is_dirty = is_active && self.doc.unsaved
                                                 || self
-                                                    .session_cache
+                                                    .doc.session_cache
                                                     .get(&item.path)
                                                     .is_some_and(|s| s.unsaved);
                                             let (rect, resp) = ui.allocate_exact_size(
@@ -2907,13 +2338,13 @@ impl EditorApp {
                                             {
                                                 if ui.input(|i| i.modifiers.shift) {
                                                     if let Some(pos) = self
-                                                        .tray_selected
+                                                        .viewport.tray_selected
                                                         .iter()
                                                         .position(|p| p == &item.path)
                                                     {
-                                                        self.tray_selected.remove(pos);
+                                                        self.viewport.tray_selected.remove(pos);
                                                     } else {
-                                                        self.tray_selected.push(item.path.clone());
+                                                        self.viewport.tray_selected.push(item.path.clone());
                                                     }
                                                 } else {
                                                     switch_target = Some(item.path.clone());
@@ -2926,7 +2357,7 @@ impl EditorApp {
                     });
                 });
             if refresh_tray {
-                self.filmstrip.refresh(self.doc_path.as_deref());
+                self.filmstrip.refresh(self.doc.path.as_deref());
             }
             if let Some((path, label)) = copy_target {
                 if let Ok((doc, base, _)) = load_document(&path) {
@@ -2984,7 +2415,7 @@ impl EditorApp {
                     // mono numerals) drawn manually so its height can't
                     // inflate the header row.
                     let count_g = ui.painter().layout_no_wrap(
-                        format!("{}", self.editor.doc().objects.len()),
+                        format!("{}", self.doc.editor.doc().objects.len()),
                         egui::FontId::monospace(qs_theme::font::CAPTION as f32 - 1.0),
                         theme::text_tertiary(),
                     );
@@ -3000,7 +2431,7 @@ impl EditorApp {
                     );
                     ui.painter().galley(badge_r.center() - count_g.size() * 0.5, count_g, theme::text_tertiary());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if self.editor.selection().len() >= 2
+                        if self.doc.editor.selection().len() >= 2
                             && crate::components::pill_button(
                                 ui,
                                 "Align",
@@ -3009,19 +2440,19 @@ impl EditorApp {
                                 self.dialogs.alignment_open = true;
                                 self.show_inspector = true;
                             }
-                        if self.editor.selection_grouped()
+                        if self.doc.editor.selection_grouped()
                             && crate::components::pill_button(
                                 ui,
                                 "Ungroup",
                                 "Ungroup (Ctrl+Shift+G)",
                             )
                         {
-                            self.editor.ungroup_selected();
+                            self.doc.editor.ungroup_selected();
                         }
-                        if self.editor.selection().len() >= 2
+                        if self.doc.editor.selection().len() >= 2
                             && crate::components::pill_button(ui, "Group", "Group (Ctrl+G)")
                         {
-                            self.editor.group_selected();
+                            self.doc.editor.group_selected();
                         }
                     });
                 });
@@ -3035,7 +2466,7 @@ impl EditorApp {
                 ui.add_space(4.0);
                 let mut changed = false;
                 let rows: Vec<_> = self
-                    .editor
+                    .doc.editor
                     .doc()
                     .objects
                     .iter()
@@ -3064,7 +2495,7 @@ impl EditorApp {
                             o.visible,
                             o.locked,
                             o.group.is_some(),
-                            self.editor.selection().contains(&o.id),
+                            self.doc.editor.selection().contains(&o.id),
                         )
                     })
                     .collect();
@@ -3075,7 +2506,7 @@ impl EditorApp {
                         "Pick a tool above or start\nwith an arrow callout",
                         Some("Draw Arrow"),
                     ) {
-                        self.editor.set_tool(Tool::Arrow);
+                        self.doc.editor.set_tool(Tool::Arrow);
                     }
                 } else {
                     egui::ScrollArea::vertical().show(ui, |ui| {
@@ -3187,7 +2618,7 @@ impl EditorApp {
                                                     })
                                                     .clicked()
                                                 {
-                                                    changed |= self.editor.set_locked(id, !locked);
+                                                    changed |= self.doc.editor.set_locked(id, !locked);
                                                 }
                                             }
                                             if !visible || row_hovered {
@@ -3219,7 +2650,7 @@ impl EditorApp {
                                                     .clicked()
                                                 {
                                                     changed |=
-                                                        self.editor.set_visible(id, !visible);
+                                                        self.doc.editor.set_visible(id, !visible);
                                                 }
                                             }
                                         },
@@ -3227,8 +2658,8 @@ impl EditorApp {
                                 });
                             });
                         if response.clicked() && !locked {
-                            self.editor.set_tool(Tool::Select);
-                            self.editor.select(Some(id));
+                            self.doc.editor.set_tool(Tool::Select);
+                            self.doc.editor.select(Some(id));
                         }
                         if response.dragged() {
                             ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
@@ -3239,7 +2670,7 @@ impl EditorApp {
                     }
                     if let (Some(source), Some((target, index))) = (released_layer, drop_target) {
                         if source != target {
-                            changed |= self.editor.move_layer(source, index);
+                            changed |= self.doc.editor.move_layer(source, index);
                         }
                     }
                     });
@@ -3283,7 +2714,7 @@ impl EditorApp {
                                 });
                                 ui.add_space(qs_theme::space::SM as f32);
                             }
-                            let selected = self.editor.selection().len();
+                            let selected = self.doc.editor.selection().len();
                             if selected >= 2 || self.dialogs.alignment_open {
                                 crate::components::card(ui, |ui| {
                                     if inspector_card_header(ui, "ALIGN", self.dialogs.alignment_open) {
@@ -3301,7 +2732,7 @@ impl EditorApp {
                                 });
                                 ui.add_space(qs_theme::space::SM as f32);
                             }
-                            let changed = image_panel::render(ui, &mut self.editor, &mut self.prefs);
+                            let changed = image_panel::render(ui, &mut self.doc.editor, &mut self.prefs);
                             ui.add_space(qs_theme::space::SM as f32);
                             crate::components::card(ui, |ui| {
                                 crate::components::section_header(ui, "Quick Actions");
@@ -3372,8 +2803,8 @@ impl EditorApp {
                                 )
                                 {
                                     self.ocr_hints.ensure(
-                                        self.editor.doc(),
-                                        &self.base,
+                                        self.doc.editor.doc(),
+                                        &self.doc.base,
                                         &self.prefs.ocr_lang,
                                     );
                                     self.ocr_hints.poll();
@@ -3381,7 +2812,7 @@ impl EditorApp {
                                         self.show_toast("Scanning text with OCR… click again in a moment");
                                     } else {
                                         let rects = self.ocr_hints.sensitive_rects();
-                                        let n = self.editor.add_redactions(&rects, qs_doc::BlurMode::Solid);
+                                        let n = self.doc.editor.add_redactions(&rects, qs_doc::BlurMode::Solid);
                                         if n > 0 {
                                             self.touch();
                                             self.show_toast(format!("Auto-redacted {n} sensitive item(s)"));
@@ -3406,9 +2837,9 @@ impl EditorApp {
                                         .map(|h| h.rect)
                                         .collect();
                                     let n = if !ocr_rects.is_empty() {
-                                        self.editor.simplify_from_rects(&ocr_rects, self.editor.region())
+                                        self.doc.editor.simplify_from_rects(&ocr_rects, self.doc.editor.region())
                                     } else {
-                                        self.editor.simplify_from_image(&self.base)
+                                        self.doc.editor.simplify_from_image(&self.doc.base)
                                     };
                                     if n > 0 {
                                         self.touch();
@@ -3453,25 +2884,25 @@ impl EditorApp {
                 }
                 let (screen_rect, response) =
                     ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
-                self.last_canvas_rect = Some(screen_rect);
-                self.view.sync(self.editor.doc());
-                self.last_cursor_doc = ui
+                self.viewport.last_canvas_rect = Some(screen_rect);
+                self.viewport.view.sync(self.doc.editor.doc());
+                self.viewport.last_cursor_doc = ui
                     .input(|i| i.pointer.latest_pos())
                     .filter(|p| screen_rect.contains(*p))
-                    .map(|p| self.view.screen_to_doc(p, screen_rect));
+                    .map(|p| self.viewport.view.screen_to_doc(p, screen_rect));
 
                 // Smart Move: keep line hints in step with the base image, and
                 // keep repainting while the worker runs so the proposal shows
                 // up without the user moving the mouse again.
                 // Hints feed two things: the Smart Move proposal, and copying
                 // the text inside the selection region.
-                let wants_hints = self.editor.tool() == Tool::SmartMove
-                    || self.editor.region().is_some()
+                let wants_hints = self.doc.editor.tool() == Tool::SmartMove
+                    || self.doc.editor.region().is_some()
                     || self.find.open;
                 if wants_hints {
                     self.ocr_hints.ensure(
-                        self.editor.doc(),
-                        &self.base,
+                        self.doc.editor.doc(),
+                        &self.doc.base,
                         &self.prefs.ocr_lang,
                     );
                     if self.ocr_hints.is_scanning() {
@@ -3480,31 +2911,31 @@ impl EditorApp {
                     }
                     self.ocr_hints.poll();
                 }
-                let hint_rect = if self.editor.tool() == Tool::SmartMove
-                    && self.editor.pending_smart_move().is_none()
-                    && self.editor.move_src_rect().is_none()
+                let hint_rect = if self.doc.editor.tool() == Tool::SmartMove
+                    && self.doc.editor.pending_smart_move().is_none()
+                    && self.doc.editor.move_src_rect().is_none()
                 {
-                    self.last_cursor_doc
+                    self.viewport.last_cursor_doc
                         .and_then(|p| self.ocr_hints.hit(p).map(|h| h.rect))
                 } else {
                     None
                 };
 
-                let fit_cap = if self.needs_initial_fit {
+                let fit_cap = if self.viewport.needs_initial_fit {
                     Some(1.0)
                 } else {
-                    self.fit_memo
-                        .filter(|m| m.wants_refit(&self.view, screen_rect.size()))
+                    self.viewport.fit_memo
+                        .filter(|m| m.wants_refit(&self.viewport.view, screen_rect.size()))
                         .map(|m| m.max_zoom)
                 };
                 if let Some(cap) = fit_cap {
                     if screen_rect.width() > 32.0 && screen_rect.height() > 32.0 {
-                        self.view
-                            .fit_to(self.view.display_rect(), screen_rect, 40.0);
-                        self.view.zoom = self.view.zoom.min(cap);
-                        self.needs_initial_fit = false;
-                        self.fit_memo = Some(crate::canvas::FitMemo::of(
-                            &self.view,
+                        self.viewport.view
+                            .fit_to(self.viewport.view.display_rect(), screen_rect, 40.0);
+                        self.viewport.view.zoom = self.viewport.view.zoom.min(cap);
+                        self.viewport.needs_initial_fit = false;
+                        self.viewport.fit_memo = Some(crate::canvas::FitMemo::of(
+                            &self.viewport.view,
                             screen_rect.size(),
                             cap,
                         ));
@@ -3519,16 +2950,16 @@ impl EditorApp {
                         let zoom_delta = i.zoom_delta();
                         if (zoom_delta - 1.0).abs() > 0.001 {
                             if let Some(pos) = i.pointer.latest_pos() {
-                                self.view.zoom_at(zoom_delta, pos, screen_rect);
+                                self.viewport.view.zoom_at(zoom_delta, pos, screen_rect);
                             }
                         } else if i.smooth_scroll_delta != Vec2::ZERO {
                             if i.modifiers.ctrl || i.modifiers.command {
                                 let factor = (1.0 + i.smooth_scroll_delta.y * 0.01).clamp(0.5, 2.0);
                                 if let Some(pos) = i.pointer.latest_pos() {
-                                    self.view.zoom_at(factor, pos, screen_rect);
+                                    self.viewport.view.zoom_at(factor, pos, screen_rect);
                                 }
                             } else {
-                                self.view.pan(i.smooth_scroll_delta);
+                                self.viewport.view.pan(i.smooth_scroll_delta);
                             }
                         }
                     }
@@ -3543,7 +2974,7 @@ impl EditorApp {
                         i.modifiers.shift,
                         i.modifiers.alt,
                         i.key_down(Key::Space)
-                            && self.editor.edit().is_none()
+                            && self.doc.editor.edit().is_none()
                             && ctx.memory(|m| m.focused().is_none()),
                         i.pointer.button_down(egui::PointerButton::Middle),
                     )
@@ -3552,7 +2983,7 @@ impl EditorApp {
                 if panning {
                     let delta = ui.input(|i| i.pointer.delta());
                     if delta != Vec2::ZERO {
-                        self.view.pan(delta);
+                        self.viewport.view.pan(delta);
                     }
                     ctx.set_cursor_icon(CursorIcon::Grabbing);
                 } else if space_held && screen_rect.contains(ui.input(|i| i.pointer.hover_pos().unwrap_or_default())) {
@@ -3561,114 +2992,114 @@ impl EditorApp {
 
                 if response.secondary_clicked() {
                     if let Some(pos) = response.interact_pointer_pos() {
-                        let doc_p = self.view.screen_to_doc(pos, screen_rect);
-                        let picked = self.editor.pick(doc_p);
+                        let doc_p = self.viewport.view.screen_to_doc(pos, screen_rect);
+                        let picked = self.doc.editor.pick(doc_p);
                         if let Some(id) = picked {
-                            if self.editor.tool() != Tool::Select {
-                                self.editor.set_tool(Tool::Select);
+                            if self.doc.editor.tool() != Tool::Select {
+                                self.doc.editor.set_tool(Tool::Select);
                             }
-                            if !self.editor.selection().contains(&id) {
-                                self.editor.select(Some(id));
+                            if !self.doc.editor.selection().contains(&id) {
+                                self.doc.editor.select(Some(id));
                             }
                         }
                         self.dialogs.context_menu = Some((pos, picked));
                     }
                 }
 
-                self.editor.hit_tol = 6.0 / self.view.zoom.max(0.1);
+                self.doc.editor.hit_tol = 6.0 / self.viewport.view.zoom.max(0.1);
 
                 if panning || space_held {
                     // Handled by pan mode above.
                 } else if alt_held && response.clicked() {
                     if let Some(pos) = response.interact_pointer_pos() {
-                        let doc_p = self.view.screen_to_doc(pos, screen_rect);
-                        let s = self.editor.doc().scale;
+                        let doc_p = self.viewport.view.screen_to_doc(pos, screen_rect);
+                        let s = self.doc.editor.doc().scale;
                         let px = (doc_p.x * s).round() as i32;
                         let py = (doc_p.y * s).round() as i32;
                         if px >= 0
                             && py >= 0
-                            && (px as u32) < self.base.width()
-                            && (py as u32) < self.base.height()
+                            && (px as u32) < self.doc.base.width()
+                            && (py as u32) < self.doc.base.height()
                         {
-                            let p = self.base.get_pixel(px as u32, py as u32).0;
+                            let p = self.doc.base.get_pixel(px as u32, py as u32).0;
                             let rgb = ((p[0] as u32) << 16) | ((p[1] as u32) << 8) | p[2] as u32;
-                            self.editor.set_color(rgb);
+                            self.doc.editor.set_color(rgb);
                             self.touch();
                             self.show_toast(format!("Sampled color #{rgb:06X}"));
                         }
                     }
-                } else if response.double_clicked() && self.editor.tool() == Tool::Select {
-                    self.saw_drag_press = false;
+                } else if response.double_clicked() && self.doc.editor.tool() == Tool::Select {
+                    self.tools.saw_drag_press = false;
                     if let Some(pos) = response.interact_pointer_pos() {
-                        let doc_p = self.view.screen_to_doc(pos, screen_rect);
-                        self.editor.double_click(doc_p);
+                        let doc_p = self.viewport.view.screen_to_doc(pos, screen_rect);
+                        self.doc.editor.double_click(doc_p);
                         self.touch();
                     }
                 } else if response.drag_started() {
-                    self.saw_drag_press = true;
+                    self.tools.saw_drag_press = true;
                     if let Some(pos) = response.interact_pointer_pos() {
                         // egui recognizes a drag only after crossing the click threshold.
                         let origin = ui.input(|i| i.pointer.press_origin()).unwrap_or(pos);
-                        let start = self.view.screen_to_doc(origin, screen_rect);
-                        let rev_before = self.editor.revision();
-                        self.editor.pointer_down_mod(start, shift_held);
+                        let start = self.viewport.view.screen_to_doc(origin, screen_rect);
+                        let rev_before = self.doc.editor.revision();
+                        self.doc.editor.pointer_down_mod(start, shift_held);
                         if pos != origin {
-                            let point = self.view.screen_to_doc(pos, screen_rect);
-                            self.editor.pointer_move(point, shift_held);
+                            let point = self.viewport.view.screen_to_doc(pos, screen_rect);
+                            self.doc.editor.pointer_move(point, shift_held);
                         }
-                        if self.editor.revision() != rev_before || pos != origin {
+                        if self.doc.editor.revision() != rev_before || pos != origin {
                             self.touch();
                         }
                     }
                 } else if response.dragged() {
                     if response.drag_delta() != Vec2::ZERO {
                         if let Some(pos) = response.interact_pointer_pos() {
-                            let doc_p = self.view.screen_to_doc(pos, screen_rect);
-                            self.editor.pointer_move(doc_p, shift_held);
+                            let doc_p = self.viewport.view.screen_to_doc(pos, screen_rect);
+                            self.doc.editor.pointer_move(doc_p, shift_held);
                             // Marquee, Crop, Cutout, SelectRegion and SmartMove source
                             // drags only draw transient egui overlays — skip full bitmap
                             // re-rendering until release.
-                            let overlay_only = self.editor.marquee_rect().is_some()
-                                || self.editor.crop_rect().is_some()
-                                || self.editor.cutout_rect().is_some()
-                                || self.editor.tool() == Tool::SelectRegion
-                                || (self.editor.tool() == Tool::SmartMove
-                                    && self.editor.move_src_rect().is_some());
+                            let overlay_only = self.doc.editor.marquee_rect().is_some()
+                                || self.doc.editor.crop_rect().is_some()
+                                || self.doc.editor.cutout_rect().is_some()
+                                || self.doc.editor.tool() == Tool::SelectRegion
+                                || (self.doc.editor.tool() == Tool::SmartMove
+                                    && self.doc.editor.move_src_rect().is_some());
                             if !overlay_only {
                                 self.touch();
                             }
                         }
                     }
                 } else if response.drag_stopped() {
-                    self.saw_drag_press = false;
+                    self.tools.saw_drag_press = false;
                     if let Some(pos) = response.interact_pointer_pos() {
-                        let doc_p = self.view.screen_to_doc(pos, screen_rect);
-                        let was_marquee = self.editor.marquee_rect().is_some();
-                        self.editor.pointer_move(doc_p, shift_held);
-                        self.editor.pointer_up(doc_p);
+                        let doc_p = self.viewport.view.screen_to_doc(pos, screen_rect);
+                        let was_marquee = self.doc.editor.marquee_rect().is_some();
+                        self.doc.editor.pointer_move(doc_p, shift_held);
+                        self.doc.editor.pointer_up(doc_p);
                         if !was_marquee {
                             self.touch();
                         }
                     }
-                } else if response.clicked() && !self.saw_drag_press {
+                } else if response.clicked() && !self.tools.saw_drag_press {
                     if let Some(pos) = response.interact_pointer_pos() {
-                        let doc_p = self.view.screen_to_doc(pos, screen_rect);
+                        let doc_p = self.viewport.view.screen_to_doc(pos, screen_rect);
                         // Smart Move: a click on a recognized line arms that
                         // line; anywhere else keeps the manual drag flow.
-                        let arm = if self.editor.tool() == Tool::SmartMove
-                            && self.editor.pending_smart_move().is_none()
+                        let arm = if self.doc.editor.tool() == Tool::SmartMove
+                            && self.doc.editor.pending_smart_move().is_none()
                         {
                             self.ocr_hints.hit(doc_p).map(|h| h.rect)
                         } else {
                             None
                         };
-                        let rev_before = self.editor.revision();
-                        let armed = arm.is_some_and(|r| self.editor.begin_smart_move(r));
+                        let rev_before = self.doc.editor.revision();
+                        let armed = arm.is_some_and(|r| self.doc.editor.begin_smart_move(r));
                         if !armed {
-                            self.editor.pointer_down_mod(doc_p, shift_held);
-                            self.editor.pointer_up(doc_p);
+                            self.doc.editor.pointer_down_mod(doc_p, shift_held);
+                            self.doc.editor.pointer_up(doc_p);
                         }
-                        if self.editor.revision() != rev_before {
+                        if self.doc.editor.revision() != rev_before {
                             self.touch();
                         }
                     }
@@ -3684,10 +3115,10 @@ impl EditorApp {
                 canvas::paint_workspace(&painter, screen_rect);
 
                 // 2. Document screen bounds + soft multi-layer drop shadow
-                self.view.sync(self.editor.doc());
+                self.viewport.view.sync(self.doc.editor.doc());
                 let img_screen_rect = self
-                    .view
-                    .display_rect_to_screen(self.view.display_rect(), screen_rect);
+                    .viewport.view
+                    .display_rect_to_screen(self.viewport.view.display_rect(), screen_rect);
 
                 canvas::paint_document_shadow(&painter, img_screen_rect);
 
@@ -3716,7 +3147,7 @@ impl EditorApp {
                             .iter()
                             .map(|i| {
                                 let r = self.ocr_hints.lines()[*i].rect;
-                                self.view.doc_rect_to_screen(r, screen_rect)
+                                self.viewport.view.doc_rect_to_screen(r, screen_rect)
                             })
                             .collect();
                         let current = self.find.index.min(rects.len() - 1);
@@ -3725,9 +3156,9 @@ impl EditorApp {
                 }
 
                 // 5b. Crop / Cutout preview + Crop aspect ratio presets bar
-                if self.editor.tool() == Tool::Crop {
-                    if let Some(crop) = self.editor.crop_rect() {
-                        let crop_screen = self.view.doc_rect_to_screen(crop, screen_rect);
+                if self.doc.editor.tool() == Tool::Crop {
+                    if let Some(crop) = self.doc.editor.crop_rect() {
+                        let crop_screen = self.viewport.view.doc_rect_to_screen(crop, screen_rect);
                         canvas::paint_crop_overlay(&mut painter, crop_screen, screen_rect);
                     }
                     let mut ratio_pick: Option<f32> = None;
@@ -3772,7 +3203,7 @@ impl EditorApp {
                             });
                         });
                     if let Some(ratio) = ratio_pick {
-                        let v = self.editor.doc().view.normalized();
+                        let v = self.doc.editor.doc().view.normalized();
                         let cur = v.w / v.h.max(1.0);
                         let (nw, nh) = if cur > ratio {
                             (v.h * ratio, v.h)
@@ -3781,27 +3212,27 @@ impl EditorApp {
                         };
                         let nx = v.x + (v.w - nw) * 0.5;
                         let ny = v.y + (v.h - nh) * 0.5;
-                        self.editor.set_view(RectF::new(nx, ny, nw, nh));
+                        self.doc.editor.set_view(RectF::new(nx, ny, nw, nh));
                         self.touch();
                         self.show_toast("Cropped to aspect ratio");
                     } else if auto_trim {
-                        if self.editor.trim_to_content(&self.base, 6) {
+                        if self.doc.editor.trim_to_content(&self.doc.base, 6) {
                             self.touch();
                             self.show_toast("Trimmed uniform edges");
                         } else {
                             self.show_toast("No uniform edges to trim");
                         }
                     } else if reset_view {
-                        let sz = self.editor.doc().base_size;
-                        self.editor.set_view(RectF::new(0.0, 0.0, sz.w, sz.h));
+                        let sz = self.doc.editor.doc().base_size;
+                        self.doc.editor.set_view(RectF::new(0.0, 0.0, sz.w, sz.h));
                         self.touch();
                         self.show_toast("Reset crop to full image");
                     }
                 }
-                if self.editor.tool() == Tool::Cutout {
-                    if let Some(strip) = self.editor.cutout_rect() {
-                        let mut s_rect = self.view.doc_rect_to_screen(strip, screen_rect);
-                        match self.editor.style.cutout_axis {
+                if self.doc.editor.tool() == Tool::Cutout {
+                    if let Some(strip) = self.doc.editor.cutout_rect() {
+                        let mut s_rect = self.viewport.view.doc_rect_to_screen(strip, screen_rect);
+                        match self.doc.editor.style.cutout_axis {
                             qs_doc::CutoutAxis::Horizontal => {
                                 s_rect.min.x = img_screen_rect.min.x;
                                 s_rect.max.x = img_screen_rect.max.x;
@@ -3814,26 +3245,26 @@ impl EditorApp {
                         canvas::paint_cutout_overlay(&mut painter, s_rect, screen_rect);
                     }
                 }
-                if self.editor.tool() == Tool::SmartMove {
-                    let armed = self.editor.pending_smart_move().is_some();
+                if self.doc.editor.tool() == Tool::SmartMove {
+                    let armed = self.doc.editor.pending_smart_move().is_some();
                     let rect = if armed {
-                        self.editor.pending_smart_move()
+                        self.doc.editor.pending_smart_move()
                     } else {
-                        self.editor.move_src_rect().or(hint_rect)
+                        self.doc.editor.move_src_rect().or(hint_rect)
                     };
                     if let Some(r) = rect {
-                        let s_rect = self.view.doc_rect_to_screen(r, screen_rect);
+                        let s_rect = self.viewport.view.doc_rect_to_screen(r, screen_rect);
                         canvas::paint_move_overlay(&painter, s_rect, armed);
                     }
                 }
 
                 // 5c. Committed selection region outline + floating action bar
-                if self.editor.tool() != Tool::Crop
-                    && self.editor.tool() != Tool::SelectRegion
-                    && self.editor.region().is_some()
+                if self.doc.editor.tool() != Tool::Crop
+                    && self.doc.editor.tool() != Tool::SelectRegion
+                    && self.doc.editor.region().is_some()
                 {
-                    let region = self.editor.region().unwrap();
-                    let region_screen = self.view.doc_rect_to_screen(region, screen_rect);
+                    let region = self.doc.editor.region().unwrap();
+                    let region_screen = self.viewport.view.doc_rect_to_screen(region, screen_rect);
                     canvas::paint_region(&painter, region_screen);
 
                     // Floating quick-action pill directly under the selection region
@@ -3889,40 +3320,40 @@ impl EditorApp {
                         self.copy_text_in_region();
                     }
                     if act_redact {
-                        let n = self.editor.add_redactions(&[region], qs_doc::BlurMode::Solid);
-                        self.editor.set_region(None);
+                        let n = self.doc.editor.add_redactions(&[region], qs_doc::BlurMode::Solid);
+                        self.doc.editor.set_region(None);
                         if n > 0 {
                             self.touch();
                             self.show_toast("Redacted selection");
                         }
                     }
                     if act_crop {
-                        self.editor.set_view(region.normalized());
-                        self.editor.set_region(None);
+                        self.doc.editor.set_view(region.normalized());
+                        self.doc.editor.set_region(None);
                         self.touch();
                         self.show_toast("Cropped to selection");
                     }
                     if act_clear {
-                        self.editor.set_region(None);
+                        self.doc.editor.set_region(None);
                         self.touch();
                     }
                 }
 
                 // 5d. Marquee preview while dragging on empty canvas
-                if self.editor.tool() == Tool::Select {
-                    if let Some(m) = self.editor.marquee_rect() {
+                if self.doc.editor.tool() == Tool::Select {
+                    if let Some(m) = self.doc.editor.marquee_rect() {
                         if m.w >= 1.0 || m.h >= 1.0 {
                             let m_screen =
-                                self.view.doc_rect_to_screen(m.normalized(), screen_rect);
+                                self.viewport.view.doc_rect_to_screen(m.normalized(), screen_rect);
                             canvas::paint_region(&painter, m_screen);
                         }
                     }
                 }
 
                 // 5e. Multi-selection bounding outline (no handles)
-                if self.editor.selection().len() > 1 {
-                    if let Some(b) = self.editor.selection_bounds() {
-                        let b_screen = self.view.doc_rect_to_screen(b, screen_rect);
+                if self.doc.editor.selection().len() > 1 {
+                    if let Some(b) = self.doc.editor.selection_bounds() {
+                        let b_screen = self.viewport.view.doc_rect_to_screen(b, screen_rect);
                         painter.rect_stroke(
                             b_screen,
                             0.0,
@@ -3933,23 +3364,23 @@ impl EditorApp {
                 }
 
                 // 6. Selection outline & handles
-                let handles = self.editor.selection_handles();
+                let handles = self.doc.editor.selection_handles();
                 if !handles.is_empty() {
                     canvas::paint_handles(
                         &painter,
                         &handles,
-                        self.editor.selected_object().map(|o| &o.kind),
-                        &self.view,
+                        self.doc.editor.selected_object().map(|o| &o.kind),
+                        &self.viewport.view,
                         screen_rect,
                     );
                 }
 
                 // 7. Active text-edit frame + blinking caret
-                if let Some(te) = self.editor.edit() {
-                    if let Some(obj) = self.editor.doc().get(te.id) {
+                if let Some(te) = self.doc.editor.edit() {
+                    if let Some(obj) = self.doc.editor.doc().get(te.id) {
                         if let Some((origin, lay)) = qs_render::text_block(&obj.kind) {
-                            let box_tl = self.view.doc_to_screen(origin, screen_rect);
-                            let box_br = self.view.doc_to_screen(
+                            let box_tl = self.viewport.view.doc_to_screen(origin, screen_rect);
+                            let box_br = self.viewport.view.doc_to_screen(
                                 PointF::new(
                                     origin.x + lay.width.max(24.0),
                                     origin.y + lay.height.max(20.0),
@@ -3964,11 +3395,11 @@ impl EditorApp {
                                 StrokeKind::Outside,
                             );
                             let (cx, cy) = lay.caret(te.caret);
-                            let p1 = self.view.doc_to_screen(
+                            let p1 = self.viewport.view.doc_to_screen(
                                 PointF::new(origin.x + cx, origin.y + cy),
                                 screen_rect,
                             );
-                            let p2 = self.view.doc_to_screen(
+                            let p2 = self.viewport.view.doc_to_screen(
                                 PointF::new(origin.x + cx, origin.y + cy + 18.0),
                                 screen_rect,
                             );
@@ -3993,11 +3424,11 @@ impl EditorApp {
                             }
                             // In-flight IME composition (Telex "đan" before it
                             // commits to "đan"/"dans") so the user sees typing.
-                            if !self.ime_preedit.is_empty() {
+                            if !self.tools.ime_preedit.is_empty() {
                                 painter.text(
                                     p2 + egui::vec2(6.0, 0.0),
                                     egui::Align2::LEFT_BOTTOM,
-                                    &self.ime_preedit,
+                                    &self.tools.ime_preedit,
                                     FontId::proportional(14.0),
                                     theme::text_primary(),
                                 );
@@ -4117,7 +3548,7 @@ impl EditorApp {
 
         self.sync_unsaved();
         self.autosave_tick();
-        if self.unsaved {
+        if self.doc.unsaved {
             // A second edit inside the throttle interval must be recovered
             // even when no more input events wake this window.
             ctx.request_repaint_after(recovery::AUTOSAVE_INTERVAL);
@@ -4210,7 +3641,7 @@ fn inspector_card_header(ui: &mut egui::Ui, title: &str, closable: bool) -> bool
 /// Runs the sibling `quickshort` binary with `arg` (`--capture`,
 /// `--settings`), so the editor reaches Capture and the one Settings window
 /// without a trip to the tray.
-fn spawn_app(arg: &str) {
+pub(crate) fn spawn_app(arg: &str) {
     let name = if cfg!(windows) {
         "quickshort.exe"
     } else {
@@ -4234,7 +3665,7 @@ mod tests {
     fn saving_live_effects_finalizes_undo_before_recording_saved_revision() {
         let base = RgbaImage::from_pixel(20, 10, image::Rgba([30, 60, 90, 255]));
         let mut app = EditorApp::for_tests(Document::new(20, 10, 1.0), base);
-        app.editor.preview_effects(qs_doc::Effects {
+        app.doc.editor.preview_effects(qs_doc::Effects {
             border: Some(qs_doc::BorderEffect::default()),
             ..Default::default()
         });
@@ -4242,20 +3673,20 @@ mod tests {
             std::env::temp_dir().join(format!("qs_effect_save_{}.qsdoc", std::process::id()));
         app.save_to(&path).unwrap();
         let loaded = qsdoc::read(&path).unwrap();
-        assert_eq!(loaded.doc.effects, app.editor.doc().effects);
+        assert_eq!(loaded.doc.effects, app.doc.editor.doc().effects);
         assert_eq!(
             qs_render::render(&loaded.doc, &loaded.base),
-            qs_render::render(app.editor.doc(), &app.base)
+            qs_render::render(app.doc.editor.doc(), &app.doc.base)
         );
-        app.editor.finish_effects();
+        app.doc.editor.finish_effects();
         app.sync_unsaved();
         assert!(
-            !app.unsaved,
+            !app.doc.unsaved,
             "finishing already-saved effects must not dirty the document"
         );
-        assert!(app.editor.undo());
-        assert_eq!(app.editor.doc().effects, qs_doc::Effects::default());
-        assert!(!app.editor.undo());
+        assert!(app.doc.editor.undo());
+        assert_eq!(app.doc.editor.doc().effects, qs_doc::Effects::default());
+        assert!(!app.doc.editor.undo());
         let _ = std::fs::remove_file(path);
     }
 
@@ -4316,11 +3747,11 @@ mod tests {
         drag(&mut app, first, first.lerp(last, 0.5), last);
         assert_eq!(app.document().objects[0].id, ObjectId(3));
 
-        app.editor.set_tool(Tool::Rect);
+        app.doc.editor.set_tool(Tool::Rect);
         frame(&mut app, vec![]);
-        let canvas = app.last_canvas_rect.unwrap();
-        let start = app.view.doc_to_screen(PointF::new(200.0, 100.0), canvas);
-        let end = app.view.doc_to_screen(PointF::new(310.0, 180.0), canvas);
+        let canvas = app.viewport.last_canvas_rect.unwrap();
+        let start = app.viewport.view.doc_to_screen(PointF::new(200.0, 100.0), canvas);
+        let end = app.viewport.view.doc_to_screen(PointF::new(310.0, 180.0), canvas);
         drag(&mut app, start, start.lerp(end, 0.7), end);
 
         let qs_doc::ObjectKind::Rect { r, .. } = app.document().objects.last().unwrap().kind else {
@@ -4356,9 +3787,9 @@ mod tests {
             modifiers: Modifiers::NONE,
         };
         frame(&mut app, vec![key(Key::S)]);
-        assert_eq!(app.editor.tool(), Tool::Step);
-        let canvas = app.last_canvas_rect.unwrap();
-        let pos = app.view.doc_to_screen(PointF::new(200.0, 100.0), canvas);
+        assert_eq!(app.doc.editor.tool(), Tool::Step);
+        let canvas = app.viewport.last_canvas_rect.unwrap();
+        let pos = app.viewport.view.doc_to_screen(PointF::new(200.0, 100.0), canvas);
         frame(&mut app, vec![egui::Event::PointerMoved(pos)]);
         for number in 1..=2 {
             for pressed in [true, false] {
@@ -4372,17 +3803,17 @@ mod tests {
                     }],
                 );
             }
-            assert_eq!(app.editor.tool(), Tool::Step);
+            assert_eq!(app.doc.editor.tool(), Tool::Step);
             assert_eq!(app.document().objects.len(), number as usize);
             let id = app.document().objects.last().unwrap().id;
             assert_eq!(app.document().step_number(id), Some(number));
         }
         frame(&mut app, vec![key(Key::V)]);
-        assert_eq!(app.editor.tool(), Tool::Select);
+        assert_eq!(app.doc.editor.tool(), Tool::Select);
         frame(&mut app, vec![key(Key::R)]);
-        assert_eq!(app.editor.tool(), Tool::Rect);
+        assert_eq!(app.doc.editor.tool(), Tool::Rect);
         frame(&mut app, vec![key(Key::Escape)]);
-        assert_eq!(app.editor.tool(), Tool::Select);
+        assert_eq!(app.doc.editor.tool(), Tool::Select);
     }
 
     #[test]
