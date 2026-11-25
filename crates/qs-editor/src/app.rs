@@ -818,9 +818,7 @@ impl EditorApp {
             }
             self.dialogs.canvas_dialog_open = false;
         } else if trim {
-            if let Some(rect) = qs_edit::trim::calculate_trim_rect(self.editor.doc(), &self.base, 6)
-            {
-                self.editor.set_view(rect);
+            if self.editor.trim_to_content(&self.base, 6) {
                 self.touch();
                 self.dialogs.canvas_dialog_open = false;
             } else {
@@ -3787,10 +3785,7 @@ impl EditorApp {
                         self.touch();
                         self.show_toast("Cropped to aspect ratio");
                     } else if auto_trim {
-                        if let Some(rect) =
-                            qs_edit::trim::calculate_trim_rect(self.editor.doc(), &self.base, 6)
-                        {
-                            self.editor.set_view(rect);
+                        if self.editor.trim_to_content(&self.base, 6) {
                             self.touch();
                             self.show_toast("Trimmed uniform edges");
                         } else {
