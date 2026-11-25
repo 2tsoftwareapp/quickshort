@@ -103,6 +103,32 @@ jobs:
       - name: build
         run: cargo build --locked --release -p qs-app -p qs-editor
 
+      # SignPath OSS signing: two rounds — the shipped binaries first, then
+      # the installer carrying them. Gated on vars.SIGNPATH_ENABLED so the
+      # job still produces an unsigned installer until the secrets exist.
+      - name: upload unsigned binaries
+        if: ${{ vars.SIGNPATH_ENABLED == 'true' }}
+        id: unsigned-binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-binaries
+          path: |
+            target/release/quickshort.exe
+            target/release/qs-editor.exe
+          if-no-files-found: error
+
+      - name: sign binaries via SignPath
+        if: ${{ vars.SIGNPATH_ENABLED == 'true' }}
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_ARTIFACT_CONFIG_SLUG }}
+          github-artifact-id: ${{ steps.unsigned-binaries.outputs.artifact-id }}
+          output-artifact-directory: signed-binaries
+
       - name: nsis installer
         shell: bash
         env:
@@ -111,14 +137,41 @@ jobs:
           command -v makensis >/dev/null || choco install nsis -y --no-progress
           export PATH="$PATH:/c/Program Files (x86)/NSIS:/c/Program Files/NSIS"
           mkdir -p dist
+          # Prefer SignPath-signed binaries when present.
+          BIN_DIR=target/release
+          [ -f signed-binaries/quickshort.exe ] && BIN_DIR=signed-binaries
           # -D not /D: git-bash mangles /DFOO into a C:/Program Files/Git path.
           # NSIS resolves relative paths against the script dir, so pass
           # absolute Windows paths via cygpath.
           makensis "-DVERSION=$QS_VERSION" \
-            "-DBIN=$(cygpath -w "$PWD/target/release/quickshort.exe")" \
-            "-DEDITOR_BIN=$(cygpath -w "$PWD/target/release/qs-editor.exe")" \
+            "-DBIN=$(cygpath -w "$PWD/$BIN_DIR/quickshort.exe")" \
+            "-DEDITOR_BIN=$(cygpath -w "$PWD/$BIN_DIR/qs-editor.exe")" \
             "-DOUT=$(cygpath -w "$PWD/dist/Quickshort-Windows-Setup.exe")" \
             packaging/windows/installer.nsi
+
+      - name: upload unsigned installer
+        if: ${{ vars.SIGNPATH_ENABLED == 'true' }}
+        id: unsigned-setup
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-setup
+          path: dist/Quickshort-Windows-Setup.exe
+          if-no-files-found: error
+
+      - name: sign installer via SignPath
+        if: ${{ vars.SIGNPATH_ENABLED == 'true' }}
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_ARTIFACT_CONFIG_SLUG }}
+          github-artifact-id: ${{ steps.unsigned-setup.outputs.artifact-id }}
+          output-artifact-directory: dist
+
+      - name: checksum
+        run: |
           cd dist && sha256sum Quickshort-Windows-Setup.exe \
             > Quickshort-Windows-Setup.exe.sha256
 
