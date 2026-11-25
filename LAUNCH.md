@@ -1,7 +1,7 @@
 # Launch checklist — v1.0.0
 
 Pending work for the v1.0 launch, in dependency order. Decisions already
-made: VN-first launch, unsigned builds (no Dev ID yet), winget + AUR as
+made: VN-first launch, Developer ID signed/notarized macOS builds, winget + AUR as
 new channels, metrics via GitHub Traffic + release downloads + report
 relay issue volume.
 
@@ -44,14 +44,14 @@ just absorbs request floods at the edge.)
 
 ```bash
 # winget — sha256 of the Windows setup exe
-curl -sL https://github.com/truongnat/quickshort/releases/download/v1.0.0/Quickshort-Windows-Setup.exe | sha256sum
+curl -sL https://github.com/2tsoftwareapp/quickshort/releases/download/v1.0.0/Quickshort-Windows-Setup.exe | sha256sum
 # AUR — sha256 of the deb
-curl -sL https://github.com/truongnat/quickshort/releases/download/v1.0.0/quickshort_amd64.deb | sha256sum
+curl -sL https://github.com/2tsoftwareapp/quickshort/releases/download/v1.0.0/quickshort_amd64.deb | sha256sum
 ```
 
 - [ ] `packaging/winget/quickshort.installer.yaml` → `InstallerSha256`,
       then `wingetcreate submit` or fork `microsoft/winget-pkgs` and PR
-      `manifests/t/truongnat/quickshort/1.0.0/`
+      `manifests/2/2tsoftwareapp/quickshort/1.0.0/`
 - [ ] `packaging/aur/PKGBUILD` → `sha256sums`, publish as
       `quickshort-bin` on aur.archlinux.org (needs an AUR account)
 
@@ -63,7 +63,7 @@ EN subs:
 1. hotkey → drag region → annotate
 2. Share Link → browser opens `share.2tsoftware.app` URL
 3. album fan → right-click → Revoke Link
-4. end card: `github.com/truongnat/quickshort`
+4. end card: `github.com/2tsoftwareapp/quickshort`
 
 ## 6. Launch posts (after #5)
 
@@ -73,7 +73,7 @@ EN subs:
 ## 7. Measure (week after)
 
 - GitHub repo → **Insights → Traffic** (visitors + referrers)
-- `gh api repos/truongnat/quickshort/releases` → `download_count` per asset
+- `gh api repos/2tsoftwareapp/quickshort/releases` → `download_count` per asset
 - Issue volume from the report relay (`user-report` / `user-request` labels)
 
 ## Done already (context)

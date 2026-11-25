@@ -346,7 +346,7 @@ pub fn report_issue(cfg: &Config) {
             None => {
                 let diag = payload["diagnostics"].as_str().unwrap_or_default();
                 let url = format!(
-                    "https://github.com/truongnat/quickshort/issues/new?labels=bug&body={}",
+                    "https://github.com/2tsoftwareapp/quickshort/issues/new?labels=bug&body={}",
                     url_encode(diag)
                 );
                 open_url(&url);

@@ -1,5 +1,5 @@
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.9.0.schema.json
-PackageIdentifier: truongnat.quickshort
+PackageIdentifier: 2tsoftwareapp.quickshort
 PackageVersion: 1.0.0
 InstallerType: nullsoft
 Scope: machine

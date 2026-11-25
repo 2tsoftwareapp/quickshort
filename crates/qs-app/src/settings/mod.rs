@@ -141,16 +141,16 @@ enum Hit {
 }
 
 const LINKS: &[(&str, &str)] = &[
-    ("GitHub", "https://github.com/truongnat/quickshort"),
+    ("GitHub", "https://github.com/2tsoftwareapp/quickshort"),
     (
         "Report an issue",
-        "https://github.com/truongnat/quickshort/issues",
+        "https://github.com/2tsoftwareapp/quickshort/issues",
     ),
     (
         "Request a feature",
-        "https://truongnat.github.io/quickshort/#request",
+        "https://2tsoftwareapp.github.io/quickshort/#request",
     ),
-    ("Support", "https://truongnat.github.io/quickshort/#donate"),
+    ("Support", "https://2tsoftwareapp.github.io/quickshort/#donate"),
 ];
 
 const RECENT_N: usize = 4;

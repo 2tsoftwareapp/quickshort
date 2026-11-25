@@ -82,14 +82,13 @@ Grab `Quickshort-v*-macos.dmg` from
 drag **Quickshort** into Applications. Or via Homebrew:
 
 ```bash
-brew tap truongnat/tap
+brew tap 2tsoftwareapp/tap
 brew install --cask quickshort
 ```
 
-> **Unsigned build** — no Developer ID signature or notarization. On first
-> launch, right-click the app → **Open** → **Open** once. The cask strips
-> quarantine automatically. A stable self-signed identity keeps your
-> permission grants across updates.
+> Production macOS builds are Developer ID signed and notarized. macOS still
+> shows the normal first-launch confirmation for a downloaded app, but no
+> right-click Open override or manual quarantine removal is needed.
 
 Required permissions (System Settings → Privacy & Security): **Screen
 Recording** (capturing), **Accessibility** (global hotkey).
@@ -156,11 +155,10 @@ Install Quickshort (github.com/2tsoftwareapp/quickshort) on this machine.
 Pick the right channel for my OS and install it:
 
 - macOS: download the latest Quickshort-v*-macos.dmg from GitHub Releases,
-  mount it, copy Quickshort.app to /Applications, run
-  `xattr -dr com.apple.quarantine /Applications/Quickshort.app`. Or
-  `brew tap truongnat/tap && brew install --cask quickshort`.
-  The build is unsigned — remind me to grant Screen Recording and
-  Accessibility permissions in System Settings.
+  mount it, copy Quickshort.app to /Applications. Or
+  `brew tap 2tsoftwareapp/tap && brew install --cask quickshort`.
+  Production builds are signed and notarized — remind me to grant Screen
+  Recording and Accessibility permissions in System Settings.
 - Debian/Ubuntu: download quickshort_amd64.deb and `sudo apt install ./…`.
 - Other Linux: `flatpak install flathub com.truongsoftware.quickshort`,
   or the Quickshort-Linux.AppImage (chmod +x). Make sure tesseract-ocr
@@ -305,10 +303,12 @@ QUICKSHORT_LOG=debug cargo run -p qs-app         # trace routing, IPC, etc.
 
 `packaging/macos/release.sh` runs the full pipeline — release build
 (universal when both rustup targets exist), `Quickshort.app` bundle,
-self-signed identity, zip + dmg + sha256 into `dist/`. Tagging `v*`
-triggers the workflow, which does the same and drafts a GitHub Release;
-the publish job signs every asset with ed25519 when `QS_ED25519_KEY` is
-provisioned.
+code signing, zip + dmg + sha256 into `dist/`. Production workflow builds
+use a Developer ID Application certificate and notarize/staple both macOS
+artifacts; local builds can still use a self-signed or ad-hoc identity when
+notary credentials are absent. Tagging `v*` triggers the workflow, which
+does the same and drafts a GitHub Release; the publish job signs every
+asset with ed25519 when `QS_ED25519_KEY` is provisioned.
 
 ## Privacy
 
@@ -324,7 +324,7 @@ Full policy: [docs/privacy.html](docs/privacy.html) ·
 
 Free and open source, built in spare time. If Quickshort saves you time:
 
-- **[GitHub Sponsors](https://github.com/sponsors/truongnat)** — international, zero fees on personal sponsorships
+- **[GitHub Sponsors](https://github.com/sponsors/2tsoftwareapp)** — international, zero fees on personal sponsorships
 - **VietQR** — MB Bank `0969069035` · ĐÀO QUANG TRƯỞNG (scan with any VN banking app)
 
 ## Known limits
@@ -336,6 +336,7 @@ Free and open source, built in spare time. If Quickshort saves you time:
   compositor (gsettings, swaymsg, hyprctl, probed GlobalShortcuts portal);
   elsewhere bind `quickshort --capture` yourself. The tray needs an
   AppIndicator extension on GNOME
-- Unsigned macOS builds: first launch needs one right-click → Open; the
-  self-signed identity keeps TCC grants across updates but is not a
-  Developer ID
+- Upgrading from a pre-Developer-ID self-signed macOS build can require
+  re-granting Screen Recording and Accessibility once because macOS treats
+  the new signing identity differently; later Developer ID updates keep the
+  same stable identity

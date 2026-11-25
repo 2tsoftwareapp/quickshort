@@ -2,7 +2,7 @@
 
 Cloudflare Worker that files GitHub issues on behalf of the app, so
 users can report a bug without a GitHub account. The worker holds a
-token server-side; issues land on `truongnat/quickshort` under the
+token server-side; issues land on `2tsoftwareapp/quickshort` under the
 token owner's account with labels `bug` + `user-report`.
 
 ## One-time deploy
@@ -15,7 +15,7 @@ npx wrangler deploy                                 # prints https://quickshort-
 ```
 
 `GITHUB_TOKEN`: a **fine-grained** PAT scoped to repository
-`truongnat/quickshort` only, permission **Issues: Read and write**.
+`2tsoftwareapp/quickshort` only, permission **Issues: Read and write**.
 Nothing else — that keeps the blast radius of a leaked Worker config
 to issue spam, which GitHub rate-limits anyway.
 

@@ -6,7 +6,7 @@ export const appConfig: AppConfig = {
     tagline: "Select. Snip. Ship.",
     icon: "icon.png",
     platform: "web",
-    url: "github.com/truongnat/quickshort",
+    url: "github.com/2tsoftwareapp/quickshort",
   },
   brand: {
     primary: "#52c7ea",

@@ -116,6 +116,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       TAG: ${{ github.event.release.tag_name }}
     steps:
+      - uses: actions/checkout@v4
       - name: update Homebrew cask after publication
         run: |
           [ -n "$TAP_TOKEN" ] || { echo "No TAP_TOKEN. Skipping cask update."; exit 0; }
@@ -126,8 +127,9 @@ jobs:
           SHA="$(cut -d' ' -f1 "$CHECKSUM")"
           [[ "$SHA" =~ ^[0-9a-f]{64}$ ]]
           GH_TOKEN="$TAP_TOKEN" gh auth setup-git --hostname github.com
-          GH_TOKEN="$TAP_TOKEN" git clone https://github.com/truongnat/homebrew-tap "$RUNNER_TEMP/tap"
+          GH_TOKEN="$TAP_TOKEN" git clone https://github.com/2tsoftwareapp/homebrew-tap "$RUNNER_TEMP/tap"
           cd "$RUNNER_TEMP/tap"
+          cp "$GITHUB_WORKSPACE/packaging/homebrew/quickshort.rb" Casks/quickshort.rb
           sed -i -e "s/version \".*\"/version \"$VER\"/" -e "s/sha256 \".*\"/sha256 \"$SHA\"/" Casks/quickshort.rb
           if ! git diff --quiet -- Casks/quickshort.rb; then
             git -c user.name=github-actions -c user.email=github-actions@github.com commit \

@@ -1,16 +1,18 @@
 #!/bin/sh
-# One-time setup: create a self-signed code-signing identity "quickshort".
+# One-time local-development setup: create a self-signed code-signing identity "quickshort".
 #
 # Why not ad-hoc (-): TCC (Screen Recording / Accessibility) keys grants to
 # the code's designated requirement. Ad-hoc signatures change every build, so
 # every update would re-prompt for permissions. A stable self-signed cert
 # keeps the identity constant across releases — updates install silently.
-# It does NOT satisfy Gatekeeper (that needs a $99/yr Developer ID), which is
-# why the brew cask strips quarantine and DMG users approve once in Settings.
+# It does NOT satisfy Gatekeeper and is not used for production releases;
+# production ZIP/DMG artifacts use a Developer ID Application certificate plus
+# Apple notarization. Use this only for local TCC/signing experiments.
 #
 # Output: identity "quickshort" in the login keychain, usable via
 #   codesign -s "quickshort" ...
-# For CI: export QS_SIGN_P12 (base64 p12) + QS_SIGN_P12_PASSWORD secrets.
+# For legacy local/development CI experiments only: export QS_SIGN_P12 (base64
+# p12) + QS_SIGN_P12_PASSWORD secrets. Production uses QS_DEV_ID_APPLICATION_*.
 set -e
 NAME="quickshort"
 # keep the p12 + password under the app config dir — losing them means the

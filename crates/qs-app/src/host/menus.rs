@@ -31,7 +31,7 @@ impl Host {
             }
             tray::ID_QUIT => el.exit(),
             tray::ID_DONATE => actions::open_path(std::path::Path::new(
-                "https://truongnat.github.io/quickshort/#donate",
+                "https://2tsoftwareapp.github.io/quickshort/#donate",
             )),
             tray::ID_UPDATE => {
                 if let Some(rel) = self.pending_update.take() {

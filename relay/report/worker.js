@@ -11,9 +11,9 @@
 //   npx wrangler secret put GITHUB_TOKEN   # fine-grained PAT, repo=quickshort, Issues:rw
 //   npx wrangler deploy
 
-const REPO = "truongnat/quickshort";
+const REPO = "2tsoftwareapp/quickshort";
 const MAX_FIELD = 30000;
-const ALLOW_ORIGIN = "https://truongnat.github.io";
+const ALLOW_ORIGIN = "https://2tsoftwareapp.github.io";
 // unauthenticated POST files GitHub issues — cap it or one curl loop
 // spams the tracker. Soft KV counter; good enough for the abuse we see.
 const RATE_PER_DAY = 10;

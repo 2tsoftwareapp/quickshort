@@ -1,8 +1,8 @@
-# Homebrew cask for the unsigned Quickshort build.
-# Publish in a custom tap repo `truongnat/homebrew-tap` at Casks/quickshort.rb;
+# Homebrew cask for the signed and notarized Quickshort build.
+# Publish in a custom tap repo `2tsoftwareapp/homebrew-tap` at Casks/quickshort.rb;
 # the release workflow can bump version+sha256 automatically via TAP_TOKEN.
 #
-#   brew tap truongnat/tap
+#   brew tap 2tsoftwareapp/tap
 #   brew install --cask quickshort
 cask "quickshort" do
   version "0.1.0"
@@ -15,12 +15,8 @@ cask "quickshort" do
 
   app "Quickshort.app"
 
-  # unsigned build: strip quarantine so Gatekeeper doesn't block first launch
-  postflight_steps do
-    run "/usr/bin/xattr",
-        args:           ["-dr", "com.apple.quarantine", "{{appdir}}/Quickshort.app"],
-        writable_paths: ["{{appdir}}/Quickshort.app"]
-  end
+  # Builds are Developer ID signed and notarized, so Homebrew must not strip
+  # quarantine: Gatekeeper can assess the stapled notarization ticket normally.
 
   # screen recording (⌘R) pipes frames into ffmpeg — optional, everything
   # else works without it, so this is a hint rather than a dependency

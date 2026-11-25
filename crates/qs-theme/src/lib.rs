@@ -502,8 +502,8 @@ mod tests {
 
     #[test]
     fn set_accent_updates_runtime_accent() {
-        set_accent(0xAF52DE);
-        assert_eq!(accent(), 0xAF52DE);
+        set_accent(0x123456);
+        assert_eq!(accent(), 0x123456);
         set_accent(ACCENT_DEFAULT);
         assert_eq!(accent(), ACCENT_DEFAULT);
     }

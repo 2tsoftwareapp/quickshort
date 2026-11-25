@@ -29,7 +29,7 @@ Version: $VER
 Section: utils
 Priority: optional
 Architecture: amd64
-Maintainer: truongnat <noreply@github.com>
+Maintainer: 2tsoftwareapp <noreply@github.com>
 Depends: libgtk-3-0, libgtk-layer-shell0, libayatana-appindicator3-1, libpipewire-0.3-0, libxkbcommon-x11-0, libegl1, libgl1, tesseract-ocr, tesseract-ocr-eng, wl-clipboard, libnotify-bin, openssh-client
 Recommends: tesseract-ocr-jpn, tesseract-ocr-vie, ffmpeg
 Description: Region screenshot tool with annotations and native OCR
@@ -71,7 +71,7 @@ export OUTPUT="$DIST/Quickshort-Linux.AppImage"
 rm -f "$OUTPUT" "$OUTPUT.zsync"
 # embed gh-releases-zsync update info — AppImageUpdate can then self-update
 # from GitHub Releases (the .zsync it generates lands in dist/ alongside)
-export UPDATE_INFORMATION="gh-releases-zsync|truongnat|quickshort|latest|Quickshort-Linux.AppImage.zsync"
+export UPDATE_INFORMATION="gh-releases-zsync|2tsoftwareapp|quickshort|latest|Quickshort-Linux.AppImage.zsync"
 # newer linuxdeploy builds dropped the -u flag — UPDATE_INFORMATION env var
 # alone is what appimagetool reads for the embedded update info
 if ! "$TOOLS/linuxdeploy.AppImage" \
