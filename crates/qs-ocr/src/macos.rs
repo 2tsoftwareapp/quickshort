@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use image::RgbaImage;
 use objc2::rc::Retained;
 use objc2::AllocAnyThread;
-use objc2_foundation::{NSArray, NSData, NSDictionary, NSString};
+use objc2_foundation::{NSArray, NSData, NSDictionary, NSRange, NSString};
 use objc2_vision::{
     VNImageOption, VNImageRequestHandler, VNRecognizeTextRequest, VNRecognizedTextObservation,
     VNRequest, VNRequestTextRecognitionLevel,
@@ -103,17 +103,72 @@ pub fn extract_lines(img: &RgbaImage, lang: &str) -> Result<Vec<crate::OcrLine>>
                 img.width(),
                 img.height(),
             );
+            let confidence = best.confidence().clamp(0.0, 1.0);
+            let words = word_boxes(&best, img.width(), img.height(), confidence);
             lines.push(crate::OcrLine {
                 text: best.string().to_string(),
                 x,
                 y,
                 w,
                 h,
-                confidence: best.confidence().clamp(0.0, 1.0),
+                confidence,
+                words,
             });
         }
     }
     Ok(lines)
+}
+
+/// Per-token boxes via `boundingBoxForRange` — same normalized bottom-left
+/// space as the line box, run through the shared conversion. `NSRange` counts
+/// UTF-16 code units, so char boundaries are measured in `encode_utf16`.
+/// Tokens whose range query errors are skipped, never fatal to the line.
+fn word_boxes(
+    best: &objc2_vision::VNRecognizedText,
+    img_w: u32,
+    img_h: u32,
+    confidence: f32,
+) -> Vec<crate::OcrWord> {
+    let text = best.string().to_string();
+    let mut words = Vec::new();
+    // (byte_start, token) — whitespace-separated tokens in reading order.
+    let mut start = 0usize;
+    for (i, c) in text.char_indices().chain(std::iter::once((text.len(), ' '))) {
+        if c.is_whitespace() {
+            if i > start {
+                words.push((start, &text[start..i]));
+            }
+            start = i + c.len_utf8();
+        }
+    }
+    let mut out = Vec::with_capacity(words.len());
+    let mut utf16_off = 0usize;
+    let mut consumed = 0usize; // bytes of `text` already walked
+    for (byte_start, token) in words {
+        utf16_off += text[consumed..byte_start].encode_utf16().count();
+        consumed = byte_start;
+        let range = NSRange {
+            location: utf16_off,
+            length: token.encode_utf16().count(),
+        };
+        utf16_off += range.length;
+        consumed += token.len();
+        let Ok(rect) = (unsafe { best.boundingBoxForRange_error(range) }) else {
+            continue;
+        };
+        let bb = unsafe { rect.boundingBox() };
+        let (x, y, w, h) =
+            crate::px_rect_from_normalized(bb.origin.x, bb.origin.y, bb.size.width, bb.size.height, img_w, img_h);
+        out.push(crate::OcrWord {
+            text: token.to_string(),
+            x,
+            y,
+            w,
+            h,
+            confidence,
+        });
+    }
+    out
 }
 
 /// BCP-47 tags Vision can recognize at the Accurate level — feeds the

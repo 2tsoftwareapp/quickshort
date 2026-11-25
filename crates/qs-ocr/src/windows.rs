@@ -49,23 +49,30 @@ pub fn extract_lines(img: &RgbaImage, lang: &str) -> Result<Vec<crate::OcrLine>>
             .Text()
             .map(|t| t.to_string_lossy())
             .unwrap_or_default();
-        let (mut x0, mut y0) = (f32::MAX, f32::MAX);
-        let (mut x1, mut y1) = (f32::MIN, f32::MIN);
-        if let Ok(words) = line.Words() {
-            for w in 0..words.Size().unwrap_or(0) {
-                let Ok(word) = words.GetAt(w) else { continue };
+        let mut words = Vec::new();
+        if let Ok(ws) = line.Words() {
+            for w in 0..ws.Size().unwrap_or(0) {
+                let Ok(word) = ws.GetAt(w) else { continue };
                 let Ok(r) = word.BoundingRect() else { continue };
-                x0 = x0.min(r.X);
-                y0 = y0.min(r.Y);
-                x1 = x1.max(r.X + r.Width);
-                y1 = y1.max(r.Y + r.Height);
+                // BoundingRect is already top-left image pixels — even for
+                // angled text (TextAngle) it is the AABB of the rotated quad
+                // in original image space, so no un-rotation is needed here.
+                words.push(crate::OcrWord {
+                    text: word
+                        .Text()
+                        .map(|t| t.to_string_lossy())
+                        .unwrap_or_default(),
+                    x: r.X,
+                    y: r.Y,
+                    w: r.Width,
+                    h: r.Height,
+                    confidence: 0.0,
+                });
             }
         }
-        let (x, y, w, h) = if x0 <= x1 && y0 <= y1 {
-            (x0, y0, x1 - x0, y1 - y0)
-        } else {
-            (0.0, 0.0, 0.0, 0.0)
-        };
+        let rects: Vec<(f32, f32, f32, f32)> =
+            words.iter().map(|w| (w.x, w.y, w.w, w.h)).collect();
+        let (x, y, w, h) = crate::union_rects(&rects);
         out.push(crate::OcrLine {
             text,
             x,
@@ -73,6 +80,7 @@ pub fn extract_lines(img: &RgbaImage, lang: &str) -> Result<Vec<crate::OcrLine>>
             w,
             h,
             confidence: 0.0,
+            words,
         });
     }
     Ok(out)

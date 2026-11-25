@@ -82,6 +82,19 @@ fn canonical(tag: &str) -> Option<&'static str> {
         .map(|e| e.0)
 }
 
+/// One recognized word and where it sits in the image.
+#[derive(Clone, Debug, PartialEq)]
+pub struct OcrWord {
+    pub text: String,
+    /// Pixel rect in the image handed to the engine, origin at the top-left.
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+    /// Engine confidence in 0..=1; 0 when the engine reports none.
+    pub confidence: f32,
+}
+
 /// One recognized text line and where it sits in the image.
 #[derive(Clone, Debug, PartialEq)]
 pub struct OcrLine {
@@ -93,6 +106,10 @@ pub struct OcrLine {
     pub h: f32,
     /// Engine confidence in 0..=1; 0 when the engine reports none.
     pub confidence: f32,
+    /// Words the line is made of, in reading order, same pixel space as the
+    /// line rect. The union of word rects approximates the line box — engines
+    /// pad it slightly, so exact equality is not part of the contract.
+    pub words: Vec<OcrWord>,
 }
 
 /// Vision reports a rect normalized to 0..=1 with the origin at the
@@ -142,6 +159,27 @@ pub fn extract_lines(img: &RgbaImage, lang: &str) -> Result<Vec<OcrLine>> {
     }
 }
 
+/// Axis-aligned union of `(x, y, w, h)` pixel rects — how tesseract's
+/// tsv words and WinRT's OcrWord bounding rects become a line box.
+/// Shared so both engines (and the unit tests that simulate their raw
+/// output) exercise the same math.
+#[cfg_attr(not(any(test, target_os = "linux", target_os = "windows")), allow(dead_code))]
+pub(crate) fn union_rects(rects: &[(f32, f32, f32, f32)]) -> (f32, f32, f32, f32) {
+    let (mut x0, mut y0) = (f32::MAX, f32::MAX);
+    let (mut x1, mut y1) = (f32::MIN, f32::MIN);
+    for &(x, y, w, h) in rects {
+        x0 = x0.min(x);
+        y0 = y0.min(y);
+        x1 = x1.max(x + w);
+        y1 = y1.max(y + h);
+    }
+    if x0 <= x1 && y0 <= y1 {
+        (x0, y0, x1 - x0, y1 - y0)
+    } else {
+        (0.0, 0.0, 0.0, 0.0)
+    }
+}
+
 /// Parse tesseract's `tsv` output into line-level geometry.
 ///
 /// Columns: level, page, block, par, line, word, left, top, width, height,
@@ -151,12 +189,7 @@ pub fn extract_lines(img: &RgbaImage, lang: &str) -> Result<Vec<OcrLine>> {
 /// into space-separated glyphs.
 #[cfg_attr(not(any(test, target_os = "linux")), allow(dead_code))]
 pub(crate) fn parse_tesseract_tsv(tsv: &str) -> Vec<OcrLine> {
-    struct Group {
-        line: OcrLine,
-        conf_sum: f32,
-        conf_n: u32,
-    }
-    let mut groups: Vec<((u32, u32, u32, u32), Group)> = Vec::new();
+    let mut groups: Vec<((u32, u32, u32, u32), OcrLine)> = Vec::new();
 
     for row in tsv.lines() {
         // `splitn` keeps the text column intact even if it contains a tab.
@@ -187,33 +220,31 @@ pub(crate) fn parse_tesseract_tsv(tsv: &str) -> Vec<OcrLine> {
             Ok(c) if c >= 0.0 => (c / 100.0).clamp(0.0, 1.0),
             _ => 0.0,
         };
+        let word = OcrWord {
+            text: text.to_string(),
+            x,
+            y,
+            w,
+            h,
+            confidence: conf,
+        };
 
         match groups.iter_mut().find(|(k, _)| *k == key) {
-            Some((_, g)) => {
-                let right = (g.line.x + g.line.w).max(x + w);
-                let bottom = (g.line.y + g.line.h).max(y + h);
-                g.line.x = g.line.x.min(x);
-                g.line.y = g.line.y.min(y);
-                g.line.w = right - g.line.x;
-                g.line.h = bottom - g.line.y;
-                g.line.text.push(' ');
-                g.line.text.push_str(text);
-                g.conf_sum += conf;
-                g.conf_n += 1;
+            Some((_, line)) => {
+                line.words.push(word);
+                line.text.push(' ');
+                line.text.push_str(text);
             }
             None => groups.push((
                 key,
-                Group {
-                    line: OcrLine {
-                        text: text.to_string(),
-                        x,
-                        y,
-                        w,
-                        h,
-                        confidence: conf,
-                    },
-                    conf_sum: conf,
-                    conf_n: 1,
+                OcrLine {
+                    text: text.to_string(),
+                    x,
+                    y,
+                    w,
+                    h,
+                    confidence: 0.0,
+                    words: vec![word],
                 },
             )),
         }
@@ -221,13 +252,17 @@ pub(crate) fn parse_tesseract_tsv(tsv: &str) -> Vec<OcrLine> {
 
     groups
         .into_iter()
-        .map(|(_, mut g)| {
-            g.line.confidence = if g.conf_n > 0 {
-                g.conf_sum / g.conf_n as f32
+        .map(|(_, mut line)| {
+            let rects: Vec<(f32, f32, f32, f32)> =
+                line.words.iter().map(|w| (w.x, w.y, w.w, w.h)).collect();
+            (line.x, line.y, line.w, line.h) = union_rects(&rects);
+            let n = line.words.len() as f32;
+            line.confidence = if n > 0.0 {
+                line.words.iter().map(|w| w.confidence).sum::<f32>() / n
             } else {
                 0.0
             };
-            g.line
+            line
         })
         .collect()
 }
@@ -333,6 +368,59 @@ mod tests {
     fn a_degenerate_image_size_does_not_divide_by_zero() {
         let (x, y, w, h) = px_rect_from_normalized(0.0, 0.0, 1.0, 1.0, 0, 0);
         assert!(x.is_finite() && y.is_finite() && w.is_finite() && h.is_finite());
+    }
+
+    // The same three words at 2000x1000 (a Retina @2x frame), expressed the
+    // way each backend reports them, must land on identical pixel rects.
+
+    #[test]
+    fn vision_normalized_and_native_pixels_agree_on_a_2000x1000_frame() {
+        // "Settings" line near the top: top-left px rect (200, 80, 400, 48)
+        // → Vision reports origin.y = 1 - (y + h) / ih, bottom-left.
+        let (x, y, w, h) = px_rect_from_normalized(
+            200.0 / 2000.0,
+            1.0 - (80.0 + 48.0) / 1000.0,
+            400.0 / 2000.0,
+            48.0 / 1000.0,
+            2000,
+            1000,
+        );
+        assert_eq!((x, y, w, h), (200.0, 80.0, 400.0, 48.0));
+
+        // Same words as tesseract tsv — union must be the identical rect.
+        let tsv = concat!(
+            "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n",
+            "5\t1\t1\t1\t1\t1\t200\t80\t180\t48\t96\tSettings\n",
+            "5\t1\t1\t1\t1\t2\t392\t80\t208\t48\t96\tpage\n"
+        );
+        let lines = parse_tesseract_tsv(tsv);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(
+            (lines[0].x, lines[0].y, lines[0].w, lines[0].h),
+            (200.0, 80.0, 400.0, 48.0)
+        );
+        assert_eq!(lines[0].words.len(), 2);
+        assert_eq!(
+            (lines[0].words[0].x, lines[0].words[0].y, lines[0].words[0].w, lines[0].words[0].h),
+            (200.0, 80.0, 180.0, 48.0)
+        );
+
+        // Same words as WinRT BoundingRect rows — union_rects is what
+        // windows.rs feeds them through.
+        assert_eq!(
+            super::union_rects(&[(200.0, 80.0, 180.0, 48.0), (392.0, 80.0, 208.0, 48.0)]),
+            (200.0, 80.0, 400.0, 48.0)
+        );
+    }
+
+    #[test]
+    fn vision_word_boxes_and_line_boxes_share_the_same_pixel_space() {
+        // A word and a line reported for the same glyph run land on the same
+        // rect — word_boxes on macOS routes both through this one function.
+        let line = px_rect_from_normalized(0.1, 0.872, 0.2, 0.048, 2000, 1000);
+        let word = px_rect_from_normalized(0.1, 0.872, 0.09, 0.048, 2000, 1000);
+        assert_eq!(line, (200.0, 80.0, 400.0, 48.0));
+        assert_eq!(word, (200.0, 80.0, 180.0, 48.0));
     }
     #[test]
     fn tesseract_tsv_groups_words_into_lines() {
