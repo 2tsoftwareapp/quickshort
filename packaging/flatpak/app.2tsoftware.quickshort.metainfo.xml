@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>app.2tsoftware.quickshort</id>
+  <name>Quickshort</name>
+  <summary>Region screenshot tool with annotations and OCR</summary>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <developer>
+    <name>truongdq</name>
+  </developer>
+  <launchable type="desktop-id">app.2tsoftware.quickshort.desktop</launchable>
+  <description>
+    <p>
+      Quickshort captures screen regions, windows and full monitors at native
+      resolution, then lets you mark up the shot with arrows, text (including
+      Vietnamese IME), blur and shapes before saving or sharing.
+    </p>
+    <p>
+      It can record short MP4 clips, run on-device OCR, produce expiring share
+      links, and keep an editable .qsdoc so annotations stay re-openable as
+      layers. An evidence-session mode helps testers capture labelled step
+      screenshots and merge them into a single contact sheet.
+    </p>
+  </description>
+  <categories>
+    <category>Utility</category>
+    <category>Graphics</category>
+  </categories>
+  <keywords>
+    <keyword>screenshot</keyword>
+    <keyword>snip</keyword>
+    <keyword>ocr</keyword>
+    <keyword>annotate</keyword>
+    <keyword>region</keyword>
+  </keywords>
+  <url type="homepage">https://github.com/2tsoftwareapp/quickshort</url>
+  <url type="bugtracker">https://github.com/2tsoftwareapp/quickshort/issues</url>
+  <url type="vcs-browser">https://github.com/2tsoftwareapp/quickshort</url>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.4.0" date="2026-10-07"/>
+  </releases>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/2tsoftwareapp/quickshort/main/docs/assets/screenshot.png</image>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/2tsoftwareapp/quickshort/main/docs/assets/feat-annotate.png</image>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/2tsoftwareapp/quickshort/main/docs/assets/feat-overlay.png</image>
+    </screenshot>
+  </screenshots>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+</component>

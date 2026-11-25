@@ -1,0 +1,141 @@
+# Flatpak manifest — buildable with:
+#   flatpak-builder --force-clean build-dir packaging/flatpak/app.2tsoftware.quickshort.yaml
+# Flathub submission: move this file + cargo-sources.json + metainfo.xml + the
+# shared-modules submodule reference into a flathub/app.2tsoftware.quickshort repo.
+#
+# cargo-sources.json is generated from the workspace lockfile:
+#   flatpak-cargo-generator -o packaging/flatpak/cargo-sources.json Cargo.lock
+app-id: app.2tsoftware.quickshort
+runtime: org.gnome.Platform
+runtime-version: "48"
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: quickshort
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  # full host net: share uploads, Google Drive loopback OAuth (127.0.0.1 must be
+  # the host loopback so the system browser can redirect into the sandbox), updates
+  - --share=network
+  - --filesystem=xdg-pictures
+  - --filesystem=xdg-documents
+  - --filesystem=xdg-download
+  # linux_notify speaks to the notification daemon over zbus
+  - --talk-name=org.freedesktop.Notifications
+  # appindicator tray: SNI items register on org.kde.StatusNotifierWatcher
+  - --talk-name=org.kde.StatusNotifierWatcher
+  - --env=TESSDATA_PREFIX=/app/share/tessdata
+modules:
+  - shared-modules/libayatana-appindicator/libayatana-appindicator-gtk3.json
+
+  # qs-app links gtk-layer-shell (overlay windows under wlroots compositors)
+  - name: gtk-layer-shell
+    buildsystem: meson
+    config-opts:
+      - -Ddocs=false
+      - -Dtests=false
+      - -Dexamples=false
+      - -Dintrospection=false
+    sources:
+      - type: archive
+        url: https://github.com/wmww/gtk-layer-shell/archive/refs/tags/v0.10.1.tar.gz
+        sha256: 88c3a3e0a5300532f3d368d5df64838a87f1fb85273f22d41df0a6b8d0ec59c6
+
+  # actions.rs shells out to wl-copy for clipboard on Wayland
+  - name: wl-clipboard
+    buildsystem: meson
+    sources:
+      - type: archive
+        url: https://github.com/bugaevc/wl-clipboard/archive/refs/tags/v2.3.0.tar.gz
+        sha256: b4dc560973f0cd74e02f817ffa2fd44ba645a4f1ea94b7b9614dacc9f895f402
+
+  # OCR: record.rs-style shell-out to the tesseract binary (eng+vie traineddata)
+  - name: leptonica
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DBUILD_PROG=OFF
+    sources:
+      - type: archive
+        url: https://github.com/DanBloomberg/leptonica/releases/download/1.87.0/leptonica-1.87.0.tar.gz
+        sha256: c73363397f96eb1295602bf44d708a994ad42046c791bf03ea0505d829bdb6a7
+
+  - name: tesseract
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DBUILD_TRAINING_TOOLS=OFF
+    sources:
+      - type: archive
+        url: https://github.com/tesseract-ocr/tesseract/archive/refs/tags/5.5.4.tar.gz
+        sha256: a8dbf8b8c8ee427ff6ad1d99116502feaf59440af1adb893caf60a6576826cf4
+      - type: file
+        url: https://github.com/tesseract-ocr/tessdata_fast/raw/main/eng.traineddata
+        sha256: 7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2
+      - type: file
+        url: https://github.com/tesseract-ocr/tessdata_fast/raw/main/vie.traineddata
+        sha256: 79df64caf7bcfb2a27df5042ecb6121e196eada34da774956995747636d5bfa1
+    post-install:
+      - install -Dm644 eng.traineddata vie.traineddata -t /app/share/tessdata/
+
+  # screen recording: record.rs pipes rgba frames into `ffmpeg ... -c:v libx264`
+  - name: x264
+    buildsystem: autotools
+    config-opts:
+      - --enable-shared
+      - --enable-pic
+      - --disable-cli
+    sources:
+      - type: archive
+        url: https://code.videolan.org/videolan/x264/-/archive/31e19f92f00c7003fa115047ce50978bc98c3a0d/x264-31e19f92.tar.gz
+        sha256: d053c9d86988d6bc78237ca5205865c5ddf99c98ef4cd9927eec8f6d388f6dd9
+
+  - name: ffmpeg
+    buildsystem: autotools
+    config-opts:
+      - --disable-everything
+      - --disable-autodetect
+      - --disable-doc
+      - --disable-ffplay
+      - --disable-ffprobe
+      - --enable-gpl
+      - --enable-libx264
+      - --enable-encoder=libx264
+      - --enable-decoder=rawvideo
+      - --enable-demuxer=rawvideo
+      - --enable-muxer=mp4
+      - --enable-filter=fps
+      - --enable-filter=format
+      - --enable-filter=scale
+      - --enable-protocol=pipe
+      - --enable-protocol=file
+      - --enable-protocol=fd
+    sources:
+      - type: archive
+        url: https://ffmpeg.org/releases/ffmpeg-7.1.1.tar.xz
+        sha256: 733984395e0dbbe5c046abda2dc49a5544e7e0e1e2366bba849222ae9e3a03b1
+
+  - name: quickshort
+    buildsystem: simple
+    build-options:
+      append-path: /usr/lib/sdk/rust-stable/bin
+      env:
+        CARGO_HOME: /run/build/quickshort/cargo
+    build-commands:
+      - cargo --offline build --release --locked -p qs-app -p qs-editor
+      - install -Dm755 target/release/quickshort /app/bin/quickshort
+      - install -Dm755 target/release/qs-editor /app/bin/qs-editor
+      - install -Dm644 packaging/linux/quickshort.desktop
+        /app/share/applications/app.2tsoftware.quickshort.desktop
+      - sed -i 's/^Icon=quickshort$/Icon=app.2tsoftware.quickshort/'
+        /app/share/applications/app.2tsoftware.quickshort.desktop
+      - install -Dm644 docs/assets/icon.png
+        /app/share/icons/hicolor/1024x1024/apps/app.2tsoftware.quickshort.png
+      - install -Dm644 packaging/flatpak/app.2tsoftware.quickshort.metainfo.xml
+        /app/share/metainfo/app.2tsoftware.quickshort.metainfo.xml
+    sources:
+      - type: git
+        url: https://github.com/2tsoftwareapp/quickshort.git
+        commit: 3426cab8d6f3074efd7b60d713b8b1eab94cc856
+      - cargo-sources.json

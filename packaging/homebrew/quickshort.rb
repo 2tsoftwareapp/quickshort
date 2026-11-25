@@ -8,10 +8,10 @@ cask "quickshort" do
   version "0.1.0"
   sha256 "09bbe30e7eff230b704795bf936c60aec1434654f2992a129e5758982c0f4921"
 
-  url "https://github.com/truongnat/quickshort/releases/download/v#{version}/Quickshort-v#{version}-macos.zip"
+  url "https://github.com/2tsoftwareapp/quickshort/releases/download/v#{version}/Quickshort-v#{version}-macos.zip"
   name "Quickshort"
   desc "Region screenshot tool with annotations and OCR"
-  homepage "https://github.com/truongnat/quickshort"
+  homepage "https://github.com/2tsoftwareapp/quickshort"
 
   app "Quickshort.app"
 

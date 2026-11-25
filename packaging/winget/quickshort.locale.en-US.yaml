@@ -3,11 +3,11 @@ PackageIdentifier: truongnat.quickshort
 PackageVersion: 1.0.0
 PackageLocale: en-US
 Publisher: truongnat
-PublisherUrl: https://github.com/truongnat/quickshort
+PublisherUrl: https://github.com/2tsoftwareapp/quickshort
 PackageName: Quickshort
-PackageUrl: https://github.com/truongnat/quickshort
+PackageUrl: https://github.com/2tsoftwareapp/quickshort
 License: MIT
-LicenseUrl: https://github.com/truongnat/quickshort/blob/main/LICENSE
+LicenseUrl: https://github.com/2tsoftwareapp/quickshort/blob/main/LICENSE
 ShortDescription: Region screenshots with annotations and OCR - native Rust, no Electron.
 Description: |-
   Press the global hotkey, drag a region - even across monitors - then save a

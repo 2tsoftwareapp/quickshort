@@ -8,7 +8,7 @@ InstallModes:
 UpgradeBehavior: install
 Installers:
   - Architecture: x64
-    InstallerUrl: https://github.com/truongnat/quickshort/releases/download/v1.0.0/Quickshort-Windows-Setup.exe
+    InstallerUrl: https://github.com/2tsoftwareapp/quickshort/releases/download/v1.0.0/Quickshort-Windows-Setup.exe
     # sha256 of the release asset — regenerate per release:
     #   curl -sL <url> | sha256sum | cut -d' ' -f1 | tr a-f A-F
     InstallerSha256: 0000000000000000000000000000000000000000000000000000000000000000

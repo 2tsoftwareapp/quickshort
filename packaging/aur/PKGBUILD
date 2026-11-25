@@ -6,7 +6,7 @@ pkgver=1.0.0
 pkgrel=1
 pkgdesc="Region screenshots with annotations and OCR - native, no Electron"
 arch=('x86_64')
-url="https://github.com/truongnat/quickshort"
+url="https://github.com/2tsoftwareapp/quickshort"
 license=('MIT')
 depends=('gtk3' 'libayatana-appindicator')
 optdepends=(
@@ -16,7 +16,7 @@ optdepends=(
 )
 provides=('quickshort')
 conflicts=('quickshort')
-source=("${pkgname}-${pkgver}.deb::https://github.com/truongnat/quickshort/releases/download/v${pkgver}/quickshort_amd64.deb")
+source=("${pkgname}-${pkgver}.deb::https://github.com/2tsoftwareapp/quickshort/releases/download/v${pkgver}/quickshort_amd64.deb")
 # regenerate with: makepkg -g (shasum of the release deb)
 sha256sums=('SKIP')
 
