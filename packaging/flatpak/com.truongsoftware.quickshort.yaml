@@ -148,5 +148,5 @@ modules:
     sources:
       - type: git
         url: https://github.com/2tsoftwareapp/quickshort.git
-        commit: 513e4449ea56170d98eefa7fdff677efd45d7c92
+        commit: 41fbec3910d24893de683929a84751d541dc75c2
       - cargo-sources.json
