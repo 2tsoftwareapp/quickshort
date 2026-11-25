@@ -6,8 +6,16 @@ name: verify
 on:
   push:
     branches: [main]
+    paths: ['crates/**', 'Cargo.toml', 'Cargo.lock', '.cargo/**', '.github/workflows/verify.yml']
   pull_request:
+    paths: ['crates/**', 'Cargo.toml', 'Cargo.lock', '.cargo/**', '.github/workflows/verify.yml']
   workflow_dispatch:
+
+# Actions minutes cost money: a newer push to the same ref cancels the
+# older run, and the smoke/windows jobs run only on manual dispatch.
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   linux:
@@ -31,6 +39,7 @@ jobs:
   # root window is screenshotted — the artifact is the visual proof
   # that the X11 backend renders the fan.
   linux-x11-smoke:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -69,6 +78,7 @@ jobs:
   # Same idea on the compositor side: headless Weston hosts the demo,
   # weston-screenshooter grabs the output — proves the wl_shm layer.
   linux-wayland-smoke:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -122,6 +132,7 @@ jobs:
         run: cat /tmp/chrome-wl.log /tmp/weston.log 2>/dev/null | tail -60
 
   windows:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
