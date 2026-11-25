@@ -11,6 +11,7 @@ pub mod fonts;
 pub mod icons;
 pub mod image_panel;
 mod input;
+mod view;
 pub mod library;
 pub mod ocr_hint;
 pub mod prefs;
