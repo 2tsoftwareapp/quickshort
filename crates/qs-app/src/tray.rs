@@ -246,7 +246,7 @@ pub mod linux_tray {
         if let Some(ctx) = CTX.get() {
             ctx.invoke(f);
         } else {
-            eprintln!("chrome: gtk_invoke before tray init");
+            log::info!("chrome: gtk_invoke before tray init");
         }
     }
 

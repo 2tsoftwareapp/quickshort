@@ -106,7 +106,7 @@ impl ApplicationHandler<Ev> for Run {
         match res {
             Ok(ov) => self.overlay = Some(ov),
             Err(e) => {
-                eprintln!("overlay failed: {e:#}");
+                log::warn!("overlay failed: {e:#}");
                 el.exit();
             }
         }
@@ -142,7 +142,7 @@ impl ApplicationHandler<Ev> for Run {
                                 }
                                 #[cfg(not(target_os = "macos"))]
                                 {
-                                    eprintln!("scroll save: {e:#}");
+                                    log::warn!("scroll save: {e:#}");
                                     None
                                 }
                             }
@@ -257,7 +257,7 @@ impl Run {
                 #[cfg(not(target_os = "linux"))]
                 match Toast::open(el, crate::scroll::HINT, self.accent, &self.popup_pos) {
                     Ok(t) => self.toast = Some(t),
-                    Err(e) => eprintln!("toast: {e:#}"),
+                    Err(e) => log::warn!("toast: {e:#}"),
                 }
                 #[cfg(target_os = "linux")]
                 crate::linux_notify::send(crate::scroll::HINT, true);
@@ -334,7 +334,7 @@ impl Run {
                     t.done(msg.to_string(), ok);
                     self.toast = Some(t);
                 }
-                Err(e) => eprintln!("toast: {e:#}"),
+                Err(e) => log::warn!("toast: {e:#}"),
             },
         }
     }
@@ -417,7 +417,7 @@ impl Run {
         match QuickAccess::open(el, img, msg, saved, self.accent, false, &self.popup_pos) {
             Ok(c) => self.card = Some(c),
             Err(e) => {
-                eprintln!("card: {e:#}");
+                log::warn!("card: {e:#}");
                 self.notify(el, msg, true);
             }
         }

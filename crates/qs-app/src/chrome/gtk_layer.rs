@@ -32,7 +32,7 @@ pub fn drain_pending() {
         let Some(rx) = rx.as_ref() else { return };
         while let Ok(m) = rx.try_recv() {
             if let Err(e) = dispatch(m) {
-                eprintln!("chrome gtk-layer: {e:#}");
+                log::warn!("chrome gtk-layer: {e:#}");
             }
         }
     });
@@ -184,7 +184,7 @@ fn create_surface(
             },
         );
     });
-    eprintln!("chrome: gtk-layer album docked ({}×{} logical)", lw, lh);
+    log::info!("chrome: gtk-layer album docked ({}×{} logical)", lw, lh);
     Ok((id, lw, lh, scale))
 }
 

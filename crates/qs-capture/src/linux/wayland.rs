@@ -120,7 +120,7 @@ fn run_session(
         ))
         .with_context(|| format!("no PipeWireStreamAdded for {} (timeout)", m.connector))?;
         let (node,): (u32,) = msg.body().deserialize()?;
-        eprintln!("PipeWireStreamAdded: {} -> node {node}", m.connector);
+        log::info!("PipeWireStreamAdded: {} -> node {node}", m.connector);
         nodes.push(node);
     }
 
@@ -216,7 +216,7 @@ impl DamagePoke {
                 Ok(())
             };
             if let Err(e) = run() {
-                eprintln!("damage poke died: {e}");
+                log::warn!("damage poke died: {e}");
             }
         });
         Self {
@@ -267,7 +267,7 @@ pub(super) fn grab_frames(nodes: &[u32], expects: &[(u32, u32)]) -> Result<Vec<i
         match grab_frames_once(nodes, expects) {
             Ok(v) => return Ok(v),
             Err(e) => {
-                eprintln!("pw grab attempt {attempt}/5 failed: {e}");
+                log::warn!("pw grab attempt {attempt}/5 failed: {e}");
                 err = Some(e);
                 std::thread::sleep(std::time::Duration::from_millis(150 * attempt as u64));
             }
@@ -644,7 +644,7 @@ fn collect_frames(chans: &[Rc<RefCell<ChanState>>]) -> Result<Vec<image::RgbaIma
             (Some(px), _) => px.clone(),
             (None, Some(e)) => bail!("pw stream error: {e}"),
             (None, None) => {
-                eprintln!(
+                log::info!(
                     "pw node starved: state={} {} process() calls, {} rejected buffers",
                     st.state, st.procs, st.rejects
                 );
@@ -839,7 +839,7 @@ pub(super) fn record_start(sel: Rect) -> Result<LiveStream> {
     let phys = m.phys;
     let handle = std::thread::spawn(move || {
         if let Err(e) = stream_pump(node, phys, tx, stop2) {
-            eprintln!("record stream: {e:#}");
+            log::warn!("record stream: {e:#}");
         }
     });
 
@@ -965,7 +965,7 @@ pub(super) fn stream_pump(
                         Ok(img) => {
                             let _ = tx.try_send(img);
                         }
-                        Err(e) => eprintln!("record frame: {e:#}"),
+                        Err(e) => log::warn!("record frame: {e:#}"),
                     }
                 }
             }
@@ -1035,7 +1035,7 @@ mod tests {
         let frames = MutterCapture.capture_all().unwrap();
         assert!(!frames.is_empty());
         for f in &frames {
-            eprintln!(
+            log::info!(
                 "frame: logical {}x{} @({},{}) scale {:.2}, pixels {}x{}",
                 f.geometry.size.w,
                 f.geometry.size.h,
@@ -1073,7 +1073,7 @@ mod tests {
             }
         }
         drop(live);
-        eprintln!("live stream delivered {n} frames");
+        log::info!("live stream delivered {n} frames");
         assert!(n >= 3, "expected repeated frames, got {n}");
     }
 
@@ -1084,7 +1084,7 @@ mod tests {
         for (i, f) in MutterCapture.capture_all().unwrap().iter().enumerate() {
             let p = format!("/tmp/qs-dump-{i}.png");
             f.pixels.save(&p).unwrap();
-            eprintln!("saved {p}");
+            log::info!("saved {p}");
         }
     }
 }

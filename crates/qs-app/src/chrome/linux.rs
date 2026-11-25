@@ -361,7 +361,7 @@ impl PlatformChrome for ChromeWin {
         let (win, imp) = match try_gtk_album(mon, corner, sw, sh, sf) {
             Ok(album) => (gtk_winit_handle(el)?, Imp::GtkAlbum(album)),
             Err(e) => {
-                eprintln!("chrome: gtk-album unavailable ({e:#}) — wl/x11 fallback");
+                log::warn!("chrome: gtk-album unavailable ({e:#}) — wl/x11 fallback");
                 let win = winit_chrome_window(el, mon, corner, sw, sh)?;
                 (win.clone(), Imp::new(&win, mon, corner, mlw, mlh, sw, sh, sf)?)
             }
@@ -685,14 +685,14 @@ impl Imp {
                 let out = mon.name();
                 match Wl::new_layer_foreign(display, corner, mlw, mlh, scale, out.as_deref()) {
                     Ok(w) => {
-                        eprintln!("chrome: layer-shell on winit display");
+                        log::info!("chrome: layer-shell on winit display");
                         return Ok(Self::Wl(w));
                     }
-                    Err(e) => eprintln!("chrome: foreign layer: {e:#}"),
+                    Err(e) => log::warn!("chrome: foreign layer: {e:#}"),
                 }
                 match Wl::new_layer(corner, mlw, mlh, scale, out.as_deref()) {
                     Ok(w) => return Ok(Self::Wl(w)),
-                    Err(e) => eprintln!("chrome: env layer: {e:#}"),
+                    Err(e) => log::warn!("chrome: env layer: {e:#}"),
                 }
                 anyhow::bail!("wayland chrome: gtk album should be created before winit window");
             }
@@ -939,7 +939,7 @@ impl Wl {
         if state.compositor.is_none() || state.shm.is_none() {
             anyhow::bail!("foreign wl missing compositor/shm");
         }
-        eprintln!("chrome: winit shelf present (no layer-shell)");
+        log::info!("chrome: winit shelf present (no layer-shell)");
         Ok(Self {
             surface: surface as *mut wl_proxy,
             conn,
@@ -1018,7 +1018,7 @@ impl Wl {
                 .map(|(o, _)| o)
         });
         if output_name.is_some() && output.is_none() {
-            eprintln!(
+            log::warn!(
                 "chrome: wl_output {:?} not found — anchoring layer to default output",
                 output_name
             );
@@ -1057,7 +1057,7 @@ impl Wl {
             .context("layer surface missing")?
             .id()
             .as_ptr() as *mut wl_proxy;
-        eprintln!(
+        log::info!(
             "chrome: layer-shell album docked ({}×{} logical)",
             lw, lh
         );
@@ -1633,7 +1633,7 @@ impl Dispatch<WlRegistry, ()> for WlState {
                         Some(registry.bind::<ZwlrLayerShellV1, _, _>(name, 1, qh, ()));
                 }
                 other if other.contains("layer") => {
-                    eprintln!("chrome: wl global {other} (ignored)");
+                    log::info!("chrome: wl global {other} (ignored)");
                 }
                 "wl_seat" if state.seat.is_none() => {
                     state.seat = Some(registry.bind::<WlSeat, _, _>(name, 7, qh, ()));

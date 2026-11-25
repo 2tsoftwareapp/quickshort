@@ -9,6 +9,7 @@ license = "MIT"
 anyhow = "1"
 image = "0.25"
 windows = "0.62.2"
+log = "0.4"
 qs-core = { path = "crates/qs-core" }
 qs-capture = { path = "crates/qs-capture" }
 qs-ocr = { path = "crates/qs-ocr" }

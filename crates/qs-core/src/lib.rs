@@ -225,6 +225,44 @@ pub fn stitch(frames: &[CapturedFrame], selection: Rect) -> Option<(RgbaImage, f
     covered.then_some((out, out_scale))
 }
 
+/// Minimal stderr logger behind the `log` facade — `QUICKSHORT_LOG`
+/// picks the level (`off|error|warn|info|debug`, default `info` so the
+/// historical eprintln-everything behavior is preserved). One shared
+/// impl for both binaries; no env_logger dependency chain.
+
+struct StderrLog;
+static LOGGER: StderrLog = StderrLog;
+
+fn max_level() -> log::LevelFilter {
+    use std::sync::OnceLock;
+    static L: OnceLock<log::LevelFilter> = OnceLock::new();
+    *L.get_or_init(|| match std::env::var("QUICKSHORT_LOG").as_deref() {
+        Ok("off") => log::LevelFilter::Off,
+        Ok("error") => log::LevelFilter::Error,
+        Ok("warn") => log::LevelFilter::Warn,
+        Ok("debug") | Ok("trace") => log::LevelFilter::Debug,
+        _ => log::LevelFilter::Info,
+    })
+}
+
+impl log::Log for StderrLog {
+    fn enabled(&self, m: &log::Metadata) -> bool {
+        m.level() <= max_level()
+    }
+    fn log(&self, r: &log::Record) {
+        if self.enabled(r.metadata()) {
+            eprintln!("{}[{}] {}", r.target(), r.level(), r.args());
+        }
+    }
+    fn flush(&self) {}
+}
+
+/// Install the stderr logger — call once at the top of `main`.
+pub fn init_log() {
+    let _ = log::set_logger(&LOGGER);
+    log::set_max_level(max_level());
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

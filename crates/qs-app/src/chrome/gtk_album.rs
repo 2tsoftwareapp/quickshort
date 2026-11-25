@@ -40,7 +40,7 @@ pub fn drain_pending() {
         let Some(rx) = rx.as_ref() else { return };
         while let Ok(m) = rx.try_recv() {
             if let Err(e) = dispatch(m) {
-                eprintln!("chrome gtk-album: {e:#}");
+                log::warn!("chrome gtk-album: {e:#}");
             }
         }
     });
@@ -315,7 +315,7 @@ fn create_window(
             },
         );
     });
-    eprintln!(
+    log::info!(
         "chrome: gtk-album shelf at ({px},{py}) {pw}×{ph}px ({sw}×{sh} logical)"
     );
     Ok((id, sw, sh, scale))

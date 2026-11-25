@@ -285,7 +285,7 @@ impl Settings {
                         match tray::set_launch_at_login(want) {
                             Ok(()) => cfg.launch_at_login = want,
                             Err(e) => {
-                                eprintln!("launch-at-login: {e:#}");
+                                log::warn!("launch-at-login: {e:#}");
                                 return None;
                             }
                         }

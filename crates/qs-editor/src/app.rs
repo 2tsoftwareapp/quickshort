@@ -965,7 +965,7 @@ pub(crate) fn spawn_app(arg: &str) {
         .filter(|p| p.exists())
         .unwrap_or_else(|| name.into());
     if let Err(e) = std::process::Command::new(&exe).arg(arg).spawn() {
-        eprintln!("{arg}: failed to launch {}: {e}", exe.display());
+        log::warn!("{arg}: failed to launch {}: {e}", exe.display());
     }
 }
 

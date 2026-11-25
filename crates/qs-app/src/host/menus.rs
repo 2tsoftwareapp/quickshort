@@ -13,7 +13,7 @@ impl Host {
             tray::ID_EVIDENCE_START => {
                 match crate::evidence::Session::start(&self.cfg.save_dir()) {
                     Ok(s) => self.evidence = Some(s),
-                    Err(e) => eprintln!("evidence: {e:#}"),
+                    Err(e) => log::warn!("evidence: {e:#}"),
                 }
                 self.rebuild_menu();
             }
@@ -48,7 +48,7 @@ impl Host {
                             s.set_update(self.pending_update.as_ref().map(|r| r.version.clone()));
                             self.settings = Some(s);
                         }
-                        Err(e) => eprintln!("settings: {e:#}"),
+                        Err(e) => log::warn!("settings: {e:#}"),
                     }
                 } else {
                     // focus the existing window
@@ -72,7 +72,7 @@ impl Host {
                 let before = self.cfg.clone();
                 self.cfg.launch_at_login = !self.cfg.launch_at_login;
                 if let Err(e) = tray::set_launch_at_login(self.cfg.launch_at_login) {
-                    eprintln!("launch-at-login: {e:#}");
+                    log::warn!("launch-at-login: {e:#}");
                     self.cfg.launch_at_login = !self.cfg.launch_at_login; // revert
                 }
                 self.cfg.save_changes(&before);
@@ -129,7 +129,7 @@ impl Host {
                 if let Some(img) = self.chrome.shot(wid, idx).map(|s| s.img.clone()) {
                     match Pin::open(el, &img) {
                         Ok(p) => self.pins.push(p),
-                        Err(e) => eprintln!("pin: {e:#}"),
+                        Err(e) => log::warn!("pin: {e:#}"),
                     }
                 }
             }
@@ -182,7 +182,7 @@ impl Host {
                             .join("quickshort");
                         match actions::save_to_dir(&img, &dir) {
                             Ok(saved) => p = Some(saved),
-                            Err(e) => eprintln!("open: save failed: {e:#}"),
+                            Err(e) => log::warn!("open: save failed: {e:#}"),
                         }
                     }
                 }
@@ -225,7 +225,7 @@ impl Host {
         ) {
             Ok(c) => self.card = Some(c),
             Err(e) => {
-                eprintln!("card: {e:#}");
+                log::warn!("card: {e:#}");
                 self.toast_done(el, msg.to_string(), true);
             }
         }
@@ -280,7 +280,7 @@ impl Host {
                             .unwrap_or_else(|| PathBuf::from("/tmp"))
                             .join("quickshort");
                         actions::save_to_dir(c.image(), &dir)
-                            .map_err(|e| eprintln!("edit: save failed: {e:#}"))
+                            .map_err(|e| log::warn!("edit: save failed: {e:#}"))
                             .ok()
                     });
                     if let Some(p) = p {
@@ -315,7 +315,7 @@ impl Host {
             if let Some(c) = &self.card {
                 match Pin::open(el, c.image()) {
                     Ok(p) => self.pins.push(p),
-                    Err(e) => eprintln!("pin: {e:#}"),
+                    Err(e) => log::warn!("pin: {e:#}"),
                 }
             }
         }

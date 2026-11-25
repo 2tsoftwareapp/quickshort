@@ -166,7 +166,7 @@ impl ScreenCapture for FallbackCapture {
         loop {
             match self.chain[i].capture_all() {
                 Err(e) if i + 1 < self.chain.len() => {
-                    eprintln!("capture backend failed: {e:#}; trying next");
+                    log::warn!("capture backend failed: {e:#}; trying next");
                     i += 1;
                 }
                 r => {
@@ -186,7 +186,7 @@ impl ScreenCapture for FallbackCapture {
         loop {
             match self.chain[i].session() {
                 Err(e) if i + 1 < self.chain.len() => {
-                    eprintln!("capture session init failed: {e:#}; trying next");
+                    log::warn!("capture session init failed: {e:#}; trying next");
                     i += 1;
                 }
                 r => {

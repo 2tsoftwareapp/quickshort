@@ -166,7 +166,7 @@ impl Encoder {
                 let _ = std::fs::remove_file(&path);
                 bail!("ffmpeg exited with {st}");
             }
-            eprintln!("recorded {}", path.display());
+            log::info!("recorded {}", path.display());
             Ok(path)
         });
         Ok(Self { tx, worker })
@@ -231,7 +231,7 @@ mod tests {
             .arg(&path)
             .output()
             .unwrap();
-        eprintln!("ffprobe: {}", String::from_utf8_lossy(&out.stdout));
+        log::info!("ffprobe: {}", String::from_utf8_lossy(&out.stdout));
         assert!(out.status.success() && out.stdout[0].is_ascii_digit());
     }
 }

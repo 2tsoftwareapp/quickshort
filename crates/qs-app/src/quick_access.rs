@@ -479,7 +479,7 @@ pub fn standalone(
             ) {
                 Ok(c) => self.card = Some(c),
                 Err(e) => {
-                    eprintln!("card: {e:#}");
+                    log::warn!("card: {e:#}");
                     el.exit();
                 }
             }

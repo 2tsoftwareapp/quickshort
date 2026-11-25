@@ -47,7 +47,7 @@ pub(crate) fn start(sel: Rect) -> Result<Parts> {
         let backend = match crate::backend() {
             Ok(b) => b,
             Err(e) => {
-                eprintln!("record poll: {e:#}");
+                log::warn!("record poll: {e:#}");
                 return;
             }
         };
@@ -59,7 +59,7 @@ pub(crate) fn start(sel: Rect) -> Result<Parts> {
                     let _ = tx.try_send(f.pixels);
                 }
                 Err(e) => {
-                    eprintln!("record poll: {e:#}");
+                    log::warn!("record poll: {e:#}");
                     break;
                 }
             }

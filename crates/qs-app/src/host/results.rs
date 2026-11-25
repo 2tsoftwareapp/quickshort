@@ -127,7 +127,7 @@ match res {
                             }
                             #[cfg(not(target_os = "macos"))]
                             {
-                                eprintln!("scroll save: {e:#}");
+                                log::warn!("scroll save: {e:#}");
                                 (None, "Captured — pick an action".to_string())
                             }
                         }
@@ -152,7 +152,7 @@ match res {
 
     pub(super) fn on_done(&mut self, el: &ActiveEventLoop, res: Result<Dispatch, String>) {
 
-        eprintln!("done: {:?}", res.as_ref().map(|d| &d.outcome));
+        log::info!("done: {:?}", res.as_ref().map(|d| &d.outcome));
         match res {
             // image outcomes fly to the album stack, except Copy —
             // nothing to act on later, so it confirms on the toast
@@ -292,7 +292,7 @@ match res {
                     if manual {
                         self.toast_done(el, format!("Update check failed: {e}"), false);
                     } else {
-                        eprintln!("update check: {e}");
+                        log::warn!("update check: {e}");
                     }
                 }
             }
@@ -372,13 +372,13 @@ match res {
             // Linux stand-in for the corner shelf); recordings and
             // unsaved results keep the plain confirmation
             if let Some(p) = l.path.clone().filter(|_| l.kind != ShotKind::Record) {
-                eprintln!("linux: post-capture card ({msg})");
+                log::info!("linux: post-capture card ({msg})");
                 self.toast = None;
                 crate::linux_notify::send_shot(msg, p);
                 return;
             }
             let ok = !msg.contains("No text found");
-            eprintln!("linux: post-capture toast ({msg})");
+            log::info!("linux: post-capture toast ({msg})");
             self.toast_done(el, msg.to_string(), ok);
             return;
         }
@@ -390,18 +390,18 @@ match res {
             }
             match self.chrome.land(el, l) {
                 Ok(()) => {
-                    eprintln!("chrome: shot queued in corner album");
+                    log::info!("chrome: shot queued in corner album");
                     let _ = self.chrome.pump();
                 }
                 Err(mut l) => {
-                    eprintln!("chrome: fly-in missed — settling stack at corner");
+                    log::warn!("chrome: fly-in missed — settling stack at corner");
                     l.instant = true;
                     match self.chrome.land(el, *l) {
                         Ok(()) => {
                             let _ = self.chrome.pump();
                         }
                         Err(l) => {
-                            eprintln!("chrome: album unavailable ({msg})");
+                            log::warn!("chrome: album unavailable ({msg})");
                             self.open_card(el, l.img, msg, l.path);
                         }
                     }
@@ -477,7 +477,7 @@ match res {
                     t.done(msg, ok);
                     self.toast = Some(t);
                 }
-                Err(e) => eprintln!("toast: {e:#}"),
+                Err(e) => log::warn!("toast: {e:#}"),
             },
         }
     }

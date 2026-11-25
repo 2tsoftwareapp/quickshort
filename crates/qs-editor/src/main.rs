@@ -11,6 +11,7 @@ use std::env;
 use std::path::PathBuf;
 
 fn main() -> anyhow::Result<()> {
+    qs_core::init_log();
     let args: Vec<String> = env::args().collect();
     if args.len() > 1 {
         let path = PathBuf::from(&args[1]);

@@ -143,7 +143,7 @@ impl PortalSession {
         let mut logicals = Vec::with_capacity(streams.len());
         let mut centers = Vec::with_capacity(streams.len());
         for (node, props) in &streams {
-            eprintln!("portal stream node={node} props={props:?}");
+            log::info!("portal stream node={node} props={props:?}");
             let pos = props
                 .get("position")
                 .and_then(|v| {
@@ -253,7 +253,7 @@ pub(super) fn record_start(sel: Rect) -> Result<LiveStream> {
     let stop2 = stop.clone();
     let handle = std::thread::spawn(move || {
         if let Err(e) = stream_pump(node, expect, tx, stop2) {
-            eprintln!("record stream: {e:#}");
+            log::warn!("record stream: {e:#}");
         }
     });
 
@@ -373,7 +373,7 @@ mod tests {
         let frames = PortalCapture.capture_all().unwrap();
         assert!(!frames.is_empty());
         for f in &frames {
-            eprintln!(
+            log::info!(
                 "frame: logical {}x{} @({},{}) scale {:.2}, pixels {}x{}",
                 f.geometry.size.w,
                 f.geometry.size.h,

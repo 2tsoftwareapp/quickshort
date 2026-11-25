@@ -39,11 +39,11 @@ impl Host {
         match qs_capture::backend().and_then(|b| b.capture_all()) {
             Ok(f) if !f.is_empty() => Some(f),
             Ok(_) => {
-                eprintln!("no monitors captured");
+                log::warn!("no monitors captured");
                 None
             }
             Err(e) => {
-                eprintln!("capture failed: {e:#}");
+                log::warn!("capture failed: {e:#}");
                 self.toast_done(el, format!("Capture failed: {e:#}"), false);
                 // LSUIElement apps get no TCC prompt — open the pane so the
                 // user can grant Screen Recording manually
@@ -79,7 +79,7 @@ impl Host {
                 self.frames = Some(frames);
                 self.overlay = Some(ov);
             }
-            Err(e) => eprintln!("overlay failed: {e:#}"),
+            Err(e) => log::warn!("overlay failed: {e:#}"),
         }
     }
 
@@ -138,7 +138,7 @@ impl Host {
                 };
                 if let Err(e) = r {
                     // keep going — the other slot must not stay grabbed
-                    eprintln!("hotkey suspend: {e:#}");
+                    log::warn!("hotkey suspend: {e:#}");
                 }
             }
         }
@@ -180,7 +180,7 @@ impl Host {
             let hk: HotKey = match chord.parse() {
                 Ok(h) => h,
                 Err(e) => {
-                    eprintln!("bad {} {chord:?}: {e}", label.to_lowercase());
+                    log::warn!("bad {} {chord:?}: {e}", label.to_lowercase());
                     return;
                 }
             };
@@ -200,7 +200,7 @@ impl Host {
                         msg = Some((format!("{label} set to {chord}"), true));
                     }
                     Err(e) => {
-                        eprintln!("{label} register failed: {e:#}");
+                        log::warn!("{label} register failed: {e:#}");
                         // restore the old grab — a dead hotkey is worse
                         // than a stale one, and the slot stays truthful
                         if let Some(old) = *slot {

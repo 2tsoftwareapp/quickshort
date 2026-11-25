@@ -187,7 +187,7 @@ impl Config {
 
     pub fn load() -> Self {
         let cfg = Self::read().unwrap_or_else(|error| {
-            eprintln!("config read: {error}");
+            log::warn!("config read: {error}");
             Self::default()
         });
         cfg.apply_appearance();
@@ -215,7 +215,7 @@ impl Config {
 
     pub fn save_changes(&self, before: &Self) {
         if let Err(error) = qs_core::config::save_changes(&Self::path(), before, self) {
-            eprintln!("config write: {error}");
+            log::warn!("config write: {error}");
         }
     }
 

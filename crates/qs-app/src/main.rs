@@ -80,7 +80,7 @@ fn parse_args() -> Result<Args> {
                 ));
             }
             "-h" | "--help" => {
-                eprintln!(
+                log::info!(
                     "usage: quickshort [--capture|--capture-full [--delay SECS] [--out FILE.png]]\n\
                      no args: resident tray app (menu + global hotkey)"
                 );
@@ -93,6 +93,7 @@ fn parse_args() -> Result<Args> {
 }
 
 fn main() -> Result<()> {
+    qs_core::init_log();
     qs_capture::platform_init();
     let args = parse_args()?;
     if args.settings_only {
@@ -142,7 +143,7 @@ fn lock_file(name: &str, busy_msg: &str) -> Result<Option<std::fs::File>> {
     match f.try_lock() {
         Ok(()) => Ok(Some(f)),
         Err(std::fs::TryLockError::WouldBlock) => {
-            eprintln!("{busy_msg}");
+            log::warn!("{busy_msg}");
             Ok(None)
         }
         Err(std::fs::TryLockError::Error(e)) => Err(e.into()),
@@ -176,7 +177,7 @@ fn run_one_shot(args: Args) -> Result<()> {
         if try_delegate(req) {
             return Ok(());
         }
-        eprintln!("relay: tray app not reachable — running one-shot capture");
+        log::info!("relay: tray app not reachable — running one-shot capture");
     }
 
     // one capture at a time — a second --capture while an overlay is up
@@ -191,7 +192,7 @@ fn run_one_shot(args: Args) -> Result<()> {
         anyhow::bail!("no monitors captured");
     }
     let bounds = qs_core::virtual_bounds(&frames);
-    eprintln!(
+    log::info!(
         "captured {} monitor(s), virtual bounds {}x{} at ({},{})",
         frames.len(),
         bounds.w,
@@ -223,7 +224,7 @@ fn run_one_shot(args: Args) -> Result<()> {
             ocr_lang: &cfg.ocr_lang,
             provenance: actions::provenance_now(qs_library::CaptureMode::Fullscreen),
         })?;
-        eprintln!("fullscreen saved, {:?} outcome", d.outcome);
+        log::info!("fullscreen saved, {:?} outcome", d.outcome);
         while actions::clipboard_held() {
             std::thread::sleep(std::time::Duration::from_millis(100));
         }

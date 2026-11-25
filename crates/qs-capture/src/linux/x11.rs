@@ -66,7 +66,7 @@ impl ScreenCapture for X11Capture {
                 Err(e) => {
                     // e.g. XWayland: RandR geometry != capturable area.
                     // Better one whole-root frame than a hard failure.
-                    eprintln!(
+                    log::warn!(
                         "monitor {}x{} at ({},{}) failed: {e}; capturing whole root instead",
                         m.w, m.h, m.x, m.y
                     );

@@ -283,7 +283,7 @@ fn mon_key(m: &MonitorHandle) -> String {
 /// so the host can fall back to the quick-access card.
 fn land(chrome: &mut Chrome, el: &ActiveEventLoop, l: Land) -> Result<(), Box<Land>> {
     let Some(mon) = monitor_for(el, l.sel) else {
-        eprintln!("chrome land: no monitor for selection {:?}", l.sel);
+        log::warn!("chrome land: no monitor for selection {:?}", l.sel);
         return Err(Box::new(l));
     };
     let key = mon_key(&mon);
@@ -291,7 +291,7 @@ fn land(chrome: &mut Chrome, el: &ActiveEventLoop, l: Land) -> Result<(), Box<La
         let font = Rc::new(match crate::settings::system_font() {
             Ok(f) => f,
             Err(e) => {
-                eprintln!("chrome land: system font: {e:#}");
+                log::warn!("chrome land: system font: {e:#}");
                 return Err(Box::new(l));
             }
         });
@@ -299,7 +299,7 @@ fn land(chrome: &mut Chrome, el: &ActiveEventLoop, l: Land) -> Result<(), Box<La
         let w = match ChromeWin::new(el, &mon, corner, font, chrome.accent()) {
             Ok(w) => w,
             Err(e) => {
-                eprintln!("chrome win: {e:#}");
+                log::warn!("chrome win: {e:#}");
                 return Err(Box::new(l));
             }
         };
@@ -381,8 +381,8 @@ pub fn standalone(pos: &str, accent: u32) -> anyhow::Result<()> {
                         self.chrome.clear_all(wid);
                         self.chrome.sweep();
                     }
-                    ChromeCmd::MenuAction { idx, id } => eprintln!("menu: thumb {idx} → {id}"),
-                    ChromeCmd::DragBegin { idx, .. } => eprintln!("drag: thumb {idx}"),
+                    ChromeCmd::MenuAction { idx, id } => log::info!("menu: thumb {idx} → {id}"),
+                    ChromeCmd::DragBegin { idx, .. } => log::info!("drag: thumb {idx}"),
                     ChromeCmd::Redraw => {}
                 }
             }

@@ -78,7 +78,7 @@ pub fn run(cfg: Config) -> Result<()> {
 
     #[cfg(target_os = "linux")]
     if let Err(e) = crate::ipc_linux::spawn_listener(proxy.clone()) {
-        eprintln!("ipc listener: {e:#} — hotkeys will use one-shot capture");
+        log::warn!("ipc listener: {e:#} — hotkeys will use one-shot capture");
     }
 
     // Menu clicks arrive on an mpsc channel — pump them into the event loop.
@@ -280,7 +280,7 @@ impl Host {
         #[cfg(target_os = "linux")]
         if let Some(g) = &mut self.hotkey_guard {
             if let Err(e) = g.rebind(&region, &full) {
-                eprintln!("hotkey rebind failed: {e:#}");
+                log::warn!("hotkey rebind failed: {e:#}");
             }
             // a Changed event while the recorder is still armed must not
             // leave the binding live
@@ -345,7 +345,7 @@ impl ApplicationHandler<HostEvent> for Host {
                 Ok(guard) => {
                     self.hotkey_guard = guard;
                     if self.hotkey_guard.is_none() {
-                        eprintln!(
+                        log::info!(
                             "note: no hotkey mechanism for this Wayland desktop — \
                              bind `quickshort --capture` in your compositor config"
                         );
@@ -353,7 +353,7 @@ impl ApplicationHandler<HostEvent> for Host {
                     false
                 }
                 Err(e) => {
-                    eprintln!(
+                    log::warn!(
                         "hotkey: compositor registration failed: {e:#} — \
                                bind `quickshort --capture` in your compositor config"
                     );
@@ -388,7 +388,7 @@ impl ApplicationHandler<HostEvent> for Host {
         #[cfg(target_os = "linux")]
         match tray::linux_tray::spawn(&self.cfg, &recents) {
             Ok(t) => self.tray = Some(t),
-            Err(e) => eprintln!("tray icon failed: {e:#}"),
+            Err(e) => log::warn!("tray icon failed: {e:#}"),
         }
         #[cfg(not(target_os = "linux"))]
         {
@@ -398,7 +398,7 @@ impl ApplicationHandler<HostEvent> for Host {
                 .with_icon(tray::tray_icon(44));
             match builder.build() {
                 Ok(t) => self.tray = Some(t),
-                Err(e) => eprintln!("tray icon failed: {e:#}"),
+                Err(e) => log::warn!("tray icon failed: {e:#}"),
             }
         }
 
@@ -415,7 +415,7 @@ impl ApplicationHandler<HostEvent> for Host {
                     match res {
                         Ok(()) => self.hotkey = Some(hk),
                         Err(e) => {
-                            eprintln!("hotkey register failed: {e:#}");
+                            log::warn!("hotkey register failed: {e:#}");
                             // the configured chord may be shell-owned (Windows
                             // claims PrintScreen for Snipping on fresh installs)
                             // — fall back to a chord that is always free
@@ -424,11 +424,11 @@ impl ApplicationHandler<HostEvent> for Host {
                                 if let Ok(fbk) = FALLBACK.parse::<HotKey>() {
                                     match manager.as_ref().map(|m| m.register(fbk)) {
                                         Some(Ok(())) => {
-                                            eprintln!("hotkey fell back to {FALLBACK}");
+                                            log::info!("hotkey fell back to {FALLBACK}");
                                             self.hotkey = Some(fbk);
                                         }
                                         _ => {
-                                            eprintln!("fallback register failed")
+                                            log::warn!("fallback register failed")
                                         }
                                     }
                                 }
@@ -436,7 +436,7 @@ impl ApplicationHandler<HostEvent> for Host {
                         }
                     }
                 }
-                Err(e) => eprintln!("bad hotkey {:?}: {e}", self.cfg.hotkey),
+                Err(e) => log::warn!("bad hotkey {:?}: {e}", self.cfg.hotkey),
             }
             // fullscreen chord — skipped silently when unset or a
             // duplicate of the region chord
@@ -448,14 +448,14 @@ impl ApplicationHandler<HostEvent> for Host {
                             .hotkey
                             .is_some_and(|r| r.key == hk.key && r.mods == hk.mods) =>
                     {
-                        eprintln!("fullscreen hotkey {full:?} duplicates the region hotkey");
+                        log::info!("fullscreen hotkey {full:?} duplicates the region hotkey");
                     }
                     Ok(hk) => match manager.as_ref().map(|m| m.register(hk)) {
                         Some(Ok(())) => self.hotkey_full = Some(hk),
-                        Some(Err(e)) => eprintln!("fullscreen hotkey register failed: {e:#}"),
-                        None => eprintln!("fullscreen hotkey: manager unavailable"),
+                        Some(Err(e)) => log::warn!("fullscreen hotkey register failed: {e:#}"),
+                        None => log::warn!("fullscreen hotkey: manager unavailable"),
                     },
-                    Err(e) => eprintln!("bad fullscreen hotkey {full:?}: {e}"),
+                    Err(e) => log::warn!("bad fullscreen hotkey {full:?}: {e}"),
                 }
             }
             self.hotkeys = manager;
@@ -464,7 +464,7 @@ impl ApplicationHandler<HostEvent> for Host {
         // honor the retention policy, then the once-a-day update check
         let gone = actions::cleanup_captures(&self.cfg.save_dir(), self.cfg.keep_days);
         if gone > 0 {
-            eprintln!("retention sweep removed {gone} old captures");
+            log::info!("retention sweep removed {gone} old captures");
         }
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -577,7 +577,7 @@ impl ApplicationHandler<HostEvent> for Host {
                     &self.cfg.popup_pos,
                 ) {
                     Ok(t) => self.toast = Some(t),
-                    Err(e) => eprintln!("toast: {e:#}"),
+                    Err(e) => log::warn!("toast: {e:#}"),
                 }
                 #[cfg(target_os = "linux")]
                 crate::linux_notify::send(crate::scroll::HINT, true);
@@ -622,7 +622,7 @@ impl ApplicationHandler<HostEvent> for Host {
                 if let Some(m) = wait_msg {
                     match Toast::open(el, m, self.cfg.accent_rgb(), &self.cfg.popup_pos) {
                         Ok(t) => self.toast = Some(t),
-                        Err(e) => eprintln!("toast: {e:#}"),
+                        Err(e) => log::warn!("toast: {e:#}"),
                     }
                 }
             }

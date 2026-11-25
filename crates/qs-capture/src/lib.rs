@@ -96,7 +96,7 @@ mod tests {
         assert!(!frames.is_empty());
         for f in &frames {
             let g = &f.geometry;
-            eprintln!(
+            log::info!(
                 "display: {}x{} logical, {}x{} px, scale {}",
                 g.size.w,
                 g.size.h,
@@ -118,7 +118,7 @@ mod tests {
         let g = frames[0].geometry;
         let sel = qs_core::Rect::new(g.origin.x + 10, g.origin.y + 10, 200, 100);
         let (img, s) = qs_core::stitch(&frames, sel).unwrap();
-        eprintln!(
+        log::info!(
             "stitch: 200x100 logical -> {}x{} px (scale {})",
             img.width(),
             img.height(),

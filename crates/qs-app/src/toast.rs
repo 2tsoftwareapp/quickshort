@@ -284,7 +284,7 @@ pub fn standalone() -> Result<()> {
             match Toast::open(el, "Extracting text…", cfg.accent_rgb(), &cfg.popup_pos) {
                 Ok(t) => self.t = Some(t),
                 Err(e) => {
-                    eprintln!("toast: {e:#}");
+                    log::warn!("toast: {e:#}");
                     el.exit();
                 }
             }

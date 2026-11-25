@@ -105,7 +105,7 @@ pub fn register(
             gnome::bind(&hk)?;
             if let Some(h) = hk_full {
                 if let Err(e) = gnome::bind_full(&h) {
-                    eprintln!("fullscreen gsettings bind: {e:#}");
+                    log::warn!("fullscreen gsettings bind: {e:#}");
                 }
             }
             None
@@ -114,7 +114,7 @@ pub fn register(
             sway::bind(&hk)?;
             if let Some(h) = hk_full {
                 if let Err(e) = sway::bind_full(&h) {
-                    eprintln!("fullscreen swaymsg bind: {e:#}");
+                    log::warn!("fullscreen swaymsg bind: {e:#}");
                 }
             }
             None
@@ -123,7 +123,7 @@ pub fn register(
             hypr::bind(&hk)?;
             if let Some(h) = hk_full {
                 if let Err(e) = hypr::bind_full(&h) {
-                    eprintln!("fullscreen hyprctl bind: {e:#}");
+                    log::warn!("fullscreen hyprctl bind: {e:#}");
                 }
             }
             None
@@ -133,7 +133,7 @@ pub fn register(
             // probing an unknown desktop — a missing interface just
             // means there is no mechanism here
             Err(e) if portal_probe => {
-                eprintln!("hotkey: GlobalShortcuts portal unavailable: {e:#}");
+                log::warn!("hotkey: GlobalShortcuts portal unavailable: {e:#}");
                 return Ok(None);
             }
             Err(e) => return Err(e),
@@ -215,7 +215,7 @@ impl Guard {
     /// `GlobalHotKeyManager::unregister` does on X11.
     pub fn suspend(&mut self, suspended: bool) {
         if let Err(e) = self.suspend_inner(suspended) {
-            eprintln!("hotkey suspend({suspended}): {e:#}");
+            log::warn!("hotkey suspend({suspended}): {e:#}");
         }
     }
 

@@ -375,6 +375,6 @@ mod tests {
     #[ignore]
     fn live_release_check() {
         let r = check().unwrap();
-        eprintln!("latest release: {r:?}", r = r.map(|r| r.version));
+        log::info!("latest release: {r:?}", r = r.map(|r| r.version));
     }
 }

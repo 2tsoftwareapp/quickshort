@@ -250,7 +250,7 @@ mod face_tests {
     fn modifier_symbols_fall_back_when_a_symbol_font_exists() {
         let f = bundled();
         if symbol_font().is_none() {
-            eprintln!("no symbol font installed — skipped");
+            log::warn!("no symbol font installed — skipped");
             return;
         }
         for ch in ['⌘', '⇧', '⌥', '⌃'] {

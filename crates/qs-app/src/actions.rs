@@ -76,7 +76,7 @@ pub fn dispatch(args: DispatchArgs) -> Result<Dispatch> {
         ocr_lang,
         provenance,
     } = args;
-    eprintln!("dispatch {action:?}");
+    log::info!("dispatch {action:?}");
     let img = std::thread::spawn(move || qs_core::stitch(&frames, sel))
         .join()
         .expect("stitch worker panicked");
@@ -91,7 +91,7 @@ pub fn dispatch(args: DispatchArgs) -> Result<Dispatch> {
         Action::Save => {
             let p = save(&img, target)?;
             if copy_after_save {
-                eprintln!("copy_after_save (clipboard only — album uses Save above)");
+                log::info!("copy_after_save (clipboard only — album uses Save above)");
                 copy_image_to_clipboard(&img, wait_clipboard);
             }
             Outcome::Saved(p)
@@ -118,7 +118,7 @@ pub fn dispatch(args: DispatchArgs) -> Result<Dispatch> {
             // the same file a Save writes, so no capture lives only in
             // memory, then the clipboard
             let saved = save(&img, target)
-                .map_err(|e| eprintln!("copy: save failed: {e:#}"))
+                .map_err(|e| log::warn!("copy: save failed: {e:#}"))
                 .ok();
             copy_image_to_clipboard(&img, wait_clipboard);
             Outcome::Copied(saved)
@@ -147,7 +147,7 @@ pub fn dispatch(args: DispatchArgs) -> Result<Dispatch> {
             } else {
                 let n = t.chars().count();
                 copy_text_to_clipboard(&t, wait_clipboard);
-                eprintln!("copied {n} chars of text to clipboard");
+                log::info!("copied {n} chars of text to clipboard");
                 Outcome::TextCopied(n)
             }
         }
@@ -170,7 +170,7 @@ pub fn dispatch(args: DispatchArgs) -> Result<Dispatch> {
 /// reported failure.
 pub fn record_saved(dir: &Path, path: &Path, provenance: qs_library::Provenance) {
     if let Err(e) = qs_library::record_capture(dir, path, provenance) {
-        eprintln!("library index: {e:#}");
+        log::warn!("library index: {e:#}");
     }
 }
 
@@ -209,7 +209,7 @@ fn save(img: &RgbaImage, target: &SaveTarget) -> Result<PathBuf> {
     }
     img.save(&path)
         .with_context(|| format!("save {}", path.display()))?;
-    eprintln!("saved {}", path.display());
+    log::info!("saved {}", path.display());
     Ok(path)
 }
 
@@ -459,7 +459,7 @@ pub fn open_url(url: &str) {
         }
     };
     if let Err(e) = r {
-        eprintln!("open {url}: {e}");
+        log::warn!("open {url}: {e}");
     }
 }
 
@@ -501,7 +501,7 @@ pub fn open_path(p: &Path) {
         }
     };
     if let Err(e) = r {
-        eprintln!("open {}: {e}", p.display());
+        log::warn!("open {}: {e}", p.display());
     }
 }
 
@@ -557,7 +557,7 @@ fn copy_image_to_clipboard(img: &RgbaImage, wait: bool) {
         if img.write_to(&mut png, image::ImageFormat::Png).is_ok()
             && wl_copy("image/png", &png.into_inner())
         {
-            eprintln!("copied to clipboard via wl-copy");
+            log::info!("copied to clipboard via wl-copy");
             return;
         }
     }
@@ -597,7 +597,7 @@ fn copy_text_to_clipboard(text: &str, wait: bool) {
     // even from the resident daemon (`wait == false`).
     #[cfg(target_os = "linux")]
     if wl_copy("text/plain;charset=utf-8", text.as_bytes()) {
-        eprintln!("copied text to clipboard via wl-copy");
+        log::info!("copied text to clipboard via wl-copy");
         return;
     }
     #[cfg(target_os = "linux")]
@@ -626,7 +626,7 @@ fn with_resident_clipboard<T>(f: impl FnOnce(&mut arboard::Clipboard) -> T) -> O
     let mut slot = RESIDENT.lock().unwrap_or_else(|e| e.into_inner());
     if slot.is_none() {
         *slot = arboard::Clipboard::new()
-            .map_err(|e| eprintln!("clipboard: {e}"))
+            .map_err(|e| log::warn!("clipboard: {e}"))
             .ok();
     }
     slot.as_mut().map(f)
@@ -634,9 +634,9 @@ fn with_resident_clipboard<T>(f: impl FnOnce(&mut arboard::Clipboard) -> T) -> O
 
 fn report_clipboard(r: Result<Result<(), arboard::Error>, arboard::Error>) {
     match r {
-        Ok(Ok(())) => eprintln!("copied to clipboard"),
-        Ok(Err(e)) => eprintln!("clipboard set failed: {e}"),
-        Err(e) => eprintln!("clipboard unavailable: {e}"),
+        Ok(Ok(())) => log::warn!("copied to clipboard"),
+        Ok(Err(e)) => log::warn!("clipboard set failed: {e}"),
+        Err(e) => log::warn!("clipboard unavailable: {e}"),
     }
 }
 
@@ -664,7 +664,7 @@ pub fn open_editor(p: &Path) {
             .env("QS_THEME", &cfg.theme)
             .env("QS_ACCENT", &accent_hex);
         if let Err(e) = cmd.spawn() {
-            eprintln!("failed to spawn qs-editor: {e}; falling back to open_path");
+            log::warn!("failed to spawn qs-editor: {e}; falling back to open_path");
             open_path(p);
         }
     } else {

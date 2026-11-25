@@ -677,7 +677,7 @@ pub fn standalone() -> Result<()> {
             match Settings::open(el, &self.cfg) {
                 Ok(s) => self.s = Some(s),
                 Err(e) => {
-                    eprintln!("settings: {e:#}");
+                    log::warn!("settings: {e:#}");
                     el.exit();
                 }
             }

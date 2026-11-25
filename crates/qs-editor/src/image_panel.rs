@@ -542,7 +542,7 @@ fn effects_ui(ui: &mut egui::Ui, editor: &mut Editor, prefs: &mut crate::prefs::
                     if edited == Some(true) && w.text != prefs.watermark_text {
                         match crate::prefs::AppPrefs::save_watermark(&w.text) {
                             Ok(()) => prefs.watermark_text.clone_from(&w.text),
-                            Err(error) => eprintln!("could not save default watermark: {error}"),
+                            Err(error) => log::warn!("could not save default watermark: {error}"),
                         }
                     }
                 }

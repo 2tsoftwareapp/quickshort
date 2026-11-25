@@ -85,11 +85,11 @@ impl Session {
         let p = self.dir.join(format!("{}_all.png", self.case_id()));
         match out.save(&p) {
             Ok(()) => {
-                eprintln!("evidence: stitched {}", p.display());
+                log::info!("evidence: stitched {}", p.display());
                 Some(p)
             }
             Err(e) => {
-                eprintln!("evidence: stitch {}: {e}", p.display());
+                log::warn!("evidence: stitch {}: {e}", p.display());
                 None
             }
         }

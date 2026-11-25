@@ -219,7 +219,7 @@ pub fn select_region(
             match Overlay::spawn(el, self.frames, self.bounds, self.prefs) {
                 Ok(ov) => self.ov = Some(ov),
                 Err(e) => {
-                    eprintln!("overlay failed: {e:#}");
+                    log::warn!("overlay failed: {e:#}");
                     el.exit();
                 }
             }
@@ -1288,7 +1288,7 @@ impl Session {
             let win = match el.create_window(attrs) {
                 Ok(w) => w,
                 Err(e) => {
-                    eprintln!("overlay window creation failed: {e}");
+                    log::warn!("overlay window creation failed: {e}");
                     continue;
                 }
             };
@@ -1310,7 +1310,7 @@ impl Session {
                     layer: None,
                     base_dim: None,
                 }),
-                Err(e) => eprintln!("overlay surface creation failed: {e}"),
+                Err(e) => log::warn!("overlay surface creation failed: {e}"),
             }
         }
         if self.wins.is_empty() {
@@ -1406,7 +1406,7 @@ impl Session {
                         }
                         match item {
                             Item::Act(action) => {
-                                eprintln!("overlay action: {action:?} (toolbar click)");
+                                log::info!("overlay action: {action:?} (toolbar click)");
                                 self.finish(Some(action));
                             }
                             Item::Undo => self.undo(),
@@ -1745,7 +1745,7 @@ impl Session {
                             None
                         };
                         if let Some(a) = act {
-                            eprintln!("overlay action: {a:?} (key '{ch}')");
+                            log::info!("overlay action: {a:?} (key '{ch}')");
                             self.finish(Some(a));
                         } else if let Some(t) = toolbar::tool_from_key(ch).filter(|_| !modded) {
                             self.commit_annot();

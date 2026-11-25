@@ -48,7 +48,7 @@ impl AppPrefs {
         match Self::read() {
             Ok(prefs) => prefs,
             Err(error) => {
-                eprintln!("editor settings: {error}");
+                log::warn!("editor settings: {error}");
                 Self::default()
             }
         }

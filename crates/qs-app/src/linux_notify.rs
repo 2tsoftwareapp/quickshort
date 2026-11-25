@@ -168,14 +168,14 @@ fn listen() {
                         .find(|(i, _)| *i == id)
                         .map(|(_, p)| p.clone());
                     if let Some(p) = p {
-                        eprintln!("notification: {key} → editor {}", p.display());
+                        log::info!("notification: {key} → editor {}", p.display());
                         crate::actions::open_editor(&p);
                     }
                 }
                 Ok(())
             };
             if let Err(e) = run() {
-                eprintln!("notification actions: {e:#}");
+                log::warn!("notification actions: {e:#}");
             }
         });
     });
@@ -190,7 +190,7 @@ pub fn send_shot(msg: &str, path: PathBuf) {
     IN_FLIGHT.fetch_add(1, Ordering::Relaxed);
     std::thread::spawn(move || {
         if let Err(e) = send_shot_sync(&msg, &path) {
-            eprintln!("notification (freedesktop): {e:#}");
+            log::warn!("notification (freedesktop): {e:#}");
         }
         IN_FLIGHT.fetch_sub(1, Ordering::Relaxed);
     });
@@ -209,7 +209,7 @@ pub fn send(msg: &str, ok: bool) {
     IN_FLIGHT.fetch_add(1, Ordering::Relaxed);
     std::thread::spawn(move || {
         if let Err(e) = send_sync(&msg, ok) {
-            eprintln!("notification (freedesktop): {e:#}");
+            log::warn!("notification (freedesktop): {e:#}");
         }
         IN_FLIGHT.fetch_sub(1, Ordering::Relaxed);
     });
