@@ -8,8 +8,12 @@
 //!   KDE Plasma    org.freedesktop.portal.GlobalShortcuts → in-process signal
 //!   sway          `swaymsg bindsym`          → spawns `quickshort --capture`
 //!   Hyprland      `hyprctl keyword bind`     → spawns `quickshort --capture`
+//!   other Wayland GlobalShortcuts portal is probed — Niri/COSMIC/etc. get
+//!                 in-process signals when their portal implements it
 //!
-//! Anything else returns Ok(None) so host.rs keeps the manual-bind hint.
+//! Only a Wayland desktop with neither a known mechanism nor a working
+//! GlobalShortcuts portal returns Ok(None), so host.rs keeps the
+//! manual-bind hint.
 
 use anyhow::{bail, Context, Result};
 use global_hotkey::hotkey::{Code, HotKey, Modifiers};
@@ -28,7 +32,9 @@ pub fn is_wayland() -> bool {
 enum De {
     /// GNOME and mutter-adjacent shells sharing the custom-keybinding schema.
     Gnome,
-    Kde,
+    /// org.freedesktop.portal.GlobalShortcuts — KDE names it explicitly;
+    /// also probed for any Wayland desktop `desktop()` doesn't recognize.
+    Portal,
     Sway,
     Hyprland,
 }
@@ -41,7 +47,7 @@ fn desktop() -> Option<De> {
         match tok.to_ascii_lowercase().as_str() {
             "gnome" | "gnome-flashback" | "unity" | "x-cinnamon" | "cinnamon" | "pantheon"
             | "budgie" => return Some(De::Gnome),
-            "kde" | "plasma" => return Some(De::Kde),
+            "kde" | "plasma" => return Some(De::Portal),
             "sway" => return Some(De::Sway),
             "hyprland" => return Some(De::Hyprland),
             _ => {}
@@ -50,7 +56,7 @@ fn desktop() -> Option<De> {
     None
 }
 
-/// Owns whatever keeps the registration alive and rebindable. Only KDE's
+/// Owns whatever keeps the registration alive and rebindable. Only the
 /// portal session is a real resource (a dbus connection + listener
 /// thread); the spawned-command desktops just need the chords remembered
 /// for suspend/rebind.
@@ -60,7 +66,7 @@ pub struct Guard {
     /// bound — the latter may be empty (no fullscreen binding).
     chord: String,
     chord_full: String,
-    kde: Option<kde::KdeHotkey>,
+    portal: Option<portal::PortalHotkey>,
 }
 
 /// Register both chords (global-hotkey syntax, e.g. "Ctrl+Shift+S").
@@ -72,9 +78,17 @@ pub fn register(
     chord: &str,
     full: &str,
 ) -> Result<Option<Guard>> {
-    let Some(de) = desktop() else {
+    let known = desktop();
+    let Some(de) = known.or_else(|| {
+        // Unrecognized Wayland desktop (Niri, COSMIC, labwc, …): the
+        // GlobalShortcuts portal is the only programmatic mechanism that
+        // might exist — probe it, and treat a missing interface as "no
+        // mechanism" so the caller still shows the manual-bind hint.
+        is_wayland().then_some(De::Portal)
+    }) else {
         return Ok(None);
     };
+    let portal_probe = known.is_none();
     let hk: HotKey = chord
         .parse()
         .with_context(|| format!("bad hotkey {chord:?}"))?;
@@ -86,7 +100,7 @@ pub fn register(
                 .with_context(|| format!("bad fullscreen hotkey {full:?}"))?,
         )
     };
-    let kde = match de {
+    let portal = match de {
         De::Gnome => {
             gnome::bind(&hk)?;
             if let Some(h) = hk_full {
@@ -114,13 +128,22 @@ pub fn register(
             }
             None
         }
-        De::Kde => Some(kde::KdeHotkey::start(proxy, &hk, hk_full.as_ref())?),
+        De::Portal => match portal::PortalHotkey::start(proxy, &hk, hk_full.as_ref()) {
+            Ok(p) => Some(p),
+            // probing an unknown desktop — a missing interface just
+            // means there is no mechanism here
+            Err(e) if portal_probe => {
+                eprintln!("hotkey: GlobalShortcuts portal unavailable: {e:#}");
+                return Ok(None);
+            }
+            Err(e) => return Err(e),
+        },
     };
     Ok(Some(Guard {
         de,
         chord: chord.to_owned(),
         chord_full: full.to_owned(),
-        kde,
+        portal,
     }))
 }
 
@@ -153,7 +176,7 @@ impl Guard {
                     De::Gnome => gnome::set_binding_full(""),
                     De::Sway => sway::unbind(&old),
                     De::Hyprland => hypr::unbind(&old),
-                    De::Kde => Ok(()), // set_bound rebuilds without it
+                    De::Portal => Ok(()), // set_bound rebuilds without it
                 };
             }
         }
@@ -176,10 +199,10 @@ impl Guard {
                     hypr::bind_full(&h)?;
                 }
             }
-            De::Kde => self
-                .kde
+            De::Portal => self
+                .portal
                 .as_mut()
-                .context("kde hotkey session lost")?
+                .context("portal hotkey session lost")?
                 .bind(&hk, hk_full.as_ref())?,
         }
         self.chord = chord.to_owned();
@@ -250,10 +273,10 @@ impl Guard {
             }
             // BindShortcuts([]) unbinds all — the closest the portal
             // has to suspend/resume
-            (De::Kde, s) => self
-                .kde
+            (De::Portal, s) => self
+                .portal
                 .as_mut()
-                .context("kde hotkey session lost")?
+                .context("portal hotkey session lost")?
                 .set_bound(!s),
         }
     }
@@ -662,9 +685,9 @@ mod hypr {
     }
 }
 
-// ------------------------------------------------------------- KDE portal
+// ----------------------------------------------------------- portal
 
-mod kde {
+mod portal {
     use super::*;
     use futures_lite::StreamExt;
     use std::collections::HashMap;
@@ -686,7 +709,7 @@ mod kde {
 
     /// Keeps the portal session + its Activated listener thread alive;
     /// the thread exits with the connection when this drops.
-    pub struct KdeHotkey {
+    pub struct PortalHotkey {
         conn: Connection,
         session: OwnedObjectPath,
         /// last chords bound — BindShortcuts([]) unbinds, so resume
@@ -695,7 +718,7 @@ mod kde {
         hk_full: Option<HotKey>,
     }
 
-    impl KdeHotkey {
+    impl PortalHotkey {
         pub fn start(
             proxy: EventLoopProxy<HostEvent>,
             hk: &HotKey,
@@ -803,7 +826,7 @@ mod kde {
         }
     }
 
-    impl Drop for KdeHotkey {
+    impl Drop for PortalHotkey {
         fn drop(&mut self) {
             // best-effort — the portal reaps the session with the
             // connection anyway

@@ -87,6 +87,23 @@ static SHOTS: Mutex<Vec<(u32, PathBuf)>> = Mutex::new(Vec::new());
 static LISTEN: Once = Once::new();
 const ACT_EDIT: &str = "edit";
 
+/// GetCapabilities → does the running daemon honor the "actions" pair?
+/// Minimal servers (no dunst/mako/swaync/GNOME/KDE) get a plain
+/// notification instead of an array they may reject or misparse — and we
+/// don't bother spawning the ActionInvoked listener for them.
+fn actions_supported() -> bool {
+    static CAPS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *CAPS.get_or_init(|| {
+        let ok = (|| -> anyhow::Result<bool> {
+            let conn = session()?;
+            let proxy = Proxy::new(conn, SERVICE, PATH, IFACE)?;
+            let caps: Vec<String> = proxy.call("GetCapabilities", &())?;
+            Ok(caps.iter().any(|c| c == "actions"))
+        })();
+        ok.unwrap_or(false)
+    })
+}
+
 /// The CleanShot-style post-capture card on Linux: thumbnail (image-path
 /// hint), "Edit" button, and a body click (`default`) that opens the shot
 /// in Quickshort Editor.
@@ -99,7 +116,11 @@ fn send_shot_sync(msg: &str, path: &std::path::Path) -> anyhow::Result<()> {
     hints.insert("desktop-entry", Value::from("quickshort"));
     hints.insert("category", Value::from("image-added"));
     hints.insert("image-path", Value::from(uri.as_str()));
-    let actions = vec!["default", "Open in editor", ACT_EDIT, "Edit"];
+    let actions: Vec<&str> = if actions_supported() {
+        vec!["default", "Open in editor", ACT_EDIT, "Edit"]
+    } else {
+        Vec::new()
+    };
     let id: u32 = proxy
         .call(
             "Notify",
@@ -162,7 +183,9 @@ fn listen() {
 
 /// Saved-capture notification with thumbnail + Edit action; fire-and-forget.
 pub fn send_shot(msg: &str, path: PathBuf) {
-    listen();
+    if actions_supported() {
+        listen();
+    }
     let msg = msg.to_string();
     IN_FLIGHT.fetch_add(1, Ordering::Relaxed);
     std::thread::spawn(move || {

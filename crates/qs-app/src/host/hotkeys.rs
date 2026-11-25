@@ -61,7 +61,11 @@ impl Host {
     pub(super) fn trigger(&mut self, el: &ActiveEventLoop) {
         self.refresh_appearance();
         if self.overlay.is_some() {
-            return; // a selection is already in progress
+            // second trigger while a selection is up = reset: drop the
+            // stale layer and start a fresh capture rather than
+            // ignoring the press or stacking another overlay
+            self.overlay = None;
+            self.frames = None;
         }
         self.card = None; // a stale card owns the previous capture's image
         self.clear_own_popups();
@@ -85,7 +89,10 @@ impl Host {
     pub(super) fn trigger_full(&mut self, el: &ActiveEventLoop) {
         self.refresh_appearance();
         if self.overlay.is_some() {
-            return; // a selection is already in progress
+            // same reset as `trigger` — the fullscreen chord honors the
+            // press instead of dead-ending behind the region overlay
+            self.overlay = None;
+            self.frames = None;
         }
         self.card = None;
         self.clear_own_popups();
