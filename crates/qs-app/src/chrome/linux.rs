@@ -140,7 +140,7 @@ fn winit_chrome_window(
     sh: f64,
 ) -> Result<Rc<Window>> {
     let outer = shelf_outer_pos(mon, corner, sw, sh);
-    let attrs = Window::default_attributes()
+    let mut attrs = Window::default_attributes()
         .with_title("Quickshort")
         .with_transparent(true)
         .with_decorations(false)
@@ -150,14 +150,14 @@ fn winit_chrome_window(
         .with_window_level(WindowLevel::AlwaysOnTop)
         .with_inner_size(LogicalSize::new(sw, sh))
         .with_position(outer);
-    #[cfg(wayland_platform)]
+    // Both extension traits set the same app_id/WM_CLASS; winit applies
+    // whichever matches the backend it picks at runtime.
     {
         use winit::platform::wayland::WindowAttributesExtWayland as _;
         attrs = attrs.with_name("quickshort", "quickshort-chrome");
     }
-    #[cfg(x11_platform)]
     {
-        use winit::platform::x11::WindowAttributesExtX11 as _;
+        use winit::platform::x11::{WindowAttributesExtX11 as _, WindowType as X11WindowType};
         attrs = attrs.with_x11_window_type(vec![
             X11WindowType::Utility,
             X11WindowType::Notification,
