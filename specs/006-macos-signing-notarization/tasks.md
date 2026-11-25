@@ -93,7 +93,7 @@
 - [x] T020 Run the repository verification gate: `cargo check --workspace --all-targets` and `cargo test --workspace`; record exact results and warnings.
 - [x] T021 Review the final diff and confirm no Rust runtime behavior, updater payload format, Ed25519 signing, Windows SignPath, Linux packaging, or production `.pkg` contract changed.
 - [x] T022 Request explicit maintainer approval before using the browser or Apple Developer/App Store Connect UI to create/download/revoke any certificate or API key; if approved, assist with credential creation and GitHub secret setup without echoing secret values.
-- [ ] T023 Request explicit maintainer approval before running a controlled `release` workflow build with real Apple credentials; only after approval, validate artifacts according to `specs/006-macos-signing-notarization/quickstart.md` without publishing a release or pushing a tag.
+- [x] T023 Request explicit maintainer approval before running a controlled `release` workflow build with real Apple credentials; only after approval, validate artifacts according to `specs/006-macos-signing-notarization/quickstart.md` without publishing a release or pushing a tag.
 - [x] T024 Record completion notes in `specs/006-macos-signing-notarization/tasks.md`, including static/cargo results, whether Apple credential setup was approved/completed, whether controlled artifact validation ran, and remaining operational follow-up.
 
 ---
@@ -134,7 +134,7 @@
 
 ## Completion Notes
 
-Implementation and local verification completed without mutating Apple Developer/App Store Connect assets, GitHub secrets, tags, releases, or CI artifacts.
+Implementation, Apple/GitHub credential setup, and controlled CI artifact validation completed. No tag was pushed and no GitHub release was published.
 
 ### Verification results
 
@@ -153,11 +153,22 @@ Implementation and local verification completed without mutating Apple Developer
 ### Operational gates
 
 - T022 completed: maintainer explicitly approved full Apple/GitHub secret setup. A Developer ID Application certificate was created in Apple team `3279CRW8KQ` (expiration `2027/12/26`), converted locally to a macOS-keychain-compatible `.p12`, and validated with `security import`; an App Store Connect Team key named `quickshort-notarization` was created with Developer role (Key ID `7K8H246YN4`) and `notarytool history` authenticated successfully. The five required GitHub secrets were set in `2tsoftwareapp/quickshort`; no secret values were printed or committed. Browser automation session was closed.
-- T023 remains unchecked pending explicit maintainer approval for committing/pushing the workflow changes as needed and running a controlled CI artifact build. No tag or release publication is authorized by this feature implementation.
+- T023 completed: maintainer explicitly approved committing/pushing the validation branch and running controlled CI artifact builds. Validation branch `validation/macos-signing-notarization` was pushed; workflow run `45676352445` completed successfully at commit `2fa0cb98e60acc9ff184657407c422c67c2dd6e1` with all four jobs green (`metadata`, `windows`, `linux`, `macos`). No tag or release publication was performed.
+
+### Controlled CI artifact validation
+
+- Workflow run `45671094638` validated the macOS production path but exposed unrelated Linux/Windows packaging failures: the Windows checksum step used bash syntax under default PowerShell, and `linuxdeploy-plugin-gtk` assumed a legacy external gdk-pixbuf loader directory that Ubuntu 26.04 no longer creates.
+- Fixes committed in `2fa0cb9`: force the Windows checksum step to `shell: bash`, pin and patch the GTK plugin to skip absent gdk-pixbuf loader directories, and set `NO_STRIP=1` because linuxdeploy's bundled strip rejects modern `.relr.dyn` ELF sections.
+- Workflow run `45676352445` then completed green for metadata, Windows, Linux, and macOS.
+- Downloaded artifacts validated locally:
+  - Linux: `Quickshort-Linux.AppImage` and `quickshort_amd64.deb` both passed `linux.sha256` verification.
+  - Windows: `Quickshort-Windows-Setup.exe` passed its `.sha256` verification.
+  - macOS: ZIP and DMG passed `.sha256` verification; extracted `Quickshort.app` passed `codesign --verify --deep --strict`; both app and DMG passed `xcrun stapler validate`; Gatekeeper reported `accepted`, `source=Notarized Developer ID`, origin `Developer ID Application: Cuong Nguyen Van (3279CRW8KQ)`.
+- Apple notarization history showed both controlled-run submissions accepted: `Quickshort.zip` and `Quickshort-v0.4.1-macos.dmg`.
 
 ### Diff review result
 
 - macOS ZIP/DMG artifact names are unchanged: `Quickshort-v<version>-macos.zip` and `Quickshort-v<version>-macos.dmg`.
-- No updater payload format, Ed25519 asset-signing logic, Windows SignPath flow, Linux packaging behavior, or production `.pkg` contract was changed.
+- No updater payload format, Ed25519 asset-signing logic, Windows SignPath flow, Linux artifact/update-info contract, or production `.pkg` contract was changed. Linux packaging internals changed only to tolerate modern Ubuntu/gdk-pixbuf layouts and skip linuxdeploy's incompatible strip binary; Windows packaging changed only to run the existing checksum commands under bash.
 - No Rust runtime behavior was changed for this feature. The only Rust test change is the deterministic `qs-theme` test unblocker noted in `plan.md`; `crates/qs-app` Rust changes in the same working tree belong to feature `005-github-org-migration`.
 - Active macOS install documentation no longer instructs users to remove quarantine or use right-click Open solely because production builds are unsigned. Remaining `unsigned` references are legitimate Windows/self-signed local-development/upgrade-transition caveats.
