@@ -6,7 +6,16 @@ use std::fs;
 use std::path::Path;
 
 const MIGRATED: &[&str] = &[
-    "qs-app/src/settings.rs",
+    "qs-app/src/settings/about.rs",
+    "qs-app/src/settings/appearance.rs",
+    "qs-app/src/settings/capture.rs",
+    "qs-app/src/settings/common.rs",
+    "qs-app/src/settings/general.rs",
+    "qs-app/src/settings/input.rs",
+    "qs-app/src/settings/mod.rs",
+    "qs-app/src/settings/ocr.rs",
+    "qs-app/src/settings/shortcuts.rs",
+    "qs-app/src/settings/storage.rs",
     "qs-app/src/toast.rs",
     "qs-app/src/quick_access.rs",
     "qs-app/src/recstop.rs",
@@ -23,7 +32,10 @@ const MIGRATED: &[&str] = &[
     "qs-editor/src/filmstrip.rs",
     "qs-editor/src/icons.rs",
     "qs-editor/src/templates.rs",
-    "qs-editor/src/toolbar.rs",
+    "qs-editor/src/toolbar/mod.rs",
+    "qs-editor/src/toolbar/properties.rs",
+    "qs-editor/src/toolbar/tools.rs",
+    "qs-editor/src/toolbar/top.rs",
     "qs-editor/src/image_panel.rs",
     "qs-editor/src/library.rs",
     "qs-editor/src/ocr_hint.rs",
@@ -60,7 +72,8 @@ fn no_hex_colour_literals_in_migrated_files() {
     let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let mut bad = vec![];
     for f in MIGRATED {
-        let src = fs::read_to_string(crates.join(f)).unwrap();
+        let src = fs::read_to_string(crates.join(f))
+            .unwrap_or_else(|e| panic!("MIGRATED entry {f} unreadable: {e}"));
         let body = src.split("#[cfg(test)]").next().unwrap();
         for (n, l) in body.lines().enumerate() {
             if (has_hex(l) || has_rgb_call(l))
