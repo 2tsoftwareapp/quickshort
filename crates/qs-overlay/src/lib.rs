@@ -26,7 +26,7 @@ mod macos;
 pub mod sdf;
 mod toolbar;
 
-pub use annotate::{annotate_image, Annotation, PIX_BLOCK, STEP_R};
+pub use annotate::{annotate_image, Annotation, PALETTE, PIX_BLOCK, STEP_R};
 pub use toolbar::{Action, Item, Tool};
 
 const MIN_SELECT: u32 = 3;
@@ -37,6 +37,11 @@ const SELECT_HINT: &str = "Drag to select an area  \u{b7}  Esc to cancel";
 /// Fallback accent — `Prefs::default` and the pixelate preview outline.
 pub(crate) fn accent_default() -> u32 {
     qs_theme::accent()
+}
+
+/// Logical point → the shared draft machine's f32 coords.
+fn pf(p: Point) -> qs_doc::PointF {
+    qs_doc::PointF::new(p.x as f32, p.y as f32)
 }
 
 /// User-tunable overlay behaviour — the host maps its config into this at
@@ -366,7 +371,9 @@ struct Session {
     tool: Option<Tool>,         // armed drawing tool
     annots: Vec<Annotation>,    // committed strokes
     active: Option<Annotation>, // stroke in progress
-    shape_anchor: Point,        // press point for rect/ellipse/arrow/pixelate
+    /// Shared draw-gesture machine (`qs-doc`) — the geometry behind
+    /// `active` for shape tools; `None` while the text draft is live.
+    draft: Option<qs_doc::draft::Draft>,
     /// committed edits, in order — the undo log. Ops are applied and undone
     /// strictly LIFO, which keeps their `idx` fields valid indexes into
     /// `annots`
@@ -418,7 +425,7 @@ impl Session {
             tool: None,
             annots: Vec::new(),
             active: None,
-            shape_anchor: Point::default(),
+            draft: None,
             ops: Vec::new(),
             redo: Vec::new(),
             selected: None,
@@ -530,12 +537,16 @@ impl Session {
     fn begin_annot(&mut self, t: Tool, p: Point) {
         // annotations live inside the captured region only
         let p = self.sel_clamp(p);
-        self.shape_anchor = p;
+        self.draft = match t {
+            // the text draft is edited in place (caret/IME), not dragged
+            Tool::Text | Tool::Select => None,
+            _ => t.gesture().map(|g| qs_doc::draft::Draft::begin(g, pf(p))),
+        };
         self.caret = 0;
         self.caret_anchor = None;
         self.ime_seen = false;
         let rgb = annotate::PALETTE[self.color];
-        let w = annotate::SIZES[self.size as usize];
+        let w = annotate::SIZES[self.size as usize] as f64;
         let next_step = 1 + self
             .annots
             .iter()
@@ -553,9 +564,9 @@ impl Session {
                 w,
                 rgb,
             },
-            Tool::Marker => Annotation::Marker {
+            Tool::Highlighter => Annotation::Marker {
                 pts: vec![p],
-                w: annotate::MARKER_SIZES[self.size as usize],
+                w: annotate::MARKER_SIZES[self.size as usize] as f64,
                 rgb,
             },
             Tool::Arrow => Annotation::Arrow { a: p, b: p, w, rgb },
@@ -569,14 +580,15 @@ impl Session {
                 w,
                 rgb,
             },
-            Tool::Pixelate => Annotation::Pixelate(Rect::new(p.x, p.y, 0, 0)),
+            Tool::Blur => Annotation::Pixelate(Rect::new(p.x, p.y, 0, 0)),
             Tool::Text => Annotation::Text {
                 pos: p,
                 text: String::new(),
-                px: annotate::TEXT_SIZES[self.font_size].0,
+                px: annotate::TEXT_SIZES[self.font_size] as f64,
                 bold: self.bold,
                 rgb,
             },
+            _ => unreachable!("overlay only arms the shared tool subset"),
         });
         self.dirty = true;
     }
@@ -586,15 +598,19 @@ impl Session {
         self.preedit.clear();
         self.caret_anchor = None;
         self.ime_seen = false;
+        let draft = self.draft.take();
         let Some(an) = self.active.take() else { return };
         let ok = match &an {
-            Annotation::Pen { pts, .. } | Annotation::Marker { pts, .. } => pts.len() >= 2,
-            Annotation::Arrow { a, b, .. } => a != b,
-            Annotation::Rect { r, .. }
-            | Annotation::Ellipse { r, .. }
-            | Annotation::Pixelate(r) => r.w >= MIN_SELECT && r.h >= MIN_SELECT,
             Annotation::Text { text, .. } => !text.trim().is_empty(),
-            Annotation::Step { .. } => true,
+            _ => draft.is_none_or(|d| {
+                // arrows keep any nonzero length; boxes need a real area
+                let min = if matches!(an, Annotation::Arrow { .. }) {
+                    1.0
+                } else {
+                    MIN_SELECT as f32
+                };
+                !d.degenerate(min)
+            }),
         };
         if !ok {
             return;
@@ -870,6 +886,7 @@ impl Session {
         self.annots.clear();
         self.redo.clear();
         self.active = None;
+        self.draft = None;
         self.tool = None;
         self.selected = None;
         self.grabbed = None;
@@ -1373,17 +1390,11 @@ impl Session {
                     }
                 } else if self.anchor.is_some() || self.active.is_some() {
                     let p = self.sel_clamp(self.cursor);
-                    if let Some(an) = &mut self.active {
-                        match an {
-                            Annotation::Pen { pts, .. } | Annotation::Marker { pts, .. } => {
-                                pts.push(p)
-                            }
-                            Annotation::Arrow { b, .. } => *b = p,
-                            Annotation::Rect { r, .. }
-                            | Annotation::Ellipse { r, .. }
-                            | Annotation::Pixelate(r) => *r = Rect::from_drag(self.shape_anchor, p),
-                            Annotation::Text { .. } => {}
-                            Annotation::Step { c, .. } => *c = p,
+                    if let Some(d) = &mut self.draft {
+                        d.update(pf(p), 0.0);
+                        let shape = d.shape();
+                        if let Some(an) = &mut self.active {
+                            an.apply_draft(&shape);
                         }
                     }
                     self.dirty = true;
@@ -1436,7 +1447,7 @@ impl Session {
                                     tb.font_size = s;
                                 }
                                 if let Some(Annotation::Text { px, .. }) = &mut self.active {
-                                    *px = annotate::TEXT_SIZES[s as usize].0;
+                                    *px = annotate::TEXT_SIZES[s as usize] as f64;
                                 }
                                 self.dirty = true;
                             }
@@ -1655,6 +1666,7 @@ impl Session {
                     match &event.logical_key {
                         Key::Named(NamedKey::Escape) => {
                             self.active = None;
+                            self.draft = None;
                             self.preedit.clear();
                             self.ime_seen = false;
                         }
@@ -1758,7 +1770,7 @@ impl Session {
                         if let Some(a) = act {
                             eprintln!("overlay action: {a:?} (key '{ch}')");
                             self.finish(Some(a));
-                        } else if let Some(t) = Tool::from_key(ch).filter(|_| !modded) {
+                        } else if let Some(t) = toolbar::tool_from_key(ch).filter(|_| !modded) {
                             self.commit_annot();
                             self.set_tool(Some(t), i);
                         }

@@ -10,28 +10,20 @@ use qs_core::{Point, Rect};
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-/// Palette for drawing tools (system colors).
+/// Palette for drawing tools — the shared annotation palette (same values
+/// as `qs_doc::PALETTE`; the parity test keeps them equal).
 pub const PALETTE: [u32; 8] = qs_theme::ANNOTATION;
 
-/// Stroke widths per size level (S/M/L) — pen & shapes; marker is wider.
-pub const SIZES: [f64; 3] = [2.0, 3.6, 6.0];
-pub const MARKER_SIZES: [f64; 3] = [6.0, 9.5, 14.0];
-const MARKER_A: f64 = 0.42;
-/// Font size presets for the text tool — (logical px, toolbar label).
-/// Picked as a number, independent from the stroke S/M/L levels.
-pub const TEXT_SIZES: [(f64, &str); 6] = [
-    (12.0, "12"),
-    (14.0, "14"),
-    (18.0, "18"),
-    (24.0, "24"),
-    (32.0, "32"),
-    (48.0, "48"),
-];
+/// Stroke widths S/M/L, marker widths S/M/L, text presets and pixelate /
+/// step constants — single-sourced in `qs_doc` so the overlay and the
+/// document model can't drift.
+pub use qs_doc::{MARKER_SIZES, PIX_BLOCK, SIZES, STEP_R, TEXT_LABELS, TEXT_SIZES};
+
+/// `MARKER_ALPHA` widened for the overlay's f64 rasterizer.
+const MARKER_A: f64 = qs_doc::MARKER_ALPHA as f64;
+
 /// Index into `TEXT_SIZES` armed by default — 14 px.
 pub const TEXT_SIZE_DEFAULT: usize = 1;
-pub const PIX_BLOCK: i32 = 8; // pixelate block, logical px
-/// Step badge radius, logical px.
-pub const STEP_R: i32 = 12;
 const STEP_PX: f64 = 13.0;
 // pixelate drag-preview outline reads dynamic `qs_theme::accent()` at draw time
 
@@ -163,6 +155,32 @@ impl Annotation {
         }
     }
 
+    /// Sync geometry from a shared draw-gesture draft — the same
+    /// [`qs_doc::draft::DraftShape`] the editor applies to `ObjectKind`, so
+    /// a drag produces identical geometry on both surfaces.
+    pub fn apply_draft(&mut self, shape: &qs_doc::draft::DraftShape) {
+        use qs_doc::draft::DraftShape as D;
+        fn pt(p: qs_doc::PointF) -> Point {
+            Point::new(p.x.round() as i32, p.y.round() as i32)
+        }
+        match (self, shape) {
+            (Self::Pen { pts, .. } | Self::Marker { pts, .. }, D::Stroke(p)) => {
+                *pts = p.iter().map(|q| pt(*q)).collect()
+            }
+            (Self::Arrow { b, .. }, D::Segment(_, q)) => *b = pt(*q),
+            (Self::Rect { r, .. } | Self::Ellipse { r, .. } | Self::Pixelate(r), D::Rect(rc)) => {
+                *r = Rect::new(
+                    rc.x.round() as i32,
+                    rc.y.round() as i32,
+                    rc.w.round() as u32,
+                    rc.h.round() as u32,
+                )
+            }
+            (Self::Step { c, .. }, D::Point(p)) => *c = pt(*p),
+            _ => {}
+        }
+    }
+
     /// Stroke params (width, rgb, alpha); `None` for pixel edits.
     fn params(&self) -> Option<(f64, u32, f64)> {
         Some(match self {
@@ -220,12 +238,10 @@ impl Annotation {
                 })
             }
             Self::Arrow { a, b, .. } => Rect::from_drag(*a, *b),
-            Self::Step { c, .. } => Rect::new(
-                c.x - STEP_R,
-                c.y - STEP_R,
-                (STEP_R * 2) as u32,
-                (STEP_R * 2) as u32,
-            ),
+            Self::Step { c, .. } => {
+                let sr = STEP_R as i32;
+                Rect::new(c.x - sr, c.y - sr, (sr * 2) as u32, (sr * 2) as u32)
+            }
             Self::Rect { r, .. } | Self::Ellipse { r, .. } | Self::Pixelate(r) => *r,
             Self::Text {
                 pos,
@@ -690,7 +706,7 @@ pub(crate) fn label_mask(label: &'static str, bold: bool) -> &'static [f32] {
         m.insert(("T", false), raster_label("T", false));
         m.insert(("B", true), raster_label("B", true));
         m.insert(("1", true), raster_label("1", true));
-        for (_, lbl) in TEXT_SIZES {
+        for lbl in TEXT_LABELS {
             m.insert((lbl, false), raster_label(lbl, false));
         }
         m
@@ -842,21 +858,21 @@ mod tests {
             Annotation::Text {
                 pos: Point::new(20, 20),
                 text: "Quick short".into(),
-                px: TEXT_SIZES[1].0,
+                px: TEXT_SIZES[1] as f64,
                 bold: false,
                 rgb: PALETTE[4],
             },
             Annotation::Text {
                 pos: Point::new(20, 60),
                 text: "Regular & Bold".into(),
-                px: TEXT_SIZES[3].0,
+                px: TEXT_SIZES[3] as f64,
                 bold: true,
                 rgb: PALETTE[6],
             },
             Annotation::Text {
                 pos: Point::new(20, 110),
                 text: "Xin chào Việt Nam".into(),
-                px: TEXT_SIZES[5].0,
+                px: TEXT_SIZES[5] as f64,
                 bold: false,
                 rgb: PALETTE[0],
             },

@@ -25,131 +25,14 @@ use qs_doc::{
     RectF, StampKind, TextStyle, PALETTE, PIX_BLOCK, SIZES,
 };
 
+// The tool model (key, label, icon, drag gesture) is shared with the
+// overlay — it lives in `qs-doc` and is re-exported so `qs_edit::Tool`
+// keeps working for every caller.
+pub use qs_doc::Tool;
+
 /// Highlighter width = stroke width × this (S/M/L ≈ overlay marker sizes).
 pub(crate) const MARKER_K: f32 = 2.6;
 pub const DEFAULT_CALLOUT: (f32, f32) = (140.0, 50.0);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Tool {
-    Select,
-    Pen,
-    Highlighter,
-    Arrow,
-    Line,
-    Rect,
-    Ellipse,
-    Text,
-    Callout,
-    Step,
-    Blur,
-    Magnify,
-    Spotlight,
-    Stamp,
-    Eraser,
-    Crop,
-    Cutout,
-    SelectRegion,
-    /// Paint bucket: click fills the region under the cursor.
-    Fill,
-    /// Move existing canvas content: drag a box, then click where it lands.
-    SmartMove,
-    /// Polygon shapes (mockup-locked additions): drawn inside the drag rect.
-    Triangle,
-    Diamond,
-    Star,
-    Hexagon,
-}
-
-impl Tool {
-    /// Every tool, for iterating keyboard shortcuts.
-    pub const ALL: &[Tool] = &[
-        Tool::Select,
-        Tool::SelectRegion,
-        Tool::SmartMove,
-        Tool::Pen,
-        Tool::Highlighter,
-        Tool::Eraser,
-        Tool::Line,
-        Tool::Arrow,
-        Tool::Rect,
-        Tool::Ellipse,
-        Tool::Fill,
-        Tool::Text,
-        Tool::Callout,
-        Tool::Step,
-        Tool::Stamp,
-        Tool::Blur,
-        Tool::Spotlight,
-        Tool::Magnify,
-        Tool::Cutout,
-        Tool::Crop,
-        Tool::Triangle,
-        Tool::Diamond,
-        Tool::Star,
-        Tool::Hexagon,
-    ];
-
-    /// Single-key shortcut (no modifiers) that arms this tool — the one
-    /// source of truth for both key dispatch and the palette subscript.
-    pub fn key(self) -> char {
-        match self {
-            Tool::Select => 'v',
-            Tool::SelectRegion => 'm',
-            Tool::SmartMove => 'y',
-            Tool::Pen => 'p',
-            Tool::Highlighter => 'h',
-            Tool::Eraser => 'e',
-            Tool::Line => 'l',
-            Tool::Arrow => 'a',
-            Tool::Rect => 'r',
-            Tool::Ellipse => 'o',
-            Tool::Fill => 'u',
-            Tool::Text => 't',
-            Tool::Callout => 'c',
-            Tool::Step => 's',
-            Tool::Stamp => 'g',
-            Tool::Blur => 'b',
-            Tool::Spotlight => 'f',
-            Tool::Magnify => 'i',
-            Tool::Cutout => 'x',
-            Tool::Crop => 'k',
-            Tool::Triangle => 'n',
-            Tool::Diamond => 'd',
-            Tool::Star => 'j',
-            Tool::Hexagon => 'w',
-        }
-    }
-
-    /// Human name shown in the tool-tag and tooltips.
-    pub fn label(self) -> &'static str {
-        match self {
-            Tool::Select => "Select",
-            Tool::SelectRegion => "Select Region",
-            Tool::SmartMove => "Smart Move",
-            Tool::Pen => "Pen",
-            Tool::Highlighter => "Highlight",
-            Tool::Eraser => "Eraser",
-            Tool::Line => "Line",
-            Tool::Arrow => "Arrow",
-            Tool::Rect => "Rectangle",
-            Tool::Ellipse => "Ellipse",
-            Tool::Fill => "Paint Bucket",
-            Tool::Text => "Text",
-            Tool::Callout => "Callout",
-            Tool::Step => "Step",
-            Tool::Stamp => "Stamp",
-            Tool::Blur => "Blur / Redact",
-            Tool::Spotlight => "Spotlight",
-            Tool::Magnify => "Magnify",
-            Tool::Cutout => "Cutout",
-            Tool::Crop => "Crop / Trim",
-            Tool::Triangle => "Triangle",
-            Tool::Diamond => "Diamond",
-            Tool::Star => "Star",
-            Tool::Hexagon => "Hexagon",
-        }
-    }
-}
 
 /// Style applied to newly created objects (and mirrored by the UI palette).
 #[derive(Clone, Debug, PartialEq)]

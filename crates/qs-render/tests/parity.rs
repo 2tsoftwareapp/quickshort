@@ -143,3 +143,12 @@ fn text_matches_overlay() {
         }
     }
 }
+
+#[test]
+fn palettes_stay_identical() {
+    assert_eq!(
+        qs_doc::PALETTE,
+        qs_overlay::PALETTE,
+        "qs_doc::PALETTE must equal qs_theme::ANNOTATION (via qs_overlay::PALETTE)"
+    );
+}

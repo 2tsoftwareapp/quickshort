@@ -3,11 +3,11 @@
 //! document coords are logical relative to the selection's top-left.
 
 use qs_core::{Point, Rect};
-use qs_doc::{BlurMode, Document, Fill, ObjectKind, PointF, RectF, Stroke, TextStyle};
+use qs_doc::{
+    BlurMode, Document, Fill, ObjectKind, PointF, RectF, Stroke, TextStyle, MARKER_ALPHA,
+    PIX_BLOCK, STEP_R,
+};
 use qs_overlay::Annotation;
-
-/// Must match `qs_overlay::annotate::MARKER_A` — the highlighter alpha.
-const MARKER_ALPHA: f32 = 0.42;
 
 /// Build a document over the un-annotated `px_w`×`px_h` base, with one
 /// object per overlay annotation (same z-order).
@@ -62,11 +62,11 @@ pub fn from_overlay(
             Annotation::Pixelate(r) => ObjectKind::Blur {
                 r: rc(r),
                 mode: BlurMode::Pixelate,
-                strength: qs_overlay::PIX_BLOCK as f32,
+                strength: PIX_BLOCK,
             },
             Annotation::Step { c, rgb, .. } => ObjectKind::Step {
                 center: pt(c),
-                radius: qs_overlay::STEP_R as f32,
+                radius: STEP_R,
                 rgb: *rgb,
                 text_rgb: 0xFFFFFF,
             },

@@ -1514,8 +1514,9 @@ mod tests {
             d.push(ObjectKind::Step { center: PointF::new(x, 20.0), radius: 14.0, rgb: PALETTE[0], text_rgb: 0xFFFFFF });
         }
         let o = render(&d, &base);
-        assert_eq!(px(&o, 8, 20), [255, 69, 58]);
-        assert!(ink(&o, RectF::new(14.0, 12.0, 12.0, 16.0), [255, 69, 58]) > 8, "digit ink inside badge");
+        let badge = [(PALETTE[0] >> 16) as u8, (PALETTE[0] >> 8) as u8, PALETTE[0] as u8];
+        assert_eq!(px(&o, 8, 20), badge);
+        assert!(ink(&o, RectF::new(14.0, 12.0, 12.0, 16.0), badge) > 8, "digit ink inside badge");
         // renumber: dropping the first shifts the second to 5 — different ink
         let before = o.clone();
         let first = d.objects[0].id;

@@ -4,8 +4,12 @@
 //! surface via SDF primitives at physical resolution (crisp on HiDPI).
 
 use crate::annotate::PALETTE;
-use crate::sdf::{ellipse_sdf, fill_cov, rrect_sdf, seg_sdf, stroke_cov, Canvas};
+use crate::sdf::{fill_cov, rrect_sdf, seg_sdf, stroke_cov, Canvas};
 use qs_core::{Point, Rect};
+
+/// The shared tool model — `Tool::Select/Pen/Arrow/Rect/Ellipse/
+/// Highlighter/Text/Blur/Step` are the ones the overlay arms.
+pub use qs_doc::Tool;
 
 /// Terminal actions — leave the overlay with a result.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -22,22 +26,6 @@ pub enum Action {
     Record,
     /// Open the capture in the full editor, annotations kept editable
     Edit,
-}
-
-/// Drawing tools — stay in the overlay and annotate the canvas.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Tool {
-    /// Pick, move and delete existing annotations
-    Select,
-    Pen,
-    Arrow,
-    Rect,
-    Ellipse,
-    Marker,
-    Text,
-    Pixelate,
-    /// Numbered badge ①②③ for reproduction steps
-    Step,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -58,22 +46,22 @@ pub enum Item {
     More,
 }
 
-impl Tool {
-    /// Letter that arms the tool — the same letters as Quickshort Editor.
-    pub fn from_key(ch: char) -> Option<Self> {
-        Some(match ch {
-            'v' => Tool::Select,
-            'p' => Tool::Pen,
-            'a' => Tool::Arrow,
-            'r' => Tool::Rect,
-            'o' => Tool::Ellipse,
-            'h' => Tool::Marker,
-            't' => Tool::Text,
-            'b' => Tool::Pixelate,
-            'n' => Tool::Step,
-            _ => return None,
-        })
-    }
+/// Letter that arms the tool — the editor's letters (`Tool::key`) except
+/// where they collide with this toolbar's own action keys: S/C/E are
+/// Save/Copy/Edit here, so Step takes 'n' instead of 's'.
+pub fn tool_from_key(ch: char) -> Option<Tool> {
+    Some(match ch {
+        'v' => Tool::Select,
+        'p' => Tool::Pen,
+        'a' => Tool::Arrow,
+        'r' => Tool::Rect,
+        'o' => Tool::Ellipse,
+        'h' => Tool::Highlighter,
+        't' => Tool::Text,
+        'b' => Tool::Blur,
+        'n' => Tool::Step,
+        _ => return None,
+    })
 }
 
 /// Everyday row: core tools | history | More, Edit, Done. Done (Copy) is
@@ -84,7 +72,7 @@ const MAIN: &[Item] = &[
     Item::Tool(Tool::Arrow),
     Item::Tool(Tool::Step),
     Item::Tool(Tool::Text),
-    Item::Tool(Tool::Pixelate),
+    Item::Tool(Tool::Blur),
     Item::Tool(Tool::Select),
     Item::Undo,
     Item::Redo,
@@ -100,7 +88,7 @@ const HISTORY_END: usize = 8;
 const MORE: &[Item] = &[
     Item::Tool(Tool::Pen),
     Item::Tool(Tool::Ellipse),
-    Item::Tool(Tool::Marker),
+    Item::Tool(Tool::Highlighter),
     Item::Act(Action::Scroll),
     Item::Act(Action::Record),
     Item::Act(Action::Ocr),
@@ -558,6 +546,44 @@ fn sample_mask_box(m: &[f32], n: usize, u: f64, v: f64, half: f64) -> f64 {
     (sum / area).clamp(0.0, 1.0)
 }
 
+/// Coverage of `qs_icons` stroke-path geometry at logical point (lx, ly).
+/// The 24×24 icon grid maps to the ±8px button box — the same glyph the
+/// editor's egui painter draws.
+fn icon_cov(paths: &[qs_icons::StrokePath], lx: f64, ly: f64, scale: f64) -> f64 {
+    let k = 16.0 / qs_icons::VIEWBOX as f64;
+    let mut cov = 0.0f64;
+    for sp in paths {
+        let n = sp.pts.len();
+        if n < 2 {
+            continue;
+        }
+        let map = |i: usize| {
+            let p = sp.pts[i];
+            ((p.0 as f64 - 12.0) * k, (p.1 as f64 - 12.0) * k)
+        };
+        let mut d = f64::INFINITY;
+        let segs = if sp.closed || sp.fill { n } else { n - 1 };
+        for i in 0..segs {
+            let a = map(i);
+            let b = map((i + 1) % n);
+            d = d.min(seg_sdf(lx, ly, a.0, a.1, b.0, b.1));
+        }
+        let a = if sp.fill {
+            let (ix, iy) = ((lx / k + 12.0) as f32, (ly / k + 12.0) as f32);
+            let sd = if qs_icons::inside(sp.pts, ix, iy) {
+                -d
+            } else {
+                d
+            };
+            fill_cov(sd, scale)
+        } else {
+            stroke_cov(d, STROKE, scale)
+        };
+        cov = cov.max(a);
+    }
+    cov
+}
+
 /// Icon stroke/fill for one toolbar item at logical point (lx, ly).
 #[allow(clippy::too_many_arguments)]
 fn draw_icon(
@@ -567,78 +593,31 @@ fn draw_icon(
     lx: f64,
     ly: f64,
     scale: f64,
-    bg: u32,
+    _bg: u32,
     fg_col: u32,
     fg_a: f64,
     item: Item,
 ) {
+    // Shared Lucide geometry where it exists — identical to the editor's
+    // glyphs. Step's badge, the option swatches and the capture actions
+    // keep bespoke shapes below.
+    let paths: &[qs_icons::StrokePath] = match item {
+        Item::Tool(t) => t.icon(),
+        Item::Undo => qs_icons::UNDO_2,
+        Item::Redo => qs_icons::REDO_2,
+        Item::Act(Action::Copy) => qs_icons::COPY,
+        Item::Act(Action::Save) => qs_icons::SAVE,
+        _ => &[],
+    };
+    if !paths.is_empty() {
+        let a = icon_cov(paths, lx, ly, scale) * fg_a;
+        if a > 0.0 {
+            cv.blend(x, y, fg_col, a);
+        }
+        return;
+    }
     let stroke = |d: f64, w: f64| stroke_cov(d, w, scale);
     match item {
-        Item::Tool(Tool::Select) => {
-            // pointer arrow: outline of the classic up-left cursor
-            let pts = [
-                (-4.2, -5.6),
-                (-4.2, 4.0),
-                (-1.4, 1.4),
-                (0.8, 5.0),
-                (2.9, 4.2),
-                (0.7, -0.2),
-                (4.6, -0.2),
-                (-4.2, -5.6),
-            ];
-            let mut d = f64::INFINITY;
-            for s in pts.windows(2) {
-                d = d.min(seg_sdf(lx, ly, s[0].0, s[0].1, s[1].0, s[1].1));
-            }
-            let a = stroke(d, 1.6) * fg_a;
-            if a > 0.0 {
-                cv.blend(x, y, fg_col, a);
-            }
-        }
-        Item::Tool(Tool::Pen) => {
-            // pencil: body + pointed nib
-            let d =
-                seg_sdf(lx, ly, -4.6, 4.6, 1.4, -1.4).min(seg_sdf(lx, ly, 1.4, -1.4, 4.6, -4.4));
-            let a = stroke(d, 2.4) * fg_a;
-            if a > 0.0 {
-                cv.blend(x, y, fg_col, a);
-            }
-        }
-        Item::Tool(Tool::Arrow) => {
-            // ↗ shaft + two wings
-            let d = seg_sdf(lx, ly, -5.2, 5.2, 3.6, -3.6)
-                .min(seg_sdf(lx, ly, 3.6, -3.6, -0.6, -3.6))
-                .min(seg_sdf(lx, ly, 3.6, -3.6, 3.6, 0.6));
-            let a = stroke(d, STROKE) * fg_a;
-            if a > 0.0 {
-                cv.blend(x, y, fg_col, a);
-            }
-        }
-        Item::Tool(Tool::Rect) => {
-            let a = stroke(rrect_sdf(lx, ly, 0.0, 0.0, 4.8, 3.8, 0.9), STROKE) * fg_a;
-            if a > 0.0 {
-                cv.blend(x, y, fg_col, a);
-            }
-        }
-        Item::Tool(Tool::Ellipse) => {
-            let a = stroke(ellipse_sdf(lx, ly, 0.0, 0.0, 5.0, 3.8), STROKE) * fg_a;
-            if a > 0.0 {
-                cv.blend(x, y, fg_col, a);
-            }
-        }
-        Item::Tool(Tool::Marker) => {
-            // highlighter: wide body + thin nib
-            let d = seg_sdf(lx, ly, -4.8, 4.4, 1.6, -2.0);
-            let a = stroke(d, 3.4) * fg_a;
-            if a > 0.0 {
-                cv.blend(x, y, fg_col, a);
-            }
-            let d2 = seg_sdf(lx, ly, 1.6, -2.0, 4.8, -5.2);
-            let a = stroke(d2, STROKE) * fg_a;
-            if a > 0.0 {
-                cv.blend(x, y, fg_col, a);
-            }
-        }
         Item::Tool(Tool::Step) => {
             // circle with a "1" inside
             let d = lx.hypot(ly) - 7.0;
@@ -654,13 +633,13 @@ fn draw_icon(
                 cv.blend(x, y, fg_col, a);
             }
         }
-        Item::Tool(Tool::Text) | Item::Bold | Item::FontSize(_) => {
+        Item::Bold | Item::FontSize(_) => {
             // real font glyphs — area-averaged from the 56×56 coverage mask
             // so thin strokes never drop out on 1x (1080p) displays.
             let (lbl, b) = match item {
                 Item::Bold => ("B", true),
-                Item::FontSize(i) => (crate::annotate::TEXT_SIZES[i as usize].1, false),
-                _ => ("T", false),
+                Item::FontSize(i) => (crate::annotate::TEXT_LABELS[i as usize], false),
+                _ => unreachable!(),
             };
             let m = crate::annotate::label_mask(lbl, b);
             let n = crate::annotate::ICON_MASK_N;
@@ -671,39 +650,6 @@ fn draw_icon(
             // Gentle gamma lift keeps 1px strokes crisp against both light and
             // accent-blue pills without blooming.
             let a = if cov > 0.0 { cov.powf(0.85) * fg_a } else { 0.0 };
-            if a > 0.0 {
-                cv.blend(x, y, fg_col, a);
-            }
-        }
-        Item::Tool(Tool::Pixelate) => {
-            // 2x2 checkerboard of filled squares
-            let d = rrect_sdf(lx, ly, -2.9, -2.9, 1.7, 1.7, 0.4)
-                .min(rrect_sdf(lx, ly, 2.9, -2.9, 1.7, 1.7, 0.4))
-                .min(rrect_sdf(lx, ly, -2.9, 2.9, 1.7, 1.7, 0.4))
-                .min(rrect_sdf(lx, ly, 2.9, 2.9, 1.7, 1.7, 0.4));
-            let a = fill_cov(d, scale) * fg_a;
-            if a > 0.0 {
-                cv.blend(x, y, fg_col, a);
-            }
-        }
-        Item::Undo | Item::Redo => {
-            // ↩/↪ hook: chevron tip + shaft + U-turn arc returning left,
-            // mirrored for redo
-            let m = if item == Item::Undo { 1.0 } else { -1.0 };
-            let tip = (-4.6 * m, -0.6);
-            let mut d = seg_sdf(lx, ly, tip.0, tip.1, tip.0 + 3.0 * m, tip.1 - 3.0)
-                .min(seg_sdf(lx, ly, tip.0, tip.1, tip.0 + 3.0 * m, tip.1 + 3.0))
-                .min(seg_sdf(lx, ly, tip.0, tip.1, 1.8 * m, tip.1));
-            let (ccx, ccy, rr) = (1.8, 2.6, 3.2);
-            let mut prev = (m * ccx, ccy - rr);
-            for i in 1..=12 {
-                let a = (-90.0 + 180.0 * i as f64 / 12.0).to_radians();
-                let p = (m * (ccx + rr * a.cos()), ccy + rr * a.sin());
-                d = d.min(seg_sdf(lx, ly, prev.0, prev.1, p.0, p.1));
-                prev = p;
-            }
-            d = d.min(seg_sdf(lx, ly, prev.0, prev.1, prev.0 - 2.0 * m, prev.1));
-            let a = stroke(d, STROKE) * fg_a;
             if a > 0.0 {
                 cv.blend(x, y, fg_col, a);
             }
@@ -740,18 +686,6 @@ fn draw_icon(
             let ring = stroke(d, 1.0) * fg_a * 0.35;
             if ring > 0.0 {
                 cv.blend(x, y, fg_col, ring);
-            }
-        }
-        Item::Act(Action::Copy) => {
-            let d_back = rrect_sdf(lx, ly, -3.5, -3.5, 4.5, 4.5, 1.4);
-            let d_front = rrect_sdf(lx, ly, 3.5, 3.5, 4.5, 4.5, 1.4);
-            let fill = fill_cov(d_front, scale);
-            if fill > 0.0 {
-                cv.blend(x, y, bg, fill); // occlude back square
-            }
-            let a = stroke(d_back, STROKE).max(stroke(d_front, STROKE)) * fg_a;
-            if a > 0.0 {
-                cv.blend(x, y, fg_col, a);
             }
         }
         Item::Act(Action::Ocr) => {
@@ -810,19 +744,8 @@ fn draw_icon(
                 cv.blend(x, y, fg_col, a);
             }
         }
-        Item::Act(Action::Save) => {
-            // tray: U shape open at top; arrow dips into it
-            let d = seg_sdf(lx, ly, -5.75, -0.5, -5.75, 5.5)
-                .min(seg_sdf(lx, ly, -5.75, 5.5, 5.75, 5.5))
-                .min(seg_sdf(lx, ly, 5.75, 5.5, 5.75, -0.5))
-                .min(seg_sdf(lx, ly, 0.0, -6.5, 0.0, 1.5))
-                .min(seg_sdf(lx, ly, -3.2, -1.5, 0.0, 1.5))
-                .min(seg_sdf(lx, ly, 3.2, -1.5, 0.0, 1.5));
-            let a = stroke(d, STROKE) * fg_a;
-            if a > 0.0 {
-                cv.blend(x, y, fg_col, a);
-            }
-        }
+        // every other item already painted via its shared `qs_icons` path
+        _ => {}
     }
 }
 
@@ -880,7 +803,7 @@ mod tests {
     fn main_row_leads_with_bug_report_tools() {
         assert_eq!(MAIN[0], Item::Tool(Tool::Rect));
         assert!(MAIN[..TOOLS_END].contains(&Item::Tool(Tool::Step)));
-        assert!(MORE.contains(&Item::Tool(Tool::Marker)));
+        assert!(MORE.contains(&Item::Tool(Tool::Highlighter)));
     }
 
     #[test]
@@ -896,11 +819,24 @@ mod tests {
 
     #[test]
     fn tool_letters_match_the_editor() {
-        assert_eq!(Tool::from_key('a'), Some(Tool::Arrow));
-        assert_eq!(Tool::from_key('h'), Some(Tool::Marker));
-        assert_eq!(Tool::from_key('b'), Some(Tool::Pixelate));
-        assert_eq!(Tool::from_key('n'), Some(Tool::Step));
-        assert_eq!(Tool::from_key('s'), None);
-        assert_eq!(Tool::from_key('c'), None);
+        assert_eq!(tool_from_key('a'), Some(Tool::Arrow));
+        assert_eq!(tool_from_key('h'), Some(Tool::Highlighter));
+        assert_eq!(tool_from_key('b'), Some(Tool::Blur));
+        assert_eq!(tool_from_key('n'), Some(Tool::Step));
+        assert_eq!(tool_from_key('s'), None);
+        assert_eq!(tool_from_key('c'), None);
+        // shared `Tool::key` agrees except where overlay actions collide
+        for t in [
+            Tool::Select,
+            Tool::Pen,
+            Tool::Arrow,
+            Tool::Rect,
+            Tool::Ellipse,
+            Tool::Highlighter,
+            Tool::Text,
+            Tool::Blur,
+        ] {
+            assert_eq!(tool_from_key(t.key()), Some(t));
+        }
     }
 }

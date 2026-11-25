@@ -427,41 +427,23 @@ pub fn render_top_bar(
 /// Tools grouped exactly like the locked mockup: hairline dividers between
 /// functional groups, every tool visible (no overflow). The four Polygon
 /// shapes land in the third group via `Tool::key()` in Phase 5.
-const TOOL_GROUPS: &[&[(Tool, &str)]] = &[
+const TOOL_GROUPS: &[&[Tool]] = &[
+    &[Tool::Select, Tool::SelectRegion, Tool::SmartMove],
+    &[Tool::Pen, Tool::Highlighter, Tool::Eraser],
     &[
-        (Tool::Select, "Select (V)"),
-        (Tool::SelectRegion, "Select Region (M)"),
-        (Tool::SmartMove, "Smart Move (Y)"),
+        Tool::Line,
+        Tool::Arrow,
+        Tool::Rect,
+        Tool::Ellipse,
+        Tool::Triangle,
+        Tool::Diamond,
+        Tool::Star,
+        Tool::Hexagon,
+        Tool::Fill,
     ],
-    &[
-        (Tool::Pen, "Pen (P)"),
-        (Tool::Highlighter, "Highlight (H)"),
-        (Tool::Eraser, "Eraser (E)"),
-    ],
-    &[
-        (Tool::Line, "Line (L)"),
-        (Tool::Arrow, "Arrow (A)"),
-        (Tool::Rect, "Rectangle (R)"),
-        (Tool::Ellipse, "Ellipse (O)"),
-        (Tool::Triangle, "Triangle (N)"),
-        (Tool::Diamond, "Diamond (D)"),
-        (Tool::Star, "Star (J)"),
-        (Tool::Hexagon, "Hexagon (W)"),
-        (Tool::Fill, "Paint Bucket (U)"),
-    ],
-    &[
-        (Tool::Text, "Text (T)"),
-        (Tool::Callout, "Callout Bubble (C)"),
-        (Tool::Step, "Step Counter (S)"),
-        (Tool::Stamp, "Stamp (G)"),
-    ],
-    &[
-        (Tool::Blur, "Blur / Redact (B)"),
-        (Tool::Spotlight, "Spotlight (F)"),
-        (Tool::Magnify, "Magnify Lens (I)"),
-        (Tool::Cutout, "Cutout Strip (X)"),
-    ],
-    &[(Tool::Crop, "Crop / Trim (K)")],
+    &[Tool::Text, Tool::Callout, Tool::Step, Tool::Stamp],
+    &[Tool::Blur, Tool::Spotlight, Tool::Magnify, Tool::Cutout],
+    &[Tool::Crop],
 ];
 
 /// Second chrome row: flat grouped tool palette. Every tool button shows its
@@ -495,7 +477,7 @@ pub fn render_tool_palette(ui: &mut Ui, editor: &mut Editor) -> bool {
         if gi > 0 {
             tx += bar_sep(ui.painter(), tx, cy);
         }
-        for &(t, tip) in *group {
+        for &t in *group {
             let r = Rect::from_center_size(
                 Pos2::new(tx + tool_w * 0.5, cy),
                 Vec2::new(tool_w, 32.0),
@@ -503,7 +485,7 @@ pub fn render_tool_palette(ui: &mut Ui, editor: &mut Editor) -> bool {
             let active = cur_tool == t;
             let resp = ui
                 .interact(r, ui.auto_id_with(("pal_tool", t)), Sense::click())
-                .on_hover_text(tip);
+                .on_hover_text(t.tooltip());
             paint_tool_segment(ui.painter(), r, active, hot_t(&resp));
             let icon_col = if active {
                 accent_hi()

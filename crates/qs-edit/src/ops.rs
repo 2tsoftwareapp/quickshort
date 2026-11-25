@@ -1,5 +1,6 @@
 //! Annotation operations: pointer gestures, text editing, selection, groups,
 //! z-order and object-creating commands.
+use qs_doc::draft::{self, Draft};
 use qs_doc::{
     Fill, GroupId, Object, ObjectId, ObjectKind, PointF, RectF, Stroke, TextStyle, MARKER_ALPHA,
 };
@@ -29,7 +30,7 @@ pub(crate) enum Drag {
     },
     Create {
         id: ObjectId,
-        start: PointF,
+        draw: Draft,
     },
     TextSelect,
     Crop {
@@ -67,11 +68,6 @@ fn prev_boundary(s: &str, i: usize) -> usize {
 fn next_boundary(s: &str, i: usize) -> usize {
     let i = clamp_boundary(s, i);
     s[i..].chars().next().map(|c| i + c.len_utf8()).unwrap_or(i)
-}
-
-fn default_tail(body: RectF) -> PointF {
-    let b = body.normalized();
-    PointF::new(b.center().x, b.bottom() + (b.h * 0.6).max(24.0))
 }
 
 fn constrain(tool: Tool, a: PointF, b: PointF, shift: bool) -> PointF {
@@ -476,7 +472,11 @@ impl Editor {
         };
         self.begin_change();
         let id = self.doc.push(kind);
-        self.drag = Drag::Create { id, start: p };
+        let g = self.tool.gesture().unwrap_or(draft::Gesture::Rect);
+        self.drag = Drag::Create {
+            id,
+            draw: Draft::begin(g, p),
+        };
     }
 
     fn text_down(&mut self, p: PointF) {
@@ -526,7 +526,7 @@ impl Editor {
     }
 
     pub fn pointer_move(&mut self, p: PointF, shift: bool) {
-        match &self.drag {
+        match &mut self.drag {
             Drag::None => {}
             Drag::TextSelect => {
                 if let (Some(te), Some((origin, lay))) = (self.edit, self.edit_block()) {
@@ -567,32 +567,12 @@ impl Editor {
                 let (id, k) = (*id, hit::resized(orig, *h, p));
                 self.set_kind(id, k);
             }
-            Drag::Create { id, start } => {
-                let (id, start) = (*id, *start);
-                let q = constrain(self.tool, start, p, shift);
+            Drag::Create { id, draw } => {
+                let q = constrain(self.tool, draw.anchor(), p, shift);
+                draw.update(q, 0.5);
+                let (id, shape) = (*id, draw.shape());
                 if let Some(o) = self.doc.get_mut(id) {
-                    match &mut o.kind {
-                        ObjectKind::Pen { pts, .. }
-                        | ObjectKind::Highlighter { pts, .. }
-                        | ObjectKind::Eraser { pts, .. } => {
-                            if pts.last().is_none_or(|l| l.dist(p) >= 0.5) {
-                                pts.push(p);
-                            }
-                        }
-                        ObjectKind::Arrow { b, .. } | ObjectKind::Line { b, .. } => *b = q,
-                        ObjectKind::Rect { r, .. }
-                        | ObjectKind::Ellipse { r, .. }
-                        | ObjectKind::Blur { r, .. }
-                        | ObjectKind::Polygon { r, .. } => *r = RectF::from_points(start, q),
-                        ObjectKind::Magnify { rect, .. }
-                        | ObjectKind::Spotlight { rect, .. }
-                        | ObjectKind::Stamp { rect, .. } => *rect = RectF::from_points(start, q),
-                        ObjectKind::Callout { body, tail, .. } => {
-                            *body = RectF::from_points(start, q);
-                            *tail = default_tail(*body);
-                        }
-                        _ => {}
-                    }
+                    draft::apply(&mut o.kind, shape);
                 }
             }
         }
@@ -600,7 +580,7 @@ impl Editor {
 
     pub fn pointer_up(&mut self, _p: PointF) {
         match std::mem::replace(&mut self.drag, Drag::None) {
-            Drag::Create { id, start } => self.finish_create(id, start),
+            Drag::Create { id, draw } => self.finish_create(id, draw.anchor()),
             Drag::Crop { .. } => {
                 if let Some(r) = self.crop_rect.take() {
                     self.set_view(r);
@@ -688,7 +668,7 @@ impl Editor {
                 let b = body.normalized();
                 if b.w < 6.0 && b.h < 6.0 {
                     *body = RectF::new(start.x, start.y, DEFAULT_CALLOUT.0, DEFAULT_CALLOUT.1);
-                    *tail = default_tail(*body);
+                    *tail = draft::default_callout_tail(*body);
                 }
                 true
             }

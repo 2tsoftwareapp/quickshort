@@ -109,36 +109,6 @@ fn p(c: Pos2, dx: f32, dy: f32) -> Pos2 {
     Pos2::new(c.x + dx, c.y + dy)
 }
 
-fn tool_paths(tool: Tool) -> &'static [StrokePath] {
-    match tool {
-        Tool::Select => qs_icons::MOUSE_POINTER_2,
-        Tool::Pen => qs_icons::PENCIL,
-        Tool::Fill => qs_icons::PAINT_BUCKET,
-        Tool::SmartMove => qs_icons::MOVE,
-        Tool::Highlighter => qs_icons::HIGHLIGHTER,
-        Tool::Arrow => qs_icons::ARROW_UP_RIGHT,
-        Tool::Line => qs_icons::LINE,
-        Tool::Rect => qs_icons::SQUARE,
-        Tool::Ellipse => qs_icons::CIRCLE,
-        Tool::Eraser => qs_icons::ERASER,
-        Tool::Stamp => qs_icons::STAMP,
-        Tool::Spotlight => qs_icons::SUN,
-        Tool::Magnify => qs_icons::ZOOM_IN,
-        Tool::Text => qs_icons::TYPE,
-        Tool::Callout => qs_icons::MESSAGE_SQUARE,
-        // Step is a numbered badge — the digit is painted, not an icon path.
-        Tool::Step => &[],
-        Tool::Blur => qs_icons::PLUS,
-        Tool::Crop => qs_icons::CROP,
-        Tool::Cutout => qs_icons::SCISSORS,
-        Tool::SelectRegion => qs_icons::SQUARE_DASHED,
-        Tool::Triangle => qs_icons::TRIANGLE,
-        Tool::Diamond => qs_icons::DIAMOND,
-        Tool::Star => qs_icons::STAR,
-        Tool::Hexagon => qs_icons::HEXAGON,
-    }
-}
-
 fn action_paths(icon: ActionIcon) -> &'static [StrokePath] {
     match icon {
         ActionIcon::Undo => qs_icons::UNDO_2,
@@ -205,7 +175,7 @@ pub fn draw_tool_icon_sz(painter: &Painter, c: Pos2, tool: Tool, color: Color32,
     let k = box_px / qs_icons::VIEWBOX;
     let st = Stroke::new(STROKE_W, color);
     let fill = |p: &(f32, f32)| Pos2::new(c.x + (p.0 - 12.0) * k, c.y + (p.1 - 12.0) * k);
-    for sp in tool_paths(tool) {
+    for sp in tool.icon() {
         let pts: Vec<Pos2> = sp.pts.iter().map(fill).collect();
         if sp.fill {
             painter.add(PathShape::convex_polygon(pts, color, Stroke::NONE));
@@ -251,7 +221,7 @@ pub fn draw_tool_icon(painter: &Painter, c: Pos2, tool: Tool, color: Color32) {
         painter.line_segment([p(c, -1.5, 2.8), p(c, 1.9, 2.8)], thin);
         return;
     }
-    draw_paths(painter, c, tool_paths(tool), color);
+    draw_paths(painter, c, tool.icon(), color);
 }
 
 pub fn draw_action_icon(painter: &Painter, c: Pos2, icon: ActionIcon, color: Color32) {

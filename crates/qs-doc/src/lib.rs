@@ -8,10 +8,12 @@
 //! top-left of the base image. `Document::scale` maps logical to the base
 //! image's physical pixels (2.0 on a Retina / 200% capture).
 
+pub mod draft;
 mod effects;
 mod geom;
 mod orient;
 pub mod qsdoc;
+mod tool;
 
 pub use effects::{
     Anchor, BackgroundEffect, BorderEffect, ColorAdjustEffect, ColorFilter, ColorizeEffect,
@@ -20,6 +22,7 @@ pub use effects::{
 };
 pub use geom::{PointF, RectF, SizeF};
 pub use orient::Orientation;
+pub use tool::Tool;
 
 use serde::{Deserialize, Serialize};
 
@@ -27,17 +30,23 @@ use serde::{Deserialize, Serialize};
 /// [`Document::migrate`] when the schema changes incompatibly.
 pub const DOC_VERSION: u32 = 4;
 
-/// Overlay palette (kept identical to `qs-overlay`).
+/// Annotation palette — must equal `qs_theme::ANNOTATION` (the qs-render
+/// parity test asserts it).
 pub const PALETTE: [u32; 8] = [
-    0xFF453A, 0xFF9F0A, 0xFFD60A, 0x30D158, 0x0A84FF, 0xBF5AF2, 0xFFFFFF, 0x1C1C1E,
+    0xFF3B30, 0xFF9500, 0xFFCC00, 0x34C759, 0x007AFF, 0xAF52DE, 0xFFFFFF, 0x1C1E24,
 ];
 /// Stroke widths S/M/L and highlighter widths S/M/L, logical px.
 pub const SIZES: [f32; 3] = [2.0, 3.6, 6.0];
 pub const MARKER_SIZES: [f32; 3] = [6.0, 9.5, 14.0];
 pub const MARKER_ALPHA: f32 = 0.42;
+/// Font size presets for the text tool — picked as a number, independent
+/// from the stroke S/M/L levels. `TEXT_LABELS` is the toolbar spelling.
 pub const TEXT_SIZES: [f32; 6] = [12.0, 14.0, 18.0, 24.0, 32.0, 48.0];
+pub const TEXT_LABELS: [&str; 6] = ["12", "14", "18", "24", "32", "48"];
 /// Default pixelate block size, logical px.
 pub const PIX_BLOCK: f32 = 8.0;
+/// Step badge radius, logical px.
+pub const STEP_R: f32 = 12.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
