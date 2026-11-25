@@ -80,6 +80,7 @@ jobs:
       - name: check artifacts and create draft
         env:
           TAG: ${{ steps.candidate.outputs.tag }}
+          QS_ED25519_KEY: ${{ secrets.QS_ED25519_KEY }}
         working-directory: artifacts
         run: |
           for asset in "Quickshort-$TAG-macos.zip" "Quickshort-$TAG-macos.dmg" \
@@ -90,6 +91,18 @@ jobs:
           sha256sum --strict -c "Quickshort-$TAG-macos.dmg.sha256"
           sha256sum --strict -c Quickshort-Windows-Setup.exe.sha256
           sha256sum --strict -c linux.sha256
+          # ed25519 detached signatures — the app verifies these over the
+          # embedded public key (qs-app/src/update.rs). Skipped until the
+          # QS_ED25519_KEY secret (PKCS8 PEM) is provisioned.
+          if [ -n "$QS_ED25519_KEY" ]; then
+            printf '%s\n' "$QS_ED25519_KEY" > "$RUNNER_TEMP/relkey.pem"
+            for asset in "Quickshort-$TAG-macos.zip" "Quickshort-$TAG-macos.dmg" \
+                Quickshort-Windows-Setup.exe Quickshort-Linux.AppImage quickshort_amd64.deb; do
+              openssl pkeyutl -sign -rawin -inkey "$RUNNER_TEMP/relkey.pem" -in "$asset" \
+                | base64 -w0 > "$asset.sig"
+            done
+            rm -f "$RUNNER_TEMP/relkey.pem"
+          fi
           gh release create "$TAG" ./* --repo "$GITHUB_REPOSITORY" \
             --draft --verify-tag --title "Quickshort $TAG" --generate-notes
 

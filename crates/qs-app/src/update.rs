@@ -134,14 +134,65 @@ fn expected_sha(rel: &Release, asset_name: &str) -> Result<Option<String>> {
         .map(str::to_string))
 }
 
-fn verify(rel: &Release, file: &Path, asset_name: &str) -> Result<()> {
+/// Ed25519 public key the release workflow signs every asset with
+/// (`<asset>.sig` sidecars, base64 detached signature over the file).
+/// A compromised release can't forge a matching signature — unlike the
+/// `.sha256` sidecars, which travel the same channel as the payload and
+/// only catch corruption. Empty disables signature checking.
+const SIGNING_PUB_B64: &str = "f/ixPPD/EcyCrWSTGr8iTiaNT56p7+4UWffiYt6eg54=";
+
+/// Base64 detached ed25519 signature for `asset_name`, from its `.sig`
+/// asset. `None` when the release predates asset signing.
+fn expected_sig(rel: &Release, asset_name: &str) -> Result<Option<String>> {
+    let sig_name = format!("{asset_name}.sig");
+    let Some((_, url)) = rel.asset(|n| n == sig_name) else {
+        return Ok(None);
+    };
+    let body: String = ureq::get(url)
+        .call()
+        .and_then(|mut r| r.body_mut().read_to_string())
+        .context("signature asset fetch failed")?;
+    Ok(Some(body.trim().to_string()))
+}
+
+fn verify_sig_with(pub_b64: &str, file: &Path, sig_b64: &str) -> Result<()> {
+    use base64::Engine;
+    let b64 = base64::engine::general_purpose::STANDARD;
+    let pub_raw = b64.decode(pub_b64).context("bad embedded public key")?;
+    let key = ed25519_dalek::VerifyingKey::from_bytes(
+        pub_raw.as_slice().try_into().context("bad embedded public key")?,
+    )
+    .context("bad embedded public key")?;
+    let sig_raw = b64.decode(sig_b64.trim()).context("bad signature encoding")?;
+    let sig_arr: [u8; 64] = sig_raw
+        .as_slice()
+        .try_into()
+        .context("bad signature length")?;
+    let sig = ed25519_dalek::Signature::from_bytes(&sig_arr);
+    let data = std::fs::read(file)?;
+    use ed25519_dalek::Verifier;
+    key.verify(&data, &sig)
+        .context("signature verification failed")
+}
+
+/// Check `file` against the release's proofs: the ed25519 `.sig` asset
+/// when present, else the `.sha256` sidecar. Returns whether any proof
+/// was checked — callers that require one bail on `false`.
+fn verify(rel: &Release, file: &Path, asset_name: &str) -> Result<bool> {
+    if !SIGNING_PUB_B64.is_empty() {
+        if let Some(sig) = expected_sig(rel, asset_name)? {
+            verify_sig_with(SIGNING_PUB_B64, file, &sig)?;
+            return Ok(true);
+        }
+    }
     if let Some(want) = expected_sha(rel, asset_name)? {
         let got = sha256(file)?;
         if !want.is_empty() && want != got {
             bail!("checksum mismatch: got {got}, want {want}");
         }
+        return Ok(true);
     }
-    Ok(())
+    Ok(false)
 }
 
 /// Download the release, swap it over the running `.app`, relaunch.
@@ -225,9 +276,8 @@ pub fn install(rel: &Release) -> Result<PathBuf> {
         .context("release has no linux .deb asset")?;
     let deb = tmp.path().join(name);
     download(url, &deb)?;
-    let want = expected_sha(rel, name)?.context("missing checksum for the Debian package")?;
-    if sha256(&deb)? != want {
-        bail!("checksum mismatch for {name}");
+    if !verify(rel, &deb, name)? {
+        bail!("release has no signature or checksum for {name}");
     }
     let status = std::process::Command::new("/usr/bin/pkexec")
         .args(["/usr/bin/apt-get", "--yes", "--no-remove", "install"])
@@ -368,6 +418,22 @@ mod tests {
         assert!(!is_newer("0.1.0", "0.1.0"));
         assert!(!is_newer("0.0.9", "0.1.0"));
         assert!(is_newer("1.0.0-beta", "0.9.9"));
+    }
+
+    #[test]
+    fn signature_roundtrip() {
+        use base64::Engine;
+        use ed25519_dalek::Signer;
+        let b64 = base64::engine::general_purpose::STANDARD;
+        let sk = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
+        let pub_b64 = b64.encode(sk.verifying_key().to_bytes());
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("asset.bin");
+        std::fs::write(&f, b"release payload").unwrap();
+        let sig_b64 = b64.encode(sk.sign(b"release payload").to_bytes());
+        verify_sig_with(&pub_b64, &f, &sig_b64).unwrap();
+        std::fs::write(&f, b"tampered payload").unwrap();
+        assert!(verify_sig_with(&pub_b64, &f, &sig_b64).is_err());
     }
 
     /// Live check — `cargo test -p qs-app -- --ignored`
