@@ -74,11 +74,18 @@ pub fn spawn_listener(proxy: EventLoopProxy<HostEvent>) -> std::io::Result<()> {
     let path = socket_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
-        let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
+        // A chmod failure here means the dir isn't ours (e.g. /tmp/quickshort
+        // squatted by another user) — running on would silently drop the
+        // access boundary the doc comment above promises, so bail loudly.
+        std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| {
+                std::io::Error::new(e.kind(), format!("chmod {}: {e}", parent.display()))
+            })?;
     }
     let _ = std::fs::remove_file(&path);
     let listener = UnixListener::bind(&path)?;
-    let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+        .map_err(|e| std::io::Error::new(e.kind(), format!("chmod {}: {e}", path.display())))?;
     std::thread::Builder::new()
         .name("qs-ipc".into())
         .spawn(move || {
