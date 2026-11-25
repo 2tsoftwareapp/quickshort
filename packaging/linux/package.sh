@@ -44,8 +44,28 @@ curl -sL -o "$TOOLS/linuxdeploy.AppImage" \
   "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage"
 # linuxdeploy discovers plugins as executables named linuxdeploy-plugin-<name>
 # on PATH — the file must keep this exact name, not a .sh suffix.
+GTK_PLUGIN_COMMIT="7a3fbc31a9e5075073ff8790f26effbac5f84453"
 curl -sL -o "$TOOLS/linuxdeploy-plugin-gtk" \
-  "https://raw.githubusercontent.com/linuxdeploy/linuxdeploy-plugin-gtk/master/linuxdeploy-plugin-gtk.sh"
+  "https://raw.githubusercontent.com/linuxdeploy/linuxdeploy-plugin-gtk/$GTK_PLUGIN_COMMIT/linuxdeploy-plugin-gtk.sh"
+# gdk-pixbuf 2.44+ compiles core loaders into the library, so modern Ubuntu
+# images may not create the external loader directory this plugin assumes.
+# Mirror the upstream fix direction: skip loader bundling when it is absent.
+awk '
+$0 == "copy_lib_tree \"$gdk_pixbuf_binarydir\" \"$APPDIR/\"" {
+  print "if [ -d \"$gdk_pixbuf_binarydir\" ]; then"
+  print
+  next
+}
+$0 == "sed -i \"s|$gdk_pixbuf_moduledir/||g\" \"$APPDIR/${gdk_pixbuf_cache_file/$LD_GTK_LIBRARY_PATH//usr/lib}\"" {
+  print
+  print "else"
+  print "  echo \"WARNING: $gdk_pixbuf_binarydir not found, not bundling gdk-pixbuf loaders\""
+  print "fi"
+  next
+}
+{ print }
+' "$TOOLS/linuxdeploy-plugin-gtk" > "$TOOLS/linuxdeploy-plugin-gtk.patched"
+mv "$TOOLS/linuxdeploy-plugin-gtk.patched" "$TOOLS/linuxdeploy-plugin-gtk"
 chmod +x "$TOOLS/linuxdeploy.AppImage" "$TOOLS/linuxdeploy-plugin-gtk"
 export PATH="$TOOLS:$PATH"
 
@@ -66,6 +86,9 @@ LIBXKB="$(ldconfig -p | awk '/libxkbcommon-x11\.so\.0/ {print $NF; exit}')"
 
 # AppImages can't self-exec on FUSE-less hosts without this env; CI has none
 export APPIMAGE_EXTRACT_AND_RUN=1
+# linuxdeploy continuous still carries an old binutils strip which rejects
+# .relr.dyn sections used by libraries on current Ubuntu images.
+export NO_STRIP=1
 export LDAI_OUTPUT="$DIST/Quickshort-Linux.AppImage"
 export OUTPUT="$DIST/Quickshort-Linux.AppImage"
 rm -f "$OUTPUT" "$OUTPUT.zsync"

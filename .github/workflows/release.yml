@@ -218,6 +218,7 @@ jobs:
           output-artifact-directory: dist
 
       - name: checksum
+        shell: bash
         run: |
           cd dist && sha256sum Quickshort-Windows-Setup.exe \
             > Quickshort-Windows-Setup.exe.sha256

@@ -40,6 +40,7 @@ Do not create, download, revoke, or replace these Apple assets without explicit 
      ```
 
    - Store the copied value in GitHub secret `QS_DEV_ID_APPLICATION_P12`; store the export password in `QS_DEV_ID_APPLICATION_P12_PASSWORD`.
+   - If generating the `.p12` non-interactively with OpenSSL 3/4 instead of Keychain Access, verify it with `security import` before uploading. New OpenSSL defaults may produce a `.p12` macOS rejects with `MAC verification failed`; use SHA1/3DES-compatible PKCS#12 encryption for Apple keychain compatibility, for example `-certpbe PBE-SHA1-3DES -keypbe PBE-SHA1-3DES -macalg SHA1`.
 
 2. **App Store Connect API team key**
    - In App Store Connect → Users and Access → Integrations → App Store Connect API, create a team key with sufficient access for notarization (Developer access is normally enough).
