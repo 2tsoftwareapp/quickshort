@@ -53,7 +53,7 @@ No Electron, no runtime, no model downloads.
 |---|---|
 | **Editor** | `.qsdoc` documents with layers, Inspector (style, Canvas, Align), in-canvas Library, pinned Find bar with word-level OCR highlights, Export (PNG/JPEG/WebP, Copy, Print), undoable Flatten/Trash |
 | **Evidence sessions** | For manual testers: each Done saves `TC-001_01.png`, `TC-001_02.png`…; *Next Test Case* stitches the case into one tall `TC-001_all.png` |
-| **Link sharing** | One click uploads WebP (~half a PNG) to a Cloudflare Worker and copies an unguessable URL that expires in 3 days — no account |
+| **Link sharing** | One click uploads WebP (~half a PNG) to a Cloudflare Worker and copies an unguessable URL — kept 30 days after its last view, no account |
 | **Google Drive** | Opt-in alternative: images land in a `Quickshort` folder in *your* Drive (`drive.file` scope only), share again to revoke |
 | **OCR** | Vision on macOS, `Windows.Media.Ocr` on Windows, Tesseract on Linux with script auto-detection — nothing ships in the binary |
 | **Pin & beautify** | Float a capture as an always-on-top reference, or mount it on a soft gradient backdrop with rounded corners and a drop shadow |
@@ -100,6 +100,22 @@ recording; without it everything else works, Record fails with a toast.
 
 ### Linux
 
+**Flatpak:**
+
+```bash
+flatpak install flathub com.truongsoftware.quickshort
+```
+
+Everything sandboxed except what the app needs — tesseract, ffmpeg and
+wl-copy are bundled. Global hotkey on Wayland via the KDE GlobalShortcuts
+portal.
+
+**Arch / Manjaro (AUR):**
+
+```bash
+yay -S quickshort-bin
+```
+
 **AppImage** — `Quickshort-Linux.AppImage` from
 [Releases](https://github.com/2tsoftwareapp/quickshort/releases), `chmod +x`,
 run. Tray dependencies bundled.
@@ -129,6 +145,34 @@ KDE, sway, Hyprland and portal-capable desktops — or bind
 Program Files install, Start Menu shortcut, uninstaller. Unsigned, so
 SmartScreen may warn (**More info → Run anyway**). Runs as a tray app, no
 console window. `winget install ffmpeg` for recording.
+
+### Install with an agent
+
+Paste this into your AI agent (Claude Code, Cursor, Devin…) and let it do
+the install:
+
+```text
+Install Quickshort (github.com/2tsoftwareapp/quickshort) on this machine.
+Pick the right channel for my OS and install it:
+
+- macOS: download the latest Quickshort-v*-macos.dmg from GitHub Releases,
+  mount it, copy Quickshort.app to /Applications, run
+  `xattr -dr com.apple.quarantine /Applications/Quickshort.app`. Or
+  `brew tap truongnat/tap && brew install --cask quickshort`.
+  The build is unsigned — remind me to grant Screen Recording and
+  Accessibility permissions in System Settings.
+- Debian/Ubuntu: download quickshort_amd64.deb and `sudo apt install ./…`.
+- Other Linux: `flatpak install flathub com.truongsoftware.quickshort`,
+  or the Quickshort-Linux.AppImage (chmod +x). Make sure tesseract-ocr
+  (+ my language packs), wl-clipboard, ffmpeg and libnotify are installed.
+- Arch: `yay -S quickshort-bin`.
+- Windows: download Quickshort-Windows-Setup.exe and run it. Unsigned —
+  SmartScreen → More info → Run anyway.
+
+When done, verify the install (`quickshort --version` or launch the tray
+app) and tell me the capture hotkey (Cmd/Ctrl+Shift+S, or PrintScreen on
+Windows).
+```
 
 ## Usage
 
@@ -269,8 +313,9 @@ provisioned.
 ## Privacy
 
 Everything runs locally — captures, OCR and settings never leave your
-machine. The only outbound traffic: a share upload you trigger (3 days on
-a Cloudflare Worker, or your own Drive), an opt-in bug report (a public
+machine. The only outbound traffic: a share upload you trigger (kept 30
+days after its last view on a Cloudflare Worker, or your own Drive), an
+opt-in bug report (a public
 GitHub issue), and a daily release check. No analytics, no accounts.
 Full policy: [docs/privacy.html](docs/privacy.html) ·
 [site](https://2tsoftwareapp.github.io/quickshort/privacy.html).
