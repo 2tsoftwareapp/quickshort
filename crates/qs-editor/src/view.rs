@@ -21,7 +21,8 @@ mod layers_panel;
 mod menus;
 mod status_bar;
 
-impl EditorApp {    pub(crate) fn render_ui(&mut self, ui: &mut egui::Ui) {
+impl EditorApp {
+    pub(crate) fn render_ui(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         self.refresh_preferences(&ctx);
 

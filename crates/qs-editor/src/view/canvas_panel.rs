@@ -331,10 +331,10 @@ impl EditorApp {
                     }
                 }
 
-                self.update_canvas_cursor(&ctx, screen_rect, panning, space_held);
+                self.update_canvas_cursor(ctx, screen_rect, panning, space_held);
 
                 if self.render_state.needs_render {
-                    self.update_texture(&ctx);
+                    self.update_texture(ctx);
                 }
 
                 // 1. Calm matte macOS workspace backdrop
@@ -349,7 +349,7 @@ impl EditorApp {
                 canvas::paint_document_shadow(&painter, img_screen_rect);
 
                 // 3. Checkerboard strictly inside document bounds (visible only through alpha)
-                let checker_id = self.checker_texture_id(&ctx);
+                let checker_id = self.checker_texture_id(ctx);
                 canvas::paint_checkerboard(&painter, img_screen_rect, checker_id);
 
                 // 4. Rendered flattened document
@@ -398,7 +398,7 @@ impl EditorApp {
                         .order(egui::Order::Foreground)
                         .pivot(egui::Align2::CENTER_TOP)
                         .fixed_pos(Pos2::new(screen_rect.center().x, screen_rect.top() + 10.0))
-                        .show(&ctx, |ui| {
+                        .show(ctx, |ui| {
                             theme::popover_frame().show(ui, |ui| {
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 4.0;
@@ -510,7 +510,7 @@ impl EditorApp {
                         .order(egui::Order::Foreground)
                         .pivot(egui::Align2::CENTER_TOP)
                         .fixed_pos(bar_pos)
-                        .show(&ctx, |ui| {
+                        .show(ctx, |ui| {
                             theme::popover_frame().show(ui, |ui| {
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 4.0;
