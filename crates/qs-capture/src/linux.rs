@@ -45,6 +45,12 @@ mod tests {
             auto_session_kind(None, true, "KDE"),
             SessionKind::Portal
         ));
+        // Hyprland sessions often carry GNOME in the desktop list (portal/
+        // theming) — Hyprland must win, it's the real compositor
+        assert!(matches!(
+            auto_session_kind(Some("wayland"), true, "GNOME:Hyprland"),
+            SessionKind::Hyprland
+        ));
     }
 
     #[test]
@@ -101,10 +107,13 @@ pub fn session_kind() -> Result<SessionKind> {
 fn auto_session_kind(session: Option<&str>, wayland_display: bool, desktop: &str) -> SessionKind {
     if session == Some("wayland") || (session.is_none() && wayland_display) {
         let desktops = desktop.to_ascii_uppercase();
-        if desktops.split(':').any(|d| d.trim() == "GNOME") {
-            SessionKind::Mutter
-        } else if desktops.split(':').any(|d| d.trim() == "HYPRLAND") {
+        // HYPRLAND before GNOME: a real GNOME session never lists Hyprland,
+        // but Hyprland users commonly run "GNOME:Hyprland" (for portal /
+        // GTK theming) and the first match must not steal the routing.
+        if desktops.split(':').any(|d| d.trim() == "HYPRLAND") {
             SessionKind::Hyprland
+        } else if desktops.split(':').any(|d| d.trim() == "GNOME") {
+            SessionKind::Mutter
         } else {
             SessionKind::Portal
         }
@@ -123,7 +132,15 @@ fn chain(kind: SessionKind) -> Vec<Box<dyn ScreenCapture + Send>> {
         // then the per-output grim+hyprctl path that also knows the
         // workspace layout even when zwlr is unavailable.
         SessionKind::Hyprland => vec![Box::new(wlr::WlrCapture), Box::new(hyprland::HyprlandCapture)],
-        SessionKind::Mutter => vec![Box::new(wayland::MutterCapture), Box::new(portal::PortalCapture)],
+        // wlr sits before portal as a safety net: GNOME never exports
+        // zwlr_screencopy so probe() drops it there, but a misdetected
+        // wlroots session still gets instant capture instead of the
+        // portal consent flow
+        SessionKind::Mutter => vec![
+            Box::new(wayland::MutterCapture),
+            Box::new(wlr::WlrCapture),
+            Box::new(portal::PortalCapture),
+        ],
         // generic Wayland (KDE, wlroots, others): instant wlr capture when
         // the compositor exports it, else the portal consent flow
         SessionKind::Portal => vec![Box::new(wlr::WlrCapture), Box::new(portal::PortalCapture)],
