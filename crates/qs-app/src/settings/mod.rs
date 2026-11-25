@@ -664,8 +664,6 @@ fn slot(y: f64, w: f64) -> LRect {
     (CX + CW - 14.0 - w, y + (ROW - 30.0) / 2.0, w, 30.0)
 }
 
-/// dropdown option list + current index for `d`
-
 pub fn standalone() -> Result<()> {
     struct Run {
         cfg: Config,

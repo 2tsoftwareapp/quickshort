@@ -439,8 +439,6 @@ fn bar_ibtn(
 }
 
 /// Same flat chrome as `bar_ibtn` but paints a text glyph (`−`, `+`).
-
-/// Same flat chrome as `bar_ibtn` but paints a text glyph (`−`, `+`).
 fn bar_text_btn(ui: &mut Ui, id_salt: &str, rect: Rect, glyph: &str, tooltip: &str) -> bool {
     let resp = ui
         .interact(rect, ui.auto_id_with(id_salt), Sense::click())
@@ -472,8 +470,6 @@ fn bar_text_btn(ui: &mut Ui, id_salt: &str, rect: Rect, glyph: &str, tooltip: &s
     );
     resp.clicked()
 }
-
-/// `.sep` — 1×18 hairline between chrome groups; returns the slot width.
 
 /// `.tbtn` — bordered text+icon button (`--control`); `primary` is the one
 /// accent CTA per row (Copy).
