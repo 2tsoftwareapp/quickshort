@@ -280,8 +280,8 @@ pub(super) fn grab_frames(nodes: &[u32], expects: &[(u32, u32)]) -> Result<Vec<i
 /// the stream in `unconnected` forever — enumerate globals until every
 /// wanted node has been seen (2s cap, they may lag the D-Bus signal).
 fn warm_registry(
-    mainloop: &pw::main_loop::MainLoop,
-    core: &pw::core::Core,
+    mainloop: &pw::main_loop::MainLoopRc,
+    core: &pw::core::CoreRc,
     nodes: std::collections::HashSet<u32>,
 ) -> Result<()> {
     let registry = core.get_registry().context("pw registry")?;
@@ -386,9 +386,9 @@ fn grab_frames_once(nodes: &[u32], expects: &[(u32, u32)]) -> Result<Vec<image::
 
     use std::time::Duration;
 
-    let mainloop = pw::main_loop::MainLoop::new(None).context("pw mainloop")?;
-    let context = pw::context::Context::new(&mainloop).context("pw context")?;
-    let core = context.connect(None).context("pw connect")?;
+    let mainloop = pw::main_loop::MainLoopRc::new(None).context("pw mainloop")?;
+    let context = pw::context::ContextRc::new(&mainloop, None).context("pw context")?;
+    let core = context.connect_rc(None).context("pw connect")?;
 
     // PipeWireStreamAdded reports the node id mutter will create, but our
     // registry only learns about it asynchronously.
@@ -399,8 +399,8 @@ fn grab_frames_once(nodes: &[u32], expects: &[(u32, u32)]) -> Result<Vec<image::
     let mut keepalive = Vec::new();
 
     for &expect in expects {
-        let stream = pw::stream::Stream::new(
-            &core,
+        let stream = pw::stream::StreamRc::new(
+            core.clone(),
             "quickshort-screencast",
             properties! {
                 *pw::keys::MEDIA_TYPE => "Video",
@@ -558,13 +558,13 @@ fn grab_frames_once(nodes: &[u32], expects: &[(u32, u32)]) -> Result<Vec<image::
 /// buffer is mappable but not marked readable; use its fd instead.
 fn should_map_buffer(kind: u32, flags: u32, has_pointer: bool) -> bool {
     const READABLE: u32 = 1;
-    // SPA_DATA_FLAG_MAPPABLE is not exposed by libspa 0.8.
+    // SPA_DATA_FLAG_MAPPABLE is not exposed by libspa 0.10.
     const MAPPABLE: u32 = 8;
     // MemFd is directly mappable; DmaBuf only when explicitly advertised.
     (kind == 2 || (kind == 3 && flags & MAPPABLE != 0)) && (!has_pointer || flags & READABLE == 0)
 }
 
-fn drain_frame(stream: &pw::stream::StreamRef, w: usize, h: usize) -> Option<Vec<u8>> {
+fn drain_frame(stream: &pw::stream::Stream, w: usize, h: usize) -> Option<Vec<u8>> {
     let mut buf = stream.dequeue_buffer()?;
     let mut out = None;
     for data in buf.datas_mut() {
@@ -886,16 +886,16 @@ pub(super) fn stream_pump(
 
     static INIT: std::sync::Once = std::sync::Once::new();
     INIT.call_once(pw::init);
-    let mainloop = pw::main_loop::MainLoop::new(None).context("pw mainloop")?;
-    let context = pw::context::Context::new(&mainloop).context("pw context")?;
-    let core = context.connect(None).context("pw connect")?;
+    let mainloop = pw::main_loop::MainLoopRc::new(None).context("pw mainloop")?;
+    let context = pw::context::ContextRc::new(&mainloop, None).context("pw context")?;
+    let core = context.connect_rc(None).context("pw connect")?;
 
     // warm the registry so connect() finds the node (same race as grab)
     warm_registry(&mainloop, &core, [node].into_iter().collect())?;
 
     let stream = Rc::new(
-        pw::stream::Stream::new(
-            &core,
+        pw::stream::StreamRc::new(
+            core.clone(),
             "quickshort-record",
             properties! {
                 *pw::keys::MEDIA_TYPE => "Video",
