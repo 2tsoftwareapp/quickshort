@@ -52,6 +52,11 @@ fn monitors() -> Result<Vec<Monitor>> {
 }
 
 impl ScreenCapture for HyprlandCapture {
+    fn probe(&self) -> bool {
+        // needs both the layout tool and the capture tool in PATH
+        ["hyprctl", "grim"].iter().all(|b| super::which(b))
+    }
+
     fn capture_all(&self) -> Result<Vec<CapturedFrame>> {
         monitors()?
             .into_iter()

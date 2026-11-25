@@ -30,6 +30,10 @@ type Dict = HashMap<String, OwnedValue>;
 pub struct MutterCapture;
 
 impl ScreenCapture for MutterCapture {
+    fn probe(&self) -> bool {
+        super::bus_has_owner(CFG)
+    }
+
     fn capture_all(&self) -> Result<Vec<CapturedFrame>> {
         let conn = Connection::session().context("session dbus")?;
         let mons = display_config(&conn)?;

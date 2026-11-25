@@ -104,7 +104,10 @@ impl PortalSession {
         let _: OwnedObjectPath = sc
             .call("SelectSources", &(session_obj.clone(), opts))
             .context("portal SelectSources")?;
-        let _ = wait_response(&mut rx, "SelectSources")?;
+        if let Err(e) = wait_response(&mut rx, "SelectSources") {
+            close_session(&conn, &session_path);
+            return Err(e);
+        }
 
         // --- Start ------------------------------------------------------------
         let req_tok = token();
@@ -112,9 +115,15 @@ impl PortalSession {
         let mut opts = Opts::new();
         opts.insert("handle_token".into(), vstr(&req_tok));
         let _: OwnedObjectPath = sc
-            .call("Start", &(session_obj, "", opts))
+            .call("Start", &(session_obj.clone(), "", opts))
             .context("portal Start")?;
-        let results = wait_response(&mut rx, "Start")?;
+        let results = match wait_response(&mut rx, "Start") {
+            Ok(r) => r,
+            Err(e) => {
+                close_session(&conn, &session_path);
+                return Err(e);
+            }
+        };
 
         if let Some(t) = results
             .get("restore_token")
@@ -191,12 +200,23 @@ impl PortalSession {
 impl Drop for PortalSession {
     fn drop(&mut self) {
         // best-effort cleanup — the compositor reaps the session with us anyway
-        let _ = Proxy::new(&self.conn, DESKTOP, self.session_path.as_str(), SESSION)
-            .and_then(|p| p.call::<_, _, ()>("Close", &()));
+        close_session(&self.conn, &self.session_path);
     }
 }
 
+/// Tell the portal the session is done — called on Drop and on every
+/// error path after CreateSession so a cancelled consent flow never
+/// leaves a live ScreenCast session behind.
+fn close_session(conn: &Connection, session_path: &str) {
+    let _ = Proxy::new(conn, DESKTOP, session_path, SESSION)
+        .and_then(|p| p.call::<_, _, ()>("Close", &()));
+}
+
 impl ScreenCapture for PortalCapture {
+    fn probe(&self) -> bool {
+        super::bus_has_owner(DESKTOP)
+    }
+
     fn capture_all(&self) -> Result<Vec<CapturedFrame>> {
         PortalSession::open(true)?.grab()
     }

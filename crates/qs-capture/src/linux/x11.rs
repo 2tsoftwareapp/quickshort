@@ -21,6 +21,10 @@ struct Mon {
 }
 
 impl ScreenCapture for X11Capture {
+    fn probe(&self) -> bool {
+        std::env::var_os("DISPLAY").is_some()
+    }
+
     fn capture_all(&self) -> Result<Vec<CapturedFrame>> {
         let (conn, screen_num) = x11rb::connect(None).context("cannot connect to X11")?;
         let screen = &conn.setup().roots[screen_num];

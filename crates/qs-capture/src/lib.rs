@@ -20,6 +20,15 @@ mod windows;
 pub trait ScreenCapture: Sync {
     fn capture_all(&self) -> Result<Vec<CapturedFrame>>;
 
+    /// Cheap capability check for the backend router — is this backend
+    /// even plausible on the running system (protocol exported, service
+    /// owned, tool installed)? No pixel work; `true` means "worth
+    /// grabbing with". Backends that can't know cheaply return the
+    /// default.
+    fn probe(&self) -> bool {
+        true
+    }
+
     /// Repeated grabs over one backend session — the scroll stitcher polls
     /// several times a second, and on xdg-desktop-portal each `capture_all`
     /// would re-run the consent flow. Default: re-grab every call.
