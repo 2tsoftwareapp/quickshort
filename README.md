@@ -3,8 +3,8 @@
   <h1>Quickshort</h1>
   <p><strong>Region screenshots with annotations and OCR — in Rust, native all the way down.</strong></p>
   <p>
-    <a href="https://github.com/truongnat/quickshort/releases"><img src="https://img.shields.io/github/v/release/truongnat/quickshort?include_prereleases&label=release" alt="Release"></a>
-    <a href="https://github.com/truongnat/quickshort/actions/workflows/release.yml"><img src="https://github.com/truongnat/quickshort/actions/workflows/release.yml/badge.svg" alt="Build"></a>
+    <a href="https://github.com/2tsoftwareapp/quickshort/releases"><img src="https://img.shields.io/github/v/release/2tsoftwareapp/quickshort?include_prereleases&label=release" alt="Release"></a>
+    <a href="https://github.com/2tsoftwareapp/quickshort/actions/workflows/release.yml"><img src="https://github.com/2tsoftwareapp/quickshort/actions/workflows/release.yml/badge.svg" alt="Build"></a>
     <img src="https://img.shields.io/badge/platform-macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-blue" alt="Platform">
   </p>
 </div>
@@ -60,8 +60,9 @@ downloads.
   auto-detection (`ocr_lang = "auto"`, OSD pass picks eng/jpn/vie/…);
   nothing ships in the binary
 - **Screen recording** — `⌘R` records the selected region to mp4 at 15fps:
-  PipeWire push on Wayland, re-capture polling on macOS (ScreenCaptureKit)
-  and Windows (GDI). Encoding runs on a worker through `ffmpeg` — slow
+  PipeWire push on GNOME/portal Wayland sessions, re-capture polling on
+  Hyprland/wlroots, X11, macOS (ScreenCaptureKit) and Windows (GDI).
+  Encoding runs on a worker through `ffmpeg` — slow
   encodes drop frames instead of shortening the clip (needs `ffmpeg` on
   PATH; installers surface it)
 - **Scrolling capture** — `⌘G` re-grabs the region while you scroll and
@@ -85,7 +86,7 @@ downloads.
 ### macOS
 
 **DMG** — grab `Quickshort-v*-macos.dmg` from
-[Releases](https://github.com/truongnat/quickshort/releases), open it, drag
+[Releases](https://github.com/2tsoftwareapp/quickshort/releases), open it, drag
 **Quickshort** into Applications.
 
 **Homebrew** (custom tap):
@@ -107,7 +108,9 @@ Required permissions (System Settings → Privacy & Security):
 
 **Updates** — the app checks GitHub Releases once a day in the background;
 the tray item becomes *Update to vX — Restart to Install*. Or: tray menu →
-**Check for Updates…**, or `brew upgrade --cask quickshort`.
+**Check for Updates…**, or `brew upgrade --cask quickshort`. Downloads are
+verified against an ed25519 signature the release workflow writes as a
+`<asset>.sig` sidecar, checked with a public key embedded in the binary.
 
 Optional: `brew install ffmpeg` enables screen recording (`⌘R`); without
 it everything else still works — Record fails with a visible toast.
@@ -115,7 +118,7 @@ it everything else still works — Record fails with a visible toast.
 ### Linux
 
 **AppImage** — grab `Quickshort-Linux.AppImage` from
-[Releases](https://github.com/truongnat/quickshort/releases), `chmod +x`,
+[Releases](https://github.com/2tsoftwareapp/quickshort/releases), `chmod +x`,
 run. Bundles the tray dependencies (gtk plugin).
 
 **Debian / Ubuntu** — `quickshort_amd64.deb` installs to `/usr/bin` with a
@@ -136,8 +139,10 @@ Debian/Ubuntu (pipewire/spa/clang dev packages for the build, plus
 `tesseract-ocr` + language packs, `wl-clipboard`, `libnotify-bin` at
 runtime; extra OCR languages via `QS_OCR_LANGS`), builds release →
 `~/.local/bin` and registers a GNOME custom shortcut via `gsettings`
-(default `Ctrl+Alt+Q`). On non-GNOME desktops it installs the binary
-only — bind it yourself.
+(default `Ctrl+Alt+Q`). On other desktops the installer just drops the
+binary — the resident app registers the hotkey itself on KDE Plasma,
+sway, Hyprland and portal-capable Wayland desktops; elsewhere, bind
+`quickshort --capture` in your compositor settings.
 
 **Notifications** — status messages go through the desktop's notification
 service (`org.freedesktop.Notifications` over D-Bus) instead of a
@@ -147,7 +152,7 @@ settings (position, timeout, Do Not Disturb).
 ### Windows
 
 `Quickshort-Windows-Setup.exe` under
-[Releases](https://github.com/truongnat/quickshort/releases) — NSIS
+[Releases](https://github.com/2tsoftwareapp/quickshort/releases) — NSIS
 installer: Program Files install, Start Menu shortcut, uninstaller entry.
 Unsigned, so SmartScreen may warn (**More info → Run anyway**). Runs as a
 tray app, no console window. Or build the app and editor from source
@@ -241,6 +246,8 @@ capture every monitor into RAM
 | `qs-ocr` | native text extraction |
 | `qs-doc` | `.qsdoc` vector document schema |
 | `qs-edit` | headless editing engine, undo history |
+| `qs-library` | capture album storage + provenance |
+| `qs-icons` | embedded icon assets |
 | `qs-render` | rasterization and effects (`tiny-skia`) |
 | `qs-editor` | annotation editor (`eframe`/`egui`) |
 | `qs-theme` | shared palette, accent, radius, type and spacing tokens |
@@ -248,21 +255,27 @@ capture every monitor into RAM
 
 Capture backends:
 
-| Platform | Backend |
+| Platform | Backend chain (best first) |
 |---|---|
 | macOS 14+ | `SCScreenshotManager` per-display one-shot at framebuffer pixels |
 | Windows | GDI BitBlt per monitor, `PER_MONITOR_AWARE_V2` |
 | GNOME Wayland | `org.gnome.Mutter.ScreenCast` → PipeWire shm frames, in-process |
-| Other Wayland (KDE, wlroots) | `org.freedesktop.portal.ScreenCast` → PipeWire |
+| Hyprland | `zwlr_screencopy_manager_v1` in-process → `grim`+`hyprctl` fallback |
+| Other wlroots (Sway, Niri, River, labwc…) | `zwlr_screencopy_manager_v1` in-process — no dialog |
+| Other Wayland (KDE…) | `org.freedesktop.portal.ScreenCast` → PipeWire |
 | X11 | RandR layout + `GetImage` |
 
-On GNOME Wayland there is no portal dialog and no subprocess — the backend
-talks to mutter's private ScreenCast API (the same one the GNOME portal
-uses internally), then reads shared-memory buffers from PipeWire, one
-connection multiplexing all monitor streams. Other compositors go through
-`xdg-desktop-portal`: the compositor shows a consent dialog once, and on
-portals supporting `persist_mode` (KDE 5.24+) a stored restore token makes
-later captures dialog-free. `QS_CAPTURE=portal|mutter|x11` forces a backend.
+Each Wayland session gets an ordered chain of candidate backends; cheap
+protocol probes drop ones that can't run, and a grab failure swaps in the
+next candidate. On GNOME Wayland there is no portal dialog and no
+subprocess — the backend talks to mutter's private ScreenCast API (the
+same one the GNOME portal uses internally), then reads shared-memory
+buffers from PipeWire, one connection multiplexing all monitor streams.
+wlroots compositors expose `zwlr_screencopy` themselves, so capture there
+is likewise instant and dialog-free. The portal is the last resort:
+the compositor shows a consent dialog once, and on portals supporting
+`persist_mode` (KDE 5.24+) a stored restore token makes later captures
+dialog-free. `QS_CAPTURE=portal|mutter|hyprland|wlr|x11` forces a chain.
 
 OCR on Linux runs the system `tesseract` binary: in `auto` mode an OSD
 pass detects the script and maps it to the installed language packs
@@ -278,6 +291,7 @@ cargo test                                       # unit tests
 cargo test -p qs-capture -- --ignored            # real capture (needs Wayland/macOS)
 cargo run -p qs-app                              # resident app
 cargo run -p qs-app -- --capture                 # one-shot
+QUICKSHORT_LOG=debug cargo run -p qs-app         # trace capture routing, IPC, etc.
 ```
 
 Release packaging: `packaging/macos/release.sh` runs the full pipeline —
@@ -294,7 +308,7 @@ lives 3 days on a Cloudflare Worker — or, if you opted in, goes to your
 own Google Drive), an opt-in bug report (posted as a
 public GitHub issue), and a daily GitHub release check. No analytics,
 no accounts. Full policy: [docs/privacy.html](docs/privacy.html) ·
-[quickshort site](https://truongnat.github.io/quickshort/privacy.html).
+[quickshort site](https://2tsoftwareapp.github.io/quickshort/privacy.html).
 
 ## Support
 
@@ -311,8 +325,9 @@ Free and open source, built in spare time. If Quickshort saves you time:
 - Wayland needs one overlay window per monitor (no global window
   positioning); pointer grab carries the selection across monitors
 - Wayland has no global hotkey API — the resident app registers through
-  the compositor instead (GNOME custom keybinding, KDE GlobalShortcuts
-  portal, swaymsg/hyprctl); other Wayland desktops: bind
+  the compositor instead (GNOME custom keybinding, swaymsg, hyprctl, and
+  the GlobalShortcuts portal on KDE and other portal-capable Wayland
+  desktops — probed at runtime); remaining compositors: bind
   `quickshort --capture` as a custom shortcut. The tray needs an
   AppIndicator extension on GNOME
 - Unsigned macOS builds: first launch needs one right-click → Open; the

@@ -18,7 +18,9 @@ use anyhow::{bail, Context, Result};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
-const REPO: &str = "truongnat/quickshort";
+// pinned to the repo's current location — an old-name redirect works
+// today but could be re-registered by someone else later
+const REPO: &str = "2tsoftwareapp/quickshort";
 const CURRENT: &str = env!("CARGO_PKG_VERSION");
 
 pub struct Release {
