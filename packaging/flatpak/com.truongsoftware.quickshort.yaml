@@ -1,11 +1,11 @@
 # Flatpak manifest — buildable with:
-#   flatpak-builder --force-clean build-dir packaging/flatpak/app._2tsoftware.quickshort.yaml
+#   flatpak-builder --force-clean build-dir packaging/flatpak/com.truongsoftware.quickshort.yaml
 # Flathub submission: move this file + cargo-sources.json + metainfo.xml + the
-# shared-modules submodule reference into a flathub/app._2tsoftware.quickshort repo.
+# shared-modules submodule reference into a flathub/com.truongsoftware.quickshort repo.
 #
 # cargo-sources.json is generated from the workspace lockfile:
 #   flatpak-cargo-generator -o packaging/flatpak/cargo-sources.json Cargo.lock
-app-id: app._2tsoftware.quickshort
+app-id: com.truongsoftware.quickshort
 runtime: org.gnome.Platform
 runtime-version: "51"
 sdk: org.gnome.Sdk
@@ -137,14 +137,14 @@ modules:
       - install -Dm755 target/release/quickshort /app/bin/quickshort
       - install -Dm755 target/release/qs-editor /app/bin/qs-editor
       - install -Dm644 packaging/linux/quickshort.desktop
-        /app/share/applications/app._2tsoftware.quickshort.desktop
-      - sed -i 's/^Icon=quickshort$/Icon=app._2tsoftware.quickshort/'
-        /app/share/applications/app._2tsoftware.quickshort.desktop
+        /app/share/applications/com.truongsoftware.quickshort.desktop
+      - sed -i 's/^Icon=quickshort$/Icon=com.truongsoftware.quickshort/'
+        /app/share/applications/com.truongsoftware.quickshort.desktop
       # flathub caps icons at 512px — icon-512.png is committed alongside
       - install -Dm644 packaging/linux/icon-512.png
-        /app/share/icons/hicolor/512x512/apps/app._2tsoftware.quickshort.png
-      - install -Dm644 packaging/flatpak/app._2tsoftware.quickshort.metainfo.xml
-        /app/share/metainfo/app._2tsoftware.quickshort.metainfo.xml
+        /app/share/icons/hicolor/512x512/apps/com.truongsoftware.quickshort.png
+      - install -Dm644 packaging/flatpak/com.truongsoftware.quickshort.metainfo.xml
+        /app/share/metainfo/com.truongsoftware.quickshort.metainfo.xml
     sources:
       - type: git
         url: https://github.com/2tsoftwareapp/quickshort.git
