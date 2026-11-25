@@ -268,17 +268,21 @@ pub fn paint_cutout_overlay(painter: &mut egui::Painter, strip_screen: Rect, scr
 }
 
 /// Find in capture: every match dimly, the current one with a border.
-pub fn paint_find_hits(painter: &egui::Painter, rects: &[Rect], current: usize) {
+/// Each hit is a group of word-level rects (one entry when the engine
+/// only knows line geometry).
+pub fn paint_find_hits(painter: &egui::Painter, groups: &[Vec<Rect>], current: usize) {
     let col = theme::accent_blue();
-    for (i, r) in rects.iter().enumerate() {
+    for (i, group) in groups.iter().enumerate() {
         let is_current = i == current;
-        painter.rect_filled(
-            *r,
-            2.0,
-            col.gamma_multiply(if is_current { 0.34 } else { 0.15 }),
-        );
-        if is_current {
-            painter.rect_stroke(*r, 2.0, Stroke::new(1.5, col), StrokeKind::Outside);
+        for r in group {
+            painter.rect_filled(
+                *r,
+                2.0,
+                col.gamma_multiply(if is_current { 0.34 } else { 0.15 }),
+            );
+            if is_current {
+                painter.rect_stroke(*r, 2.0, Stroke::new(1.5, col), StrokeKind::Outside);
+            }
         }
     }
 }

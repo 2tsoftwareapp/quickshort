@@ -549,9 +549,13 @@ impl EditorApp {
                 }
             }
             crate::find::FindAction::RedactAll => {
-                let rects: Vec<RectF> = hits
-                    .iter()
-                    .map(|&i| self.ocr_hints.lines()[i].rect)
+                // Word-level where the engine reports it — only the matched
+                // text is covered, not the whole line around it.
+                let rects: Vec<RectF> = self
+                    .ocr_hints
+                    .find_rects(&self.find.query)
+                    .into_iter()
+                    .flatten()
                     .collect();
                 let n = self.doc.editor.add_redactions(&rects, qs_doc::BlurMode::Solid);
                 if n > 0 {
@@ -2227,17 +2231,21 @@ impl EditorApp {
 
                 // 5a. Find in capture: every match dimly, the current one framed
                 if self.find.open {
-                    let hits = self.ocr_hints.find(&self.find.query);
-                    if !hits.is_empty() {
-                        let rects: Vec<Rect> = hits
+                    let hit_groups = self.ocr_hints.find_rects(&self.find.query);
+                    if !hit_groups.is_empty() {
+                        let groups: Vec<Vec<Rect>> = hit_groups
                             .iter()
-                            .map(|i| {
-                                let r = self.ocr_hints.lines()[*i].rect;
-                                self.viewport.view.doc_rect_to_screen(r, screen_rect)
+                            .map(|words| {
+                                words
+                                    .iter()
+                                    .map(|r| {
+                                        self.viewport.view.doc_rect_to_screen(*r, screen_rect)
+                                    })
+                                    .collect()
                             })
                             .collect();
-                        let current = self.find.index.min(rects.len() - 1);
-                        canvas::paint_find_hits(&painter, &rects, current);
+                        let current = self.find.index.min(groups.len() - 1);
+                        canvas::paint_find_hits(&painter, &groups, current);
                     }
                 }
 

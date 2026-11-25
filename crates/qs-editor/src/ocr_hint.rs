@@ -14,6 +14,9 @@ use std::sync::mpsc::{self, Receiver};
 pub struct Hint {
     pub rect: RectF,
     pub text: String,
+    /// Word boxes in the same document space — empty when the engine
+    /// cannot report word geometry.
+    pub words: Vec<(RectF, String)>,
 }
 
 /// What a result was computed for. A change means the base image or the way it
@@ -65,6 +68,16 @@ impl OcrHints {
                     .filter(|l| l.w >= 1.0 && l.h >= 1.0 && !l.text.trim().is_empty())
                     .map(|l| Hint {
                         rect: px_to_doc(l.x, l.y, l.w, l.h, view, scale),
+                        words: l
+                            .words
+                            .into_iter()
+                            .map(|w| {
+                                (
+                                    px_to_doc(w.x, w.y, w.w, w.h, view, scale),
+                                    w.text,
+                                )
+                            })
+                            .collect(),
                         text: l.text,
                     })
                     .collect(),
@@ -148,6 +161,55 @@ impl OcrHints {
             .enumerate()
             .filter(|(_, h)| h.text.to_lowercase().contains(&needle))
             .map(|(i, _)| i)
+            .collect()
+    }
+
+    /// Word-level rects for the `find` hits, aligned with `find(query)`'s
+    /// output: every word whose span intersects a needle occurrence inside
+    /// the line. Falls back to the line rect when the engine reported no
+    /// word geometry or a word's text can't be mapped back (CJK lines
+    /// lose their separator spaces under `tidy`).
+    pub fn find_rects(&self, query: &str) -> Vec<Vec<RectF>> {
+        let needle = query.trim().to_lowercase();
+        self.find(query)
+            .iter()
+            .map(|&i| {
+                let h = &self.lines[i];
+                if h.words.is_empty() {
+                    return vec![h.rect];
+                }
+                let hay = h.text.to_lowercase();
+                // Each word's span inside the line text, found by scanning
+                // forward — robust to separators `tidy` removed.
+                let mut spans = Vec::with_capacity(h.words.len());
+                let mut off = 0usize;
+                for (_, t) in &h.words {
+                    let tl = t.to_lowercase();
+                    match hay.get(off..).and_then(|s| s.find(&tl)) {
+                        Some(rel) => {
+                            let ws = off + rel;
+                            spans.push(ws..ws + tl.len());
+                            off = ws + tl.len();
+                        }
+                        None => return vec![h.rect],
+                    }
+                }
+                let rects: Vec<RectF> = h
+                    .words
+                    .iter()
+                    .zip(&spans)
+                    .filter(|(_, span)| {
+                        hay.match_indices(&needle)
+                            .any(|(ms, _)| span.start < ms + needle.len() && span.end > ms)
+                    })
+                    .map(|((r, _), _)| *r)
+                    .collect();
+                if rects.is_empty() {
+                    vec![h.rect]
+                } else {
+                    rects
+                }
+            })
             .collect()
     }
 
@@ -286,6 +348,7 @@ mod tests {
         Hint {
             rect: RectF::new(x, y, w, h),
             text: text.to_string(),
+            words: Vec::new(),
         }
     }
 
@@ -359,6 +422,54 @@ mod tests {
         };
         assert!(hints.text_in(RectF::new(0.0, 0.0, 100.0, 50.0)).is_empty());
     }
+    #[test]
+    fn find_rects_picks_only_the_matched_words() {
+        let mut h = hint(0.0, 0.0, 300.0, 20.0, "General Settings Page");
+        h.words = vec![
+            (RectF::new(0.0, 0.0, 80.0, 20.0), "General".to_string()),
+            (RectF::new(90.0, 0.0, 100.0, 20.0), "Settings".to_string()),
+            (RectF::new(200.0, 0.0, 60.0, 20.0), "Page".to_string()),
+        ];
+        let hints = OcrHints {
+            lines: vec![h],
+            ..OcrHints::default()
+        };
+        let groups = hints.find_rects("settings");
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0], vec![RectF::new(90.0, 0.0, 100.0, 20.0)]);
+        // a needle spanning a space covers both words
+        let groups = hints.find_rects("settings page");
+        assert_eq!(groups[0].len(), 2);
+    }
+
+    #[test]
+    fn find_rects_falls_back_to_the_line_when_words_cant_be_mapped() {
+        let mut h = hint(0.0, 0.0, 100.0, 20.0, "你好世界");
+        // CJK line text lost its separator spaces under tidy — a stored
+        // word that no longer appears in the text falls back to the line.
+        h.words = vec![
+            (RectF::new(0.0, 0.0, 50.0, 20.0), "你好".to_string()),
+            (RectF::new(50.0, 0.0, 50.0, 20.0), "missing".to_string()),
+        ];
+        let hints = OcrHints {
+            lines: vec![h],
+            ..OcrHints::default()
+        };
+        assert_eq!(
+            hints.find_rects("世界"),
+            vec![vec![RectF::new(0.0, 0.0, 100.0, 20.0)]]
+        );
+        // and a line with no word geometry at all
+        let hints = OcrHints {
+            lines: vec![hint(5.0, 5.0, 50.0, 10.0, "abc")],
+            ..OcrHints::default()
+        };
+        assert_eq!(
+            hints.find_rects("abc"),
+            vec![vec![RectF::new(5.0, 5.0, 50.0, 10.0)]]
+        );
+    }
+
     #[test]
     fn find_matches_case_insensitively_in_reading_order() {
         let hints = OcrHints {
