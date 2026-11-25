@@ -229,7 +229,9 @@ fn uat_find_window_and_highlights_across_viewports_and_themes() {
                             egui::Vec2::new(90.0, 18.0),
                         ),
                     ];
-                    qs_editor::canvas::paint_find_hits(ui.painter(), &rects, 1);
+                    let groups: Vec<Vec<egui::Rect>> =
+                        rects.iter().map(|r| vec![*r]).collect();
+                    qs_editor::canvas::paint_find_hits(ui.painter(), &groups, 1);
                 });
                 out.textures_delta.clear();
                 assert!(

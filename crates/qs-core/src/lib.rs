@@ -229,7 +229,6 @@ pub fn stitch(frames: &[CapturedFrame], selection: Rect) -> Option<(RgbaImage, f
 /// picks the level (`off|error|warn|info|debug`, default `info` so the
 /// historical eprintln-everything behavior is preserved). One shared
 /// impl for both binaries; no env_logger dependency chain.
-
 struct StderrLog;
 static LOGGER: StderrLog = StderrLog;
 
