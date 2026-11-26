@@ -190,9 +190,14 @@ impl ChromeWin {
         // per-pixel alpha hit-testing only covers what's painted; stamp
         // α=1 into the retention zone's dead pixels so the hover
         // hysteresis works (see the module docs — a window region can't
-        // do this without clipping the fly animation)
+        // do this without clipping the fly animation).
+        // Skip fullscreen-spanning zones (e.g. menu backdrop) so we don't
+        // trap clicks across the entire desktop.
         let s = self.scale;
         for r in self.stack.zone_rects(self.lw, self.lh) {
+            if r.w >= self.lw - 1.0 && r.h >= self.lh - 1.0 {
+                continue;
+            }
             let x0 = (r.x * s).floor().max(0.0) as usize;
             let y0 = (r.y * s).floor().max(0.0) as usize;
             let x1 = ((r.x + r.w) * s).ceil().min(pw as f64).max(0.0) as usize;
@@ -477,6 +482,12 @@ impl PlatformChrome for ChromeWin {
                 }
             }
             WindowEvent::RedrawRequested => self.present(),
+            WindowEvent::Focused(false) => {
+                if self.stack.menu.is_some() {
+                    self.stack.menu = None;
+                    self.present();
+                }
+            }
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 // the DIB stays at creation resolution — logical geometry
                 // follows the new factor so hit tests keep matching pixels

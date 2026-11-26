@@ -83,6 +83,7 @@ mod stack;
 pub use stack::{ChromeCmd, ChromeEv, Corner, FRect, Key, Shot, ShotKind, Stack};
 pub use stack::{MENU_BEAUTIFY, MENU_CLEAR, MENU_COPY, MENU_DEL, MENU_OPEN,
                 MENU_PIN, MENU_REVEAL, MENU_REVOKE, MENU_SAVE, MENU_SHARE};
+#[cfg(target_os = "linux")]
 pub(super) use stack::shelf_logical_size;
 
 

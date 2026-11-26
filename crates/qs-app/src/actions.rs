@@ -640,11 +640,40 @@ fn report_clipboard(r: Result<Result<(), arboard::Error>, arboard::Error>) {
     }
 }
 
+/// Throttle duplicate launches of `qs-editor` (e.g. from rapid double-clicks
+/// or event cascades on post-capture album / cards).
+static LAST_EDITOR_SPAWN: std::sync::Mutex<Option<(PathBuf, std::time::Instant)>> =
+    std::sync::Mutex::new(None);
+
+fn should_spawn_editor(p: &Path, now: std::time::Instant) -> bool {
+    if let Ok(mut last) = LAST_EDITOR_SPAWN.lock() {
+        if let Some((last_p, last_t)) = &*last {
+            if let Some(elapsed) = now.checked_duration_since(*last_t) {
+                if (last_p == p && elapsed < std::time::Duration::from_millis(1000))
+                    || elapsed < std::time::Duration::from_millis(300)
+                {
+                    return false;
+                }
+            } else {
+                return false;
+            }
+        }
+        *last = Some((p.to_path_buf(), now));
+    }
+    true
+}
+
 /// Open an image or `.qsdoc` file in the Quickshort Editor.
 ///
 /// If `qs-editor` binary is in the same directory as the current executable,
 /// it launches that binary; otherwise falls back to system `open_path`.
 pub fn open_editor(p: &Path) {
+    let now = std::time::Instant::now();
+    if !should_spawn_editor(p, now) {
+        log::info!("open_editor: debouncing duplicate launch for {}", p.display());
+        return;
+    }
+
     let self_exe = std::env::current_exe().ok();
     let sibling_editor = self_exe.as_ref().and_then(|e| {
         let parent = e.parent()?;
@@ -690,4 +719,20 @@ fn warn_editor_unavailable(p: &Path, reason: &str) {
         .set_level(rfd::MessageLevel::Warning)
         .show();
     open_path(p);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn editor_spawn_debounces_rapid_calls_on_same_path() {
+        let p = Path::new("/tmp/test_capture_debounced.png");
+        let t0 = std::time::Instant::now();
+        assert!(should_spawn_editor(p, t0));
+        // immediate second call within debounce threshold is dropped
+        assert!(!should_spawn_editor(p, t0 + std::time::Duration::from_millis(100)));
+        // after 1.5 seconds it is allowed
+        assert!(should_spawn_editor(p, t0 + std::time::Duration::from_millis(1500)));
+    }
 }

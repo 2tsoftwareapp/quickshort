@@ -367,24 +367,6 @@ impl ApplicationHandler<HostEvent> for Host {
         let try_manager = true;
 
         let recents = actions::recent_captures(&self.cfg.save_dir(), self.cfg.recent_max as usize);
-        // Rehydrate the album only where the capture UI uses it by default.
-        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-        for p in recents.iter().take(5).rev() {
-            if let Ok(img) = image::open(p) {
-                let _ = self.chrome.land(
-                    _el,
-                    Land {
-                        img: img.to_rgba8(),
-                        kind: ShotKind::Saved,
-                        path: Some(p.clone()),
-                        sel: None,
-                        instant: true,
-                        dur_s: None,
-                        shared: self.shares.get(p).cloned(),
-                    },
-                );
-            }
-        }
         #[cfg(target_os = "linux")]
         match tray::linux_tray::spawn(&self.cfg, &recents) {
             Ok(t) => self.tray = Some(t),
