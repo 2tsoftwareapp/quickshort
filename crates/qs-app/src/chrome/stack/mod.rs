@@ -301,6 +301,13 @@ impl Stack {
         self.lightbox.is_some() || self.menu.is_some()
     }
 
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    pub(super) fn dismiss_menu(&mut self) -> bool {
+        let was = self.menu.is_some();
+        self.menu = None;
+        was
+    }
+
 
     /// Queue the fly-in; `from` is the selection rect in window-local
     /// logical coords. `rm` (reduce motion) lands instantly.

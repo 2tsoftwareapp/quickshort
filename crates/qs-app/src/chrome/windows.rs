@@ -483,8 +483,7 @@ impl PlatformChrome for ChromeWin {
             }
             WindowEvent::RedrawRequested => self.present(),
             WindowEvent::Focused(false) => {
-                if self.stack.menu.is_some() {
-                    self.stack.menu = None;
+                if self.stack.dismiss_menu() {
                     self.present();
                 }
             }
