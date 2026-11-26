@@ -134,7 +134,7 @@
 
 ## Completion Notes
 
-Implementation, Apple/GitHub credential setup, and controlled CI artifact validation completed. No tag was pushed and no GitHub release was published.
+Implementation, Apple/GitHub credential setup, controlled CI artifact validation, and production release `v0.4.1` completed. Tag `v0.4.1` and the GitHub release were published after explicit maintainer approval.
 
 ### Verification results
 
@@ -165,6 +165,15 @@ Implementation, Apple/GitHub credential setup, and controlled CI artifact valida
   - Windows: `Quickshort-Windows-Setup.exe` passed its `.sha256` verification.
   - macOS: ZIP and DMG passed `.sha256` verification; extracted `Quickshort.app` passed `codesign --verify --deep --strict`; both app and DMG passed `xcrun stapler validate`; Gatekeeper reported `accepted`, `source=Notarized Developer ID`, origin `Developer ID Application: Cuong Nguyen Van (3279CRW8KQ)`.
 - Apple notarization history showed both controlled-run submissions accepted: `Quickshort.zip` and `Quickshort-v0.4.1-macos.dmg`.
+
+### Production release outcome
+
+- Release workflow run `45730157514` was dispatched on `main` at `987eb8c11a627ffec1b562d50557bf7d31c9052b` with version input `0.4.1`; metadata, Windows, Linux, and macOS jobs all completed successfully.
+- Downloaded build artifacts passed checksum validation. The macOS app passed strict codesign verification, app/DMG stapler validation, and Gatekeeper assessment as `Notarized Developer ID`.
+- Lightweight tag `v0.4.1` was pushed at the same tested commit `987eb8c11a627ffec1b562d50557bf7d31c9052b`.
+- Publish workflow run `45732600587` created the draft release successfully. All five primary payload `.sig` files were locally verified against the embedded Ed25519 public key before publication.
+- Release `v0.4.1` was published at `2026-11-26T01:00:54Z` with 14 assets, including payload signatures and checksums. Release-event workflow run `45732794687` completed successfully and updated the live Homebrew cask to version `0.4.1` with the published ZIP SHA256 `14389a6eeeed1a2aa0bc05b82858ba20a73977b1df085cbb1ac48e02bbb054ac`.
+- Windows artifacts remain unsigned because SignPath variables/secrets are not configured; the pipeline's optional SignPath steps were skipped. macOS artifacts are Developer ID signed and notarized.
 
 ### Diff review result
 
